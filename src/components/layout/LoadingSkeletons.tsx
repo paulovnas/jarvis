@@ -12,6 +12,12 @@ export function CardsSkeleton({ label, columns = false }: { label: string; colum
   </div>;
 }
 
+export function RowsSkeleton({ label, count }: { label: string; count: number }) {
+  return <div role="status" aria-label={label} className="divide-y divide-border">
+    {Array.from({ length: count }, (_, i) => <div key={i} aria-hidden="true" className="flex items-center gap-3 px-4 py-3"><Skeleton className="size-4 shrink-0" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-28" /><Skeleton className="h-3 w-3/4" /></div><Skeleton className="h-6 w-16" /></div>)}
+  </div>;
+}
+
 export function DocumentSkeleton({ label = "Carregando conteúdo" }: { label?: string }) {
   return <div role="status" aria-label={label} className="flex min-h-64 flex-col gap-6 py-3"><Skeleton className="h-5 w-2/5" /><Lines count={4} /><Skeleton className="h-4 w-1/3" /><Lines count={5} /><Skeleton className="h-16 w-full rounded-lg" /></div>;
 }

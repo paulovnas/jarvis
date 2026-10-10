@@ -63,6 +63,9 @@ it("requires essential Core tools but leaves Context7 optional before providers"
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   await screen.findByText("8/8 essenciais");
   expect(screen.getByRole("heading", { name: "Graft" })).toBeVisible();
+  expect(screen.getByText("Mapeia arquivos, símbolos e dependências do projeto.")).toBeVisible();
+  expect(screen.queryByText(/Índice local atualizado sob demanda, sem modelo nem chave/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Detalhes de Graft" }));
   expect(screen.getByText(/Índice local atualizado sob demanda, sem modelo nem chave/)).toBeVisible();
   expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Avançar" }));

@@ -1,6 +1,11 @@
 use super::*;
 
-const ENGINE: &str = "#!/bin/sh\nif [ \"$1\" = engine-probe ]; then printf 'impeccable-engine 0.1.14\\n'; else printf '4.0.0\\n'; fi\n";
+const ENGINE: &str = "#!/bin/sh\nif [ \"$1\" = engine-probe ]; then printf 'impeccable-engine 0.1.14\\n'; elif [ \"$1\" = context ]; then printf 'RESOLVED_CONTEXT:\\n{\"projectRoot\":\"fixture\"}\\n'; else printf '4.0.0\\n'; fi\n";
+
+pub(crate) fn pack_fixture(directory: &Path) -> Pack {
+    prepare_fixture(directory, &[]).unwrap();
+    Pack::at(directory, "1.2.3").unwrap()
+}
 
 pub(in crate::core) fn prepare_fixture(
     directory: &Path,
@@ -111,6 +116,47 @@ fn reads_full_references_in_bounded_unicode_pages_and_rejects_path_escape() {
     assert!(pack
         .execute("design_search", &json!({"query":"","offset":-1}))
         .is_err());
+}
+#[test]
+fn reads_new_work_and_init_by_resource_id_without_project_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    prepare_fixture(
+        directory.path(),
+        &[(
+            ".agents/skills/impeccable/reference/init.md",
+            "# Init flow\nCapture confirmed product truth before new visual work.",
+        )],
+    )
+    .unwrap();
+    let pack = Pack::at(directory.path(), "1.2.3").unwrap();
+    for id in ["impeccable/new-work", "impeccable/init"] {
+        let page: Value =
+            serde_json::from_str(&pack.execute("design_read", &json!({"id": id})).unwrap())
+                .unwrap();
+        assert!(page["content"].as_str().unwrap().starts_with('#'));
+        assert_eq!(page["offset"], 0);
+        assert!(page["nextOffset"].is_null());
+        assert_eq!(page["hostInstructions"], HOST_ADAPTATION);
+        assert!(!project.path().join(page["file"].as_str().unwrap()).exists());
+        let listing: Value = serde_json::from_str(
+            &pack
+                .execute("design_read", &json!({"id": id, "file": null}))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(listing["files"], json!([page["file"]]));
+        assert_eq!(listing["hostInstructions"], HOST_ADAPTATION);
+        assert!(listing.get("content").is_none());
+    }
+    let skill: Value = serde_json::from_str(
+        &pack
+            .execute("design_read", &json!({"id": "impeccable/skill"}))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(skill["files"].as_array().unwrap().len() > 1);
+    assert!(skill.get("content").is_none());
 }
 #[test]
 fn searches_portuguese_intents_and_pages_the_impeccable_playbooks() {
@@ -243,6 +289,43 @@ fn managed_commands_use_project_cwd_and_private_upstream_paths() {
         assert!(!env("IMPECCABLE_SKILL_DIR").unwrap().starts_with(r"\\?\"));
     }
     assert!(!project.path().join(".impeccable").exists());
+}
+
+#[test]
+fn managed_context_detect_and_live_receive_the_canonical_knowledge_design() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    fs::create_dir_all(project.path().join(".jarvis/knowledge/shared")).unwrap();
+    let design = ".jarvis/knowledge/shared/design.md";
+    fs::write(
+        project.path().join(design),
+        "---\nname: Identity\n---\nCanonical",
+    )
+    .unwrap();
+    fs::write(project.path().join("DESIGN.md"), "Competing root").unwrap();
+    fs::write(
+        project.path().join(".jarvis/knowledge/index.json"),
+        json!({"entries":[{"kind":"design","scope":".","path":design}]}).to_string(),
+    )
+    .unwrap();
+    let command = command_at(directory.path(), project.path()).unwrap();
+    let env = |key: &str| {
+        command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value)
+            .map(PathBuf::from)
+    };
+    let root = fs::canonicalize(project.path()).unwrap();
+    let root = PathBuf::from(crate::library::strip_verbatim(&root.to_string_lossy()).as_ref());
+    assert_eq!(env("IMPECCABLE_DESIGN_ROOT"), Some(root.clone()));
+    assert_eq!(env("IMPECCABLE_DESIGN_PATH"), Some(root.join(design)));
+    assert_eq!(
+        fs::read_to_string(project.path().join("DESIGN.md")).unwrap(),
+        "Competing root"
+    );
 }
 #[cfg(unix)]
 #[test]

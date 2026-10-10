@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareImpeccable } from "./prepare-impeccable";
 import {
   developmentArguments,
   localSigningIdentity,
@@ -17,6 +18,10 @@ let args = process.argv.slice(2);
 
 try {
   const command = signingCommand(args);
+  if (command) {
+    const targetIndex = args.indexOf("--target");
+    await prepareImpeccable({ target: targetIndex >= 0 ? args[targetIndex + 1] : undefined });
+  }
   const development = usesDevelopmentProfile(args);
   if (development) {
     process.env.JARVIS_RUNTIME_PROFILE = "development";

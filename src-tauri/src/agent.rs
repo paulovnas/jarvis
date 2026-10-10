@@ -1930,6 +1930,30 @@ pub fn get_agent_activity(
     agent.activity()
 }
 
+pub(crate) async fn live_progress(
+    app: &tauri::AppHandle,
+    conversation: &str,
+    content: &str,
+) -> Result<Value, AgentError> {
+    let state = app.state::<AgentState>();
+    let session = state
+        .runtime_session(app, &app.state::<AppState>(), conversation)
+        .await?;
+    let data = session.data.lock().map_err(|_| AgentError::internal())?;
+    let turn = data
+        .turns
+        .last()
+        .map(|stored| &stored.turn)
+        .filter(|turn| turn.user == content);
+    let step = turn.and_then(|turn| turn.steps.last());
+    Ok(json!({
+        "step": turn.map_or(0, |turn| turn.steps.len()),
+        "elapsedMs": turn.map_or(0, |turn| data.active.as_ref().map_or(turn.duration_ms, |active| active.timing().0)),
+        "queueCount": data.extras.queue.len(),
+        "activity": step.and_then(|step| step.tools.iter().rev().find(|tool| tool.status == "running")).map(|tool| tool.name.as_str()),
+    }))
+}
+
 pub(crate) async fn read_chat_snapshot(
     app: tauri::AppHandle,
     persistence: tauri::State<'_, AppState>,
@@ -2144,11 +2168,14 @@ async fn start_agent_turn_admitted(
                 json!({"conversationId":conversation_id}),
             );
         }
-        let submitted = session.submit_message(content, options, parts)?;
-        let recovery = session.resume_recovered_turn(RecoveryTrigger::UserAction)?;
-        let signal = match recovery {
-            Some(signal) => Some(signal),
-            None => submitted.or(session.reserve_next()?),
+        let signal = if use_saved_selection {
+            let submitted = session.submit_message(content, options, parts)?;
+            match session.resume_recovered_turn(RecoveryTrigger::UserAction)? {
+                Some(signal) => Some(signal),
+                None => submitted.or(session.reserve_next()?),
+            }
+        } else {
+            Some(session.submit_live_message(content, options, parts)?)
         };
         Ok::<_, AgentError>((session, signal))
     })
@@ -3422,6 +3449,12 @@ fn run_turn_once<'a>(
             match crate::core::design::Pack::open(home) {
                 Ok(pack) => Some(pack),
                 Err(cause) => {
+                    if execution
+                        .as_ref()
+                        .is_some_and(workflow::Execution::designer)
+                    {
+                        return Err(core_runtime::design_unavailable(session, cause).await);
+                    }
                     core_activities.push(crate::core::activity::Activity::unavailable(
                         crate::core::ComponentId::Impeccable, "design_preparation",
                         &format!("Os recursos do Impeccable estão indisponíveis; o Designer continuará com os recursos do projeto. {}", cause.message),
@@ -3540,7 +3573,8 @@ fn run_turn_once<'a>(
             }).await?;
         }
         let mut previous_runtime_context = String::new();
-        let mut design_fingerprint = None;
+        let mut design_preparation = core_runtime::DesignPreparation::default();
+        let mut optional_design_fingerprint = None;
         let mut replay_design = false;
         drop(preparation);
         loop {
@@ -3601,10 +3635,23 @@ fn run_turn_once<'a>(
                 if exec.direct() {
                     scopes.extend(design_repository_paths.iter().cloned());
                 }
-                if let Some(activity) = core_runtime::prepare_design(
+                if exec.designer() {
+                    core_activities.extend(
+                        core_runtime::prepare_design_context(
+                            session,
+                            pack,
+                            &scopes,
+                            &brief,
+                            &mut design_preparation,
+                            std::mem::take(&mut replay_design),
+                            signal.clone(),
+                        )
+                        .await?,
+                    );
+                } else if let Some(activity) = core_runtime::prepare_design(
                     session,
                     pack.prepare_context(&session.root, &user, &scopes, &brief),
-                    &mut design_fingerprint,
+                    &mut optional_design_fingerprint,
                     std::mem::take(&mut replay_design),
                 )? {
                     core_activities.push(activity);
@@ -3824,10 +3871,23 @@ fn run_turn_once<'a>(
                     if exec.direct() {
                         scopes.extend(design_repository_paths.iter().cloned());
                     }
-                    if let Some(activity) = core_runtime::prepare_design(
+                    if exec.designer() {
+                        core_activities.extend(
+                            core_runtime::prepare_design_context(
+                                session,
+                                pack,
+                                &scopes,
+                                &brief,
+                                &mut design_preparation,
+                                true,
+                                signal.clone(),
+                            )
+                            .await?,
+                        );
+                    } else if let Some(activity) = core_runtime::prepare_design(
                         session,
                         pack.prepare_context(&session.root, &user, &scopes, &brief),
-                        &mut design_fingerprint,
+                        &mut optional_design_fingerprint,
                         true,
                     )? {
                         core_activities.push(activity);
@@ -4505,6 +4565,8 @@ fn run_turn_once<'a>(
                 let command_preflight = (tool.name == "hub_complete"
                     && !command_sessions.running_ids().is_empty())
                     .then(|| "Existem comandos em execução. Use bash_wait para verificar o resultado ou bash_cancel para encerrá-los antes de entregar o handoff.".to_owned());
+                let design_preflight =
+                    core_runtime::design_preflight(session, execution.as_ref(), &tool)?;
                 let mut preflight = execution
                     .as_ref()
                     .and_then(|exec| exec.preflight(&tool))
@@ -4518,6 +4580,7 @@ fn run_turn_once<'a>(
                         )
                     })
                     .or(instruction_preflight)
+                    .or(design_preflight)
                     .or(command_preflight)
                     .or(terminal_preflight)
                     .or(policy_preflight)

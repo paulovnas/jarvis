@@ -39,14 +39,8 @@ fn push_model_part(contents: &mut Vec<Value>, mut part: Value, claude: bool) {
         !signature.is_empty() && signature != "skip_thought_signature_validator"
     });
     if part["thought"] == true && !signed {
-        if claude {
-            return;
-        }
-        let Some(text) = part["text"].as_str().filter(|text| !text.is_empty()) else {
-            return;
-        };
-        // Unsigned native thoughts are silently ignored by Gemini on replay.
-        part = json!({"text":format!("Previous reasoning summary (reference only):\n{text}")});
+        // Replaying internal thoughts as assistant prose can turn them into the next answer.
+        return;
     }
     if !signed {
         if let Some(object) = part.as_object_mut() {

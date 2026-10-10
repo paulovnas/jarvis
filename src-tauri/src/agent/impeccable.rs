@@ -193,6 +193,95 @@ fn within_project(root: &Path, value: &str) -> bool {
     true
 }
 
+fn design_target(
+    root: &Path,
+    verb: &str,
+    arguments: &[String],
+) -> Result<Option<String>, AgentError> {
+    for (index, argument) in arguments.iter().enumerate() {
+        if argument == "--target" || argument == "-t" {
+            return Ok(arguments.get(index + 1).cloned());
+        }
+        if let Some(target) = argument.strip_prefix("--target=") {
+            return Ok(Some(target.into()));
+        }
+    }
+    if matches!(verb, "detect" | "detect-csp") {
+        let mut targets = Vec::new();
+        let mut values = arguments.iter();
+        while let Some(argument) = values.next() {
+            if matches!(argument.as_str(), "--scope" | "--viewport") {
+                let _ = values.next();
+            } else if !argument.starts_with('-') {
+                let target = if argument.starts_with("file:") {
+                    url::Url::parse(argument)
+                        .ok()
+                        .and_then(|url| url.to_file_path().ok())
+                        .map(|path| path.to_string_lossy().into_owned())
+                } else if argument.contains("://") {
+                    None
+                } else {
+                    Some(argument.clone())
+                };
+                if let Some(target) = target.filter(|target| root.join(target).exists()) {
+                    targets.push(target);
+                }
+            }
+        }
+        let Some(first) = targets.first() else {
+            return Ok(None);
+        };
+        let design = super::knowledge::design_path(root, Some(first))?;
+        for target in targets.iter().skip(1) {
+            if super::knowledge::design_path(root, Some(target))? != design {
+                return Err(AgentError::new("impeccable_design_scope", "Estes caminhos usam documentos de design diferentes. Execute uma inspeção separada para cada aplicativo, preservando o contexto de design de cada um."));
+            }
+        }
+        return Ok(Some(first.clone()));
+    }
+    Ok(None)
+}
+
+fn bound_action(content: &str) -> Option<&str> {
+    content
+        .lines()
+        .next()?
+        .strip_prefix("Impeccable Live · ação ")
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+        })
+}
+
+fn validate_action(content: &str, command: &str, arguments: &[String]) -> Result<(), AgentError> {
+    let Some(id) = bound_action(content) else {
+        return Ok(());
+    };
+    if !command.starts_with("live") || command == "live-status" {
+        return Ok(());
+    }
+    let supplied: Vec<&str> = arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| {
+            if matches!(arg.as_str(), "--id" | "--reply") {
+                arguments.get(index + 1).map(String::as_str)
+            } else {
+                arg.strip_prefix("--id=")
+            }
+        })
+        .collect();
+    if supplied.is_empty() || supplied.iter().any(|supplied| *supplied != id) {
+        return Err(AgentError::new("impeccable_live_action", &format!(
+            "Esta execução pertence à ação {id}. Use somente --id {id} ou --reply {id}; não consulte nem responda outros pedidos. Continue a solicitação atual preservando seus resultados."
+        )));
+    }
+    Ok(())
+}
+
 // Keep the dispatcher-owned runtime context explicit across native/CLI executors.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn execute(
@@ -206,6 +295,23 @@ pub(super) async fn execute(
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
     let (verb, arguments) = arguments(&session.root, args)?;
+    let mut live_binding = None;
+    {
+        let data = session.data.lock().map_err(|_| AgentError::internal())?;
+        if let Some(turn) = data.turns.last() {
+            validate_action(&turn.turn.user, verb, &arguments)?;
+            if verb.starts_with("live") && verb != "live-status" {
+                if let Some(app) = app {
+                    live_binding = crate::core::impeccable_live::validate_bound_request(
+                        app,
+                        conversation,
+                        &turn.turn.user,
+                    )
+                    .map_err(AgentError::from)?;
+                }
+            }
+        }
+    }
     if restricted && capabilities(args).effect != Effect::ReadOnly {
         return Err(AgentError::new(
             "impeccable_read_only",
@@ -219,7 +325,7 @@ pub(super) async fn execute(
                 "O modo Live requer o aplicativo desktop.",
             )
         })?;
-        crate::core::impeccable_live::execute(
+        let output = crate::core::impeccable_live::execute(
             app,
             conversation,
             verb,
@@ -227,12 +333,30 @@ pub(super) async fn execute(
             Some(options.clone()),
         )
         .await
-        .map_err(AgentError::from)?
-        .to_string()
+        .map_err(AgentError::from)?;
+        live_output(verb, output)?
     } else {
-        let mut command =
-            crate::core::design::command(home, &session.root).map_err(AgentError::from)?;
+        let target = design_target(&session.root, verb, &arguments)?.or_else(|| {
+            verb.starts_with("live")
+                .then(|| {
+                    app.and_then(|app| {
+                        crate::core::impeccable_live::design_target(
+                            app,
+                            conversation,
+                            &session.root,
+                        )
+                    })
+                })
+                .flatten()
+        });
+        let mut command = crate::core::design::command_for(home, &session.root, target.as_deref())
+            .map_err(AgentError::from)?;
         command.arg(verb).args(&arguments);
+        if let Some((sequence, kind)) = live_binding {
+            command
+                .env("JARVIS_LIVE_REQUEST_SEQ", sequence.to_string())
+                .env("JARVIS_LIVE_EVENT_TYPE", kind);
+        }
         let output = crate::hooks::runtime::execute_process(command, b"", 120, signal)
             .await
             .map_err(|_| AgentError::cancelled())?
@@ -249,6 +373,18 @@ pub(super) async fn execute(
     )
     .await?;
     Ok(output)
+}
+
+fn live_output(verb: &str, output: Value) -> Result<String, AgentError> {
+    if verb == "live" && output["state"] != "ready" {
+        let reason = output["error"]
+            .as_str()
+            .unwrap_or("A preparação Live não foi concluída.");
+        return Err(AgentError::new("impeccable_live_setup", &format!(
+            "{reason} O agente ainda não está conectado à barra Live. Retome pelo Jarvis ou use live com --dev-url e a URL local conhecida do projeto. Não inicie um helper ou polling pelo terminal. Estado: {output}"
+        )));
+    }
+    Ok(output.to_string())
 }
 
 fn engine_output(verb: &str, output: crate::hooks::runtime::Output) -> Result<String, AgentError> {
@@ -270,6 +406,90 @@ fn engine_output(verb: &str, output: crate::hooks::runtime::Output) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn design_binding_follows_explicit_context_and_local_detector_targets() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("app/src")).unwrap();
+        std::fs::write(root.join("app/src/index.css"), "body {}").unwrap();
+        for args in [
+            vec!["--target", "app"],
+            vec!["-t", "app"],
+            vec!["--target=app"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(
+                design_target(&root, "context", &args).unwrap(),
+                Some("app".into())
+            );
+        }
+        assert_eq!(
+            design_target(
+                &root,
+                "detect",
+                &["--json".into(), "app/src/index.css".into()]
+            )
+            .unwrap(),
+            Some("app/src/index.css".into())
+        );
+        assert_eq!(
+            design_target(project.path(), "detect", &["https://localhost:3000".into()]).unwrap(),
+            None
+        );
+        assert_eq!(
+            design_target(&root, "live-resume", &["--id".into(), "request".into()]).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn detector_keeps_each_app_design_separate_and_ignores_option_values() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        for app in ["app", "admin"] {
+            std::fs::create_dir_all(root.join(app)).unwrap();
+            std::fs::write(root.join(app).join("index.css"), "body {}").unwrap();
+            std::fs::write(root.join(app).join("DESIGN.md"), format!("# {app}")).unwrap();
+        }
+        let failure = design_target(
+            &root,
+            "detect",
+            &["app/index.css".into(), "admin/index.css".into()],
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "impeccable_design_scope");
+        assert_eq!(
+            design_target(
+                &root,
+                "detect",
+                &["--scope".into(), "admin".into(), "app/index.css".into()]
+            )
+            .unwrap(),
+            Some("app/index.css".into())
+        );
+        let file_url = url::Url::from_file_path(root.join("app/index.css")).unwrap();
+        assert_eq!(
+            design_target(&root, "detect", &[file_url.to_string()]).unwrap(),
+            Some(root.join("app/index.css").to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            design_target(&root, "detect", &["app/index.css".into(), "app".into()]).unwrap(),
+            Some("app/index.css".into())
+        );
+    }
+
+    #[test]
+    fn live_setup_does_not_claim_that_the_bar_is_connected_to_an_agent() {
+        let setup = json!({"state":"setup","error":"Página local não identificada","setupNeeded":{"error":"url_missing"}});
+        let error = live_output("live", setup).unwrap_err();
+        assert_eq!(error.code, "impeccable_live_setup");
+        assert!(error.message.contains("--dev-url"));
+        assert!(error.message.contains("não está conectado"));
+        assert!(error.message.contains("Não inicie um helper"));
+        assert!(live_output("live", json!({"state":"ready"})).is_ok());
+        assert!(live_output("live-server", json!({"state":"off"})).is_ok());
+    }
 
     #[test]
     fn design_engine_rejects_global_commands_escaping_paths_and_competing_polls() {
@@ -386,4 +606,29 @@ mod tests {
             assert!(!policy.parallel_safe);
         }
     }
+}
+#[test]
+fn live_turn_cannot_consult_or_ack_a_previous_request() {
+    let content = "Impeccable Live · ação 570d82e8\nAltere somente a cor dos ícones selecionados.";
+    for (command, args) in [
+        ("live-resume", vec!["--id", "ca170dc6"]),
+        ("live-poll", vec!["--reply", "794ffcde", "steer_done"]),
+        ("live-complete", vec!["--id=794ffcde"]),
+        ("live-resume", vec![]),
+    ] {
+        let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            validate_action(content, command, &args).unwrap_err().code,
+            "impeccable_live_action"
+        );
+    }
+    assert!(validate_action(content, "live-resume", &["--id".into(), "570d82e8".into()]).is_ok());
+    assert!(validate_action(
+        content,
+        "live-poll",
+        &["--reply".into(), "570d82e8".into(), "done".into()]
+    )
+    .is_ok());
+    assert!(validate_action(content, "detect", &[]).is_ok());
+    assert!(validate_action("Normal design task", "live-resume", &[]).is_ok());
 }

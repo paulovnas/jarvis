@@ -1,0 +1,40 @@
+--- a/crates/live/src/live_accept.rs
++++ b/crates/live/src/live_accept.rs
+@@ -667,7 +667,8 @@
+     new_lines.extend_from_slice(&lines[..rs]);
+     new_lines.extend(restored);
+     new_lines.extend_from_slice(&lines[(re + 1).min(lines.len())..]);
+-    let _ = std::fs::write(target_file, new_lines.join("\n"));
++    std::fs::write(target_file, new_lines.join("\n"))
++        .map_err(|cause| format!("Could not save discarded source: {cause}"))?;
+     Ok(())
+ }
+ 
+@@ -862,7 +863,8 @@
+     new_lines.extend_from_slice(&lines[..rs]);
+     new_lines.extend(replacement);
+     new_lines.extend_from_slice(&lines[(re + 1).min(lines.len())..]);
+-    let _ = std::fs::write(target_file, new_lines.join("\n"));
++    std::fs::write(target_file, new_lines.join("\n"))
++        .map_err(|cause| format!("Could not save accepted source: {cause}"))?;
+     Ok(AcceptOutcome::Carbonized {
+         carbonize: needs_carbonize,
+         original: original_content.join("\n"),
+@@ -1367,6 +1369,17 @@
+         .collect()
+     }
+ 
++    #[test]
++    fn jarvis_accept_and_discard_propagate_source_write_failures() {
++        let lines = wrapped("<style data-impeccable-css=\"ab12cd34\">");
++        let directory = std::env::temp_dir();
++        let path = directory.to_string_lossy();
++        assert!(handle_accept_unlocked("ab12cd34", "2", &lines, &path, None, None)
++            .err().is_some_and(|cause| cause.starts_with("Could not save accepted source:")));
++        assert!(handle_discard_unlocked("ab12cd34", &lines, &path)
++            .err().is_some_and(|cause| cause.starts_with("Could not save discarded source:")));
++    }
++
+     fn carbonize(file_name: &str, style_open: &str) -> String {
+         let nanos = std::time::SystemTime::now()
+             .duration_since(std::time::UNIX_EPOCH)

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useCore } from "@/hooks/use-core";
 import { coreFixture } from "@/test/core-fixtures";
+import { CORE_DETAILS } from "@/core/core-presentation";
 import { CorePanel, CoreSettings } from "./CoreSettings";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
@@ -30,7 +31,19 @@ beforeEach(() => {
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
 });
 
-it.each([false, true])("finishes update discovery despite status events and avoids rechecking on panel remount (failure: %s)", async fail => {
+it("describes native bundled Impeccable without independent installation or update actions", async () => {
+  const state = coreFixture(); const item = state.items[3];
+  item.bundled = true; item.updateAvailable = true; item.error = "Recurso nativo indisponível";
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+  expect(await screen.findByText("Incluído no Jarvis; atualizado com o aplicativo.")).toBeVisible();
+  expect(screen.getByText("Nativo")).toBeVisible();
+  for (const action of ["Instalar", "Atualizar", "Reinstalar"]) expect(screen.queryByRole("button", { name: `${action} Impeccable` })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Detalhes de Impeccable" }));
+  expect(screen.queryByText(/O download e a preparação podem levar alguns minutos/)).not.toBeInTheDocument();
+});
+
+it.each([false, true])("checks updates on request and preserves completion across panel remounts (failure: %s)", async fail => {
   const state = coreFixture();
   const message = "Não foi possível verificar atualizações do Core: O GitHub atingiu o limite temporário de consultas.";
   let finishCheck!: () => void;
@@ -42,6 +55,9 @@ it.each([false, true])("finishes update discovery despite status events and avoi
     return <>{core.checked && <p>Consulta concluída</p>}{visible && <CorePanel core={core} setup />}</>;
   }
   const view = render(<Panel visible />);
+  await screen.findByRole("heading", { name: "Context-mode" });
+  expect(invokeMock).not.toHaveBeenCalledWith("check_core_updates");
+  fireEvent.click(screen.getByRole("button", { name: "Verificar atualizações do Core" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
   await act(async () => {
     events.get("core:changed")?.({ event: "core:changed", id: 1, payload: { ...state, checking: true } });
@@ -67,7 +83,7 @@ it.each(coreFixture().items.map((_, index) => index))("updates real download pro
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   const bar = await screen.findByRole("progressbar", { name: `Instalação de ${state.items[index].name}` });
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_core_status"));
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(bar).toHaveAttribute("data-indeterminate");
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: state.items[index].id, download: { receivedBytes: 1048576, totalBytes: 4194304 } } }));
@@ -95,7 +111,7 @@ it("restores an ongoing download without inventing a percentage when the server 
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   const bar = await screen.findByRole("progressbar", { name: "Instalação de Impeccable" });
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_core_status"));
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(bar).toHaveAttribute("data-indeterminate");
   expect(screen.getByText("12 MB")).toBeInTheDocument();
@@ -105,15 +121,19 @@ it("restores an ongoing download without inventing a percentage when the server 
 
 it("preserves newer download progress when an earlier update check finishes", async () => {
   const state = coreFixture(false);
-  state.items[3].stage = "Baixando recursos de design";
-  state.items[3].download = { receivedBytes: 12582912, totalBytes: null };
   let finishCheck!: (value: unknown) => void;
   invokeMock.mockImplementation(async command => command === "check_core_updates"
     ? new Promise(resolve => { finishCheck = resolve; })
     : state);
   render(<CoreSettings />);
-  await screen.findByText("12 MB");
+  await screen.findByRole("heading", { name: "Impeccable" });
+  fireEvent.click(screen.getByRole("button", { name: "Verificar atualizações do Core" }));
   await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  const downloading = structuredClone(state);
+  downloading.items[3].stage = "Baixando recursos de design";
+  downloading.items[3].download = { receivedBytes: 12582912, totalBytes: null };
+  await act(async () => events.get("core:changed")?.({ event: "core:changed", id: 1, payload: downloading }));
+  await screen.findByText("12 MB");
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "impeccable", download: { receivedBytes: 16777216, totalBytes: null } } }));
   expect(screen.getByText("16 MB")).toBeInTheDocument();
   await act(async () => finishCheck(state));
@@ -121,11 +141,29 @@ it("preserves newer download progress when an earlier update check finishes", as
   expect(screen.queryByText("12 MB")).not.toBeInTheDocument();
 });
 
-it("explains the longer Impeccable installation through its help tooltip", async () => {
+it("reveals full tool information and installation guidance on request", async () => {
   const user = userEvent.setup(); invokeMock.mockResolvedValue(coreFixture());
   render(<CoreSettings />);
-  await user.hover(await screen.findByRole("button", { name: "Sobre a instalação do Impeccable" }));
+  const details = await screen.findByRole("button", { name: "Detalhes de Impeccable" });
+  expect(screen.queryByText(/O download e a preparação podem levar alguns minutos/)).not.toBeInTheDocument();
+  await user.click(details);
+  expect(details).toHaveAttribute("aria-expanded", "true");
   expect(await screen.findByText(/O download e a preparação podem levar alguns minutos/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Abrir Impeccable no GitHub" })).toBeVisible();
+  await user.click(details);
+  expect(screen.queryByText(/O download e a preparação podem levar alguns minutos/)).not.toBeInTheDocument();
+});
+
+it("shows a concise description for every active tool without mounting full details", async () => {
+  const state = coreFixture();
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+  await screen.findByRole("heading", { name: state.items[0].name });
+  for (const item of state.items) {
+    expect(screen.getByText(CORE_DETAILS[item.id].summary)).toBeVisible();
+    expect(screen.queryByText(CORE_DETAILS[item.id].description)).not.toBeInTheDocument();
+  }
+  expect(invokeMock).not.toHaveBeenCalledWith("check_core_updates");
 });
 
 it("offers Impeccable installation alongside the other Core resources", async () => {
@@ -141,6 +179,7 @@ it("presents one OpenMontage production core for video, narration and music", as
   invokeMock.mockResolvedValue(coreFixture());
   render(<CoreSettings />);
   expect(await screen.findByRole("heading", { name: "OpenMontage" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Detalhes de OpenMontage" }));
   expect(screen.getByText(/Produção completa com OpenMontage/)).toHaveTextContent("narração, música, composição e revisão");
   expect(screen.queryByRole("heading", { name: "Hyperframes" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Audiovisual" })).not.toBeInTheDocument();
@@ -163,6 +202,7 @@ it.each(["impeccable", "openmontage", "comfyui", "graft"] as const)("offers requ
 it("distinguishes the production package from optional local resources and API integrations", async () => {
   invokeMock.mockResolvedValue(coreFixture(false));
   render(<CoreSettings />);
+  fireEvent.click(await screen.findByRole("button", { name: "Detalhes de OpenMontage" }));
   expect(await screen.findByText(/Produção completa com OpenMontage/)).toHaveTextContent("conforme as dependências e credenciais configuradas");
 });
 
@@ -177,7 +217,7 @@ it("shows openmontage model downloads through the existing progress events", asy
   invokeMock.mockResolvedValue(state);
   render(<CoreSettings />);
   await screen.findByText("1 MB");
-  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("check_core_updates"));
+  await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_core_status"));
   await act(async () => events.get("core:download")?.({ event: "core:download", id: 1, payload: { id: "openmontage", download: { receivedBytes: 2097152, totalBytes: null } } }));
   expect(screen.getByText("2 MB")).toBeVisible();
   expect(screen.getByText("Baixando recursos do OpenMontage")).toBeVisible();

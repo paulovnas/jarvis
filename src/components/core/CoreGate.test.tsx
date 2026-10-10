@@ -56,7 +56,8 @@ it("repara uma falha de execução mesmo quando os arquivos estão instalados", 
   invokeMock.mockImplementation(async name => name === "repair_core_component" ? healthy : broken);
   render(<CoreGate><div>Chat liberado</div></CoreGate>);
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));
-  expect(await screen.findByText("Regras inválidas")).toBeInTheDocument();
+  expect(await screen.findByText("Regras inválidas", { selector: '[role="alert"]' })).toBeVisible();
+  expect(screen.getByText("Arquivos e recursos")).toBeVisible();
   const repair = screen.getByRole("button", { name: "Reparar Ponytail" });
   await waitFor(() => expect(repair).toBeEnabled());
   fireEvent.click(repair);
@@ -138,6 +139,9 @@ it("installs missing openmontage resources from upgrade diagnostics and releases
   fireEvent.click(await screen.findByRole("button", { name: "Solucionar" }));
   const install = await screen.findByRole("button", { name: "Instalar OpenMontage" });
   await waitFor(() => expect(install).toBeEnabled());
+  expect(screen.getByText("Vídeos com roteiro, cenas, narração e música.")).toBeVisible();
+  expect(screen.queryByText(/conforme as dependências e credenciais configuradas/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Verificações de OpenMontage" }));
   expect(screen.getByText(/conforme as dependências e credenciais configuradas/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Reparar OpenMontage" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Reinstalar OpenMontage" })).not.toBeInTheDocument();

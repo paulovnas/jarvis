@@ -5,11 +5,37 @@ import { invoke } from "@tauri-apps/api/core";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { Inspector } from "./Inspector";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
+import { DesktopLayoutProvider } from "./DesktopLayoutProvider";
+import { DEFAULT_DESKTOP_LAYOUT, type DesktopLayout } from "@/core/desktop-layout";
+import type { DesignerSession } from "./DesignerPanel";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("persists the Designer tab and never shows another conversation's Live requests", async () => {
+    const user = userEvent.setup();
+    let layout: DesktopLayout = DEFAULT_DESKTOP_LAYOUT;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "get_desktop_layout") return layout;
+      if (command === "save_desktop_layout") layout = (args as { layout: DesktopLayout }).layout;
+      return [];
+    });
+    const designer: DesignerSession = {
+      conversationId: "other", canResume: false, attention: false, onResume: vi.fn(async () => {}), onShowChat: vi.fn(),
+      live: { status: { conversationId: "other", state: "ready", phase: "running", actionId: "other-action", url: "http://localhost:5173/", tabId: "other-page", error: null, setupNeeded: null, tasks: [{ requestId: "other:1", actionId: "other-action", revision: 1, content: "Pedido de outra conversa", status: "pending", beadId: null, turnId: null, createdAt: 1791568800000 }] }, active: true, loaded: true, busy: false, toggle: vi.fn(async () => {}), resume: vi.fn(async () => {}), editTask: vi.fn(async () => null), removeTask: vi.fn(async () => null), resumeTask: vi.fn(async () => null), cancelAction: vi.fn(async () => null) },
+    };
+    const first = render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} chat={emptyChat()} designer={designer} /></DesktopLayoutProvider>);
+    await user.click(await screen.findByRole("tab", { name: "Designer" }));
+    await waitFor(() => expect(layout.inspectorTab).toBe("designer"));
+    expect(screen.queryByText("Pedido de outra conversa")).not.toBeInTheDocument();
+    expect(screen.getByText("Abra uma conversa para acompanhar as alterações.")).toBeVisible();
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "get_impeccable_live" || command === "start_impeccable_live")).toBe(false);
+    first.unmount();
+    render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} chat={emptyChat()} /></DesktopLayoutProvider>);
+    expect(await screen.findByRole("tab", { name: "Designer" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("region", { name: "Designer e Impeccable Live" })).toBeVisible();
+  });
   it("keeps changed files visible without a publication shortcut in idle and active chats", async () => {
     vi.mocked(invoke).mockImplementation(async command => command === "get_agent_file_changes" ? [{ path: "src/main.ts", additions: 1, deletions: 0, base: "conversation" }] : []);
     const chat = { ...emptyChat(), turns: [savedTurn()] };

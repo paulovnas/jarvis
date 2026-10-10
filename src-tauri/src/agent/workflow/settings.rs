@@ -94,18 +94,7 @@ pub(crate) fn validate_choice(
             crate::claude::validate_available_model(home, &selection.model)
                 .map_err(|message| AgentError::new("claude_provider", &message))?;
         } else {
-            let (credential, model) = oauth.inference_model(
-                state,
-                home,
-                &selection.account,
-                &selection.model,
-                selection.reasoning.as_deref(),
-            )?;
-            crate::openai_codex::validate_service_tier(
-                &credential,
-                &model,
-                selection.service_tier,
-            )?;
+            oauth.validate_model_choice(state, home, selection)?;
         }
     }
     Ok(())

@@ -40,7 +40,7 @@ describe("ChatComposer model reasoning", () => {
     const user = userEvent.setup();
     const toggle = vi.fn();
     const send = vi.fn();
-    const live = { status: { conversationId: "c1", state: "off" as const, url: null, tabId: null, error: null, setupNeeded: null }, active: false, loaded: true, busy: false, toggle };
+    const live = { status: { conversationId: "c1", state: "off" as const, url: null, tabId: null, error: null, setupNeeded: null, phase: "idle" as const, actionId: null, tasks: [] }, active: false, loaded: true, busy: false, toggle, resume: vi.fn(), editTask: vi.fn(), removeTask: vi.fn(), resumeTask: vi.fn(), cancelAction: vi.fn() };
     const fastModels = models.map(group => ({ ...group, providerKind: "openai-codex", models: group.models.map(model => ({ ...model, supportsFast: true })) }));
     const props = { draftKey: "c1", modelGroups: fastModels, onSendMessage: send, initialOptions: { ...chatOptions, account: "pessoal", model: "compact", reasoning: "xhigh", serviceTier: "priority" as const } };
     const view = await renderComposer(<ChatComposer {...props} designLive={live} liveUrl="http://localhost:5173/" />);
@@ -56,6 +56,29 @@ describe("ChatComposer model reasoning", () => {
     expect(stop).toBeEnabled();
     await user.click(stop);
     expect(toggle).toHaveBeenLastCalledWith(undefined, undefined);
+  });
+  it("keeps only the Live toggle in the composer and preserves the draft when switching models", async () => {
+    const user = userEvent.setup();
+    const resume = vi.fn();
+    const toggle = vi.fn();
+    const send = vi.fn();
+    const live = { status: { conversationId: "c1", state: "setup" as const, phase: "blocked" as const, actionId: "event-1", url: "http://localhost:3001/public/apresentacao", tabId: "page-1", error: "A conexão Live foi interrompida.", setupNeeded: { error: "event_failed" }, tasks: [] }, active: true, loaded: true, busy: false, toggle, resume, editTask: vi.fn(), removeTask: vi.fn(), resumeTask: vi.fn(), cancelAction: vi.fn() };
+    const chatModels = { data: { "standard/builder": { account: "pessoal", model: "compact", reasoning: "xhigh" } }, error: null, saving: false, save: vi.fn(), refresh: vi.fn() };
+    const props = { draftKey: "c1", modelGroups: models, onSendMessage: send, chatModels, designLive: live, liveUrl: "http://localhost:3001/public/apresentacao" };
+    const view = await renderComposer(<ChatComposer {...props} />);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.type(field, "Preserve meu rascunho");
+    expect(screen.queryByRole("status", { name: "Estado do Impeccable Live" })).not.toBeInTheDocument();
+    expect(resume).not.toHaveBeenCalled();
+    view.rerender(<ChatComposer {...props} chatModels={{ ...chatModels, data: { "standard/builder": { account: "pessoal", model: "flexible", reasoning: "high" } } }} />);
+    expect(screen.queryByRole("button", { name: "Retomar Live" })).not.toBeInTheDocument();
+    expect(resume).not.toHaveBeenCalled();
+    expect(field).toHaveTextContent("Preserve meu rascunho");
+    expect(send).not.toHaveBeenCalled();
+    expect(toggle).not.toHaveBeenCalled();
+    view.rerender(<ChatComposer {...props} modelGroups={[]} />);
+    expect(screen.queryByRole("button", { name: "Retomar Live" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Desligar Impeccable Live" })).toBeEnabled();
   });
   it("recalls full sent text from this chat and lets the user edit and resend it", async () => {
     const user = userEvent.setup();

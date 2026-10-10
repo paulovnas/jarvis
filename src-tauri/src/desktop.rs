@@ -68,6 +68,7 @@ pub enum InspectorTab {
     Activities,
     Github,
     Explorer,
+    Designer,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -843,6 +844,16 @@ mod tests {
                 .layout
                 .last_seen_release_version,
             store.preferences.layout.last_seen_release_version
+        );
+    }
+
+    #[test]
+    fn designer_inspector_tab_round_trips() {
+        let value = serde_json::to_value(InspectorTab::Designer).unwrap();
+        assert_eq!(value, "designer");
+        assert_eq!(
+            serde_json::from_value::<InspectorTab>(value).unwrap(),
+            InspectorTab::Designer
         );
     }
 

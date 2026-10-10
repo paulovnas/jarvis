@@ -3,6 +3,7 @@ mod capture;
 pub(crate) mod extension;
 #[cfg(target_os = "linux")]
 mod linux;
+pub(crate) mod live;
 #[cfg(feature = "browser-probe")]
 pub(crate) mod probe;
 mod routing;
@@ -79,6 +80,7 @@ pub struct BrowserState {
     operations: tokio::sync::Mutex<()>,
     external: Mutex<BTreeMap<String, Snapshot>>,
     selected: Mutex<BTreeMap<String, Option<String>>>,
+    live: live::State,
 }
 
 fn address(value: &str) -> Result<url::Url, AgentError> {
@@ -172,7 +174,11 @@ impl BrowserState {
         }
         Ok(result)
     }
-    fn snapshot(&self, app: &tauri::AppHandle, conversation: &str) -> Result<Snapshot, AgentError> {
+    pub(crate) fn snapshot(
+        &self,
+        app: &tauri::AppHandle,
+        conversation: &str,
+    ) -> Result<Snapshot, AgentError> {
         self.access(app, false, |c| {
             Ok(c.conversations
                 .get(conversation)

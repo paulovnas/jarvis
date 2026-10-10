@@ -37,7 +37,7 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
   render() { return this.state.failed ? <p role="alert" className="p-5 text-sm text-destructive">Não foi possível carregar o visualizador. Reabra o Jarvis para tentar novamente.</p> : this.props.children; }
 }
 
-export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLauncher, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; children: ReactNode }) {
+export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLauncher, browserBanner, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; browserBanner?: ReactNode; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
   const sorting = useRef(false);
   const orderKey = `tabs:${browser?.conversationId ?? http?.conversationId ?? files?.projectId ?? ""}`;
@@ -91,7 +91,10 @@ export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLau
     <TabsContent value="chat" keepMounted inert={backgroundChat} className={`min-h-0 min-w-0 flex-1 flex-col ${backgroundChat ? "hidden" : "flex"}`}>{children}</TabsContent>
     {activeHttp && http && <TabsContent value={`http:${activeHttp.draft.id}`} className="m-0 min-h-0 min-w-0 flex-1 overflow-hidden"><HttpPanel http={http} tab={activeHttp} onAnalyze={run => onAnalyzeHttp?.(run)} /></TabsContent>}
     {http && <HttpCloseDialog http={http} />}
-    {activeBrowser && browser && <TabsContent value={`browser:${activeBrowser.id}`} className="m-0 min-h-0 flex-1 overflow-hidden"><BrowserPanel key={activeBrowser.id} browser={browser} tab={activeBrowser} /></TabsContent>}
+    {activeBrowser && browser && <TabsContent value={`browser:${activeBrowser.id}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {browserBanner && <div className="shrink-0 pt-2">{browserBanner}</div>}
+      <div className="min-h-0 min-w-0 flex-1"><BrowserPanel key={activeBrowser.id} browser={browser} tab={activeBrowser} /></div>
+    </TabsContent>}
     {active && files && <TabsContent value={`file:${active}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3 text-xs text-muted-foreground">
         <FileIcon path={active} />

@@ -232,12 +232,33 @@ fn validate_backend(request: &BrowserRequest, external: bool) -> Result<(), Agen
             || request.locator.is_some()
             || request.frame_id.is_some()
             || request.timeout_ms.is_some()
-            || request.state.is_some()
-            || (request.action == "snapshot"
-                && (request.offset.is_some() || request.limit.is_some())))
+            || request.state.is_some())
     {
         return Err(error("Este recurso usa a extensão Chromium. Selecione uma aba externa ou configure a extensão em Configurações > Navegador."));
     }
+    Ok(())
+}
+
+fn paginate_native_snapshot(
+    result: &mut Value,
+    offset: Option<u32>,
+    limit: Option<u16>,
+) -> Result<(), AgentError> {
+    let elements = result["elements"]
+        .as_array_mut()
+        .ok_or_else(|| error("O navegador não retornou os elementos da página."))?;
+    let total = elements.len();
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+    *elements = elements
+        .iter()
+        .skip(offset as usize)
+        .take(usize::from(limit))
+        .cloned()
+        .collect();
+    result["total"] = json!(total);
+    result["offset"] = json!(offset);
+    result["limit"] = json!(limit);
     Ok(())
 }
 
@@ -358,6 +379,7 @@ pub(super) async fn command(
     };
     let action = request.action.clone();
     let requested_id = request.id.clone();
+    let pagination = (request.offset, request.limit);
     let mut result = if external {
         let value = serde_json::to_value(&request).map_err(|_| AgentError::internal())?;
         let result = extension::request(app, conversation, value).await?;
@@ -380,6 +402,9 @@ pub(super) async fn command(
     } else {
         super::command(app, conversation, request).await?
     };
+    if !external && action == "snapshot" && (pagination.0.is_some() || pagination.1.is_some()) {
+        paginate_native_snapshot(&mut result, pagination.0, pagination.1)?;
+    }
     if let Some((home, conversation, root, destination, path)) = save {
         result = tauri::async_runtime::spawn_blocking(move || {
             save_screenshot(
@@ -689,8 +714,6 @@ mod tests {
             json!({"action":"click","id":"native-tab","locator":{"text":"Save"}}),
             json!({"action":"click","id":"native-tab","element":"element-1","timeoutMs":0}),
             json!({"action":"snapshot","id":"native-tab","frameId":"frame-1"}),
-            json!({"action":"snapshot","id":"native-tab","offset":0}),
-            json!({"action":"snapshot","id":"native-tab","limit":100}),
             json!({"action":"wait","id":"native-tab","state":"ready"}),
         ] {
             let mut request: BrowserRequest = serde_json::from_value(payload).unwrap();
@@ -710,6 +733,33 @@ mod tests {
             let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
             assert!(validate(&mut request).is_err(), "accepted {payload}");
         }
+    }
+
+    #[test]
+    fn native_snapshot_pagination_preserves_page_evidence_and_current_element_ids() {
+        let mut request: BrowserRequest = serde_json::from_value(
+            json!({"action":"snapshot","id":"live-tab","offset":1,"limit":1}),
+        )
+        .unwrap();
+        validate(&mut request).unwrap();
+        assert!(!external_request(&request, BrowserMode::Extension));
+        validate_backend(&request, false).unwrap();
+        let full = json!({"url":"http://localhost:3001/login","text":"One feature panel","elements":[{"id":"doc:1:1","name":"Login"},{"id":"doc:1:2","name":"Accept"},{"id":"doc:1:3","name":"Discard"}]});
+        let mut page = full.clone();
+        paginate_native_snapshot(&mut page, request.offset, request.limit).unwrap();
+        assert_eq!(page["elements"], json!([{"id":"doc:1:2","name":"Accept"}]));
+        assert_eq!(page["text"], full["text"]);
+        assert_eq!(page["url"], full["url"]);
+        assert_eq!(page["total"], 3);
+        assert_eq!(page["offset"], 1);
+        assert_eq!(page["limit"], 1);
+        let mut beyond = full.clone();
+        paginate_native_snapshot(&mut beyond, Some(u32::MAX), Some(20)).unwrap();
+        assert_eq!(beyond["elements"], json!([]));
+        assert_eq!(beyond["total"], 3);
+        let mut first = full;
+        paginate_native_snapshot(&mut first, None, Some(20)).unwrap();
+        assert_eq!(first["elements"].as_array().unwrap().len(), 3);
     }
 
     #[test]

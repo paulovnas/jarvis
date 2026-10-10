@@ -25,7 +25,9 @@ fn native_design_skill_loads_host_owned_live_contract_and_core_receipt() {
     let mut selected = snapshot(temp.path(), None).unwrap().skills[0].clone();
     selected.source = Some("impeccable-core".into());
     let guidance = integration_instructions(&selected);
-    assert!(guidance.contains("takes precedence over upstream harness policies"));
+    assert_eq!(guidance, crate::core::design::HOST_ADAPTATION);
+    assert!(guidance.contains("private Core pack, not the project"));
+    assert!(guidance.contains("impeccable/new-work or impeccable/init"));
     assert!(guidance.contains("After replying, finish this turn"));
     assert!(guidance.contains("--then-poll"));
     let receipt = loaded_activity(&selected).unwrap();
@@ -36,6 +38,50 @@ fn native_design_skill_loads_host_owned_live_contract_and_core_receipt() {
     assert!(receipt.plugin_id.is_none());
     selected.source = None;
     assert!(integration_instructions(&selected).is_empty());
+}
+
+#[test]
+fn oversized_native_impeccable_pages_offer_complete_design_reads_instead_of_partial_content() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = root(temp.path()).join("skills/impeccable");
+    skill(&directory, "impeccable", "Ordinary complete skill.");
+    let mut selected = snapshot(temp.path(), None).unwrap().skills[0].clone();
+    selected.source = Some("impeccable-core".into());
+    let large = format!(
+        "{}{}\nRequired final section",
+        integration_instructions(&selected),
+        "á".repeat(33000)
+    );
+    for (path, key) in [
+        ("reference/new-work.md", "reference/new-work.md"),
+        ("./reference/./new-work.md", "reference/new-work.md"),
+        ("SKILL.md", "SKILL.md"),
+    ] {
+        let failure = bounded_skill_page(&selected, path, &large).unwrap_err();
+        let read =
+            json!({"id":"impeccable/skill", "file":format!(".agents/skills/impeccable/{key}")});
+        assert!(failure.message.contains(&format!("design_read {read}")));
+        assert!(failure
+            .message
+            .contains("nenhum conteúdo parcial foi entregue"));
+        assert!(failure.message.contains("nextOffset"));
+        assert!(!failure.message.contains("Required final section"));
+        assert!(!failure.message.contains(&"á".repeat(40)));
+    }
+    let small = format!("{}Complete workflow", integration_instructions(&selected));
+    assert_eq!(
+        bounded_skill_page(&selected, "SKILL.md", &small).unwrap(),
+        small
+    );
+    assert!(catalog::resource(&selected, "../../outside.md").is_err());
+    selected.source = None;
+    assert_eq!(
+        bounded_skill_page(&selected, "references/guide.md", &large)
+            .unwrap()
+            .chars()
+            .count(),
+        32000
+    );
 }
 
 #[cfg(unix)]

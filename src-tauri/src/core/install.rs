@@ -387,6 +387,7 @@ impl ReleaseMetadata {
         if let Some(remaining) = self
             .retry_at
             .and_then(|at| at.checked_duration_since(Instant::now()))
+            .filter(|remaining| !remaining.is_zero())
         {
             return Err(github_rate_limit(remaining));
         }

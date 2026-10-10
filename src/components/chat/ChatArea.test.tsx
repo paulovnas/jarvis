@@ -14,6 +14,8 @@ import { useChat } from "@/hooks/use-chat";
 import { useChatAgentModels } from "@/hooks/use-chat-agent-models";
 import type { AgentModelConfig, ModelChoice } from "@/hooks/use-agent-models";
 import { ChatArea } from "./ChatArea";
+import { useState } from "react";
+import { DesignerPanel, type DesignerSession } from "@/components/layout/DesignerPanel";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 // Chat model persistence is covered by its hook and composer regressions; keep live-chat fixtures scoped to chat snapshots.
@@ -91,6 +93,69 @@ describe("Persistent live conversation", () => {
     expect(call).toHaveBeenCalledWith("start_impeccable_live", { conversationId: "c1", options: expect.objectContaining({ model: "model", workflow: "designer", approvalMode: "yolo" }) });
     expect(call).toHaveBeenCalledWith("stop_impeccable_live", { conversationId: "c1" });
     expect(call.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+  });
+  it("moves Live progress to the Designer panel and resumes with the current composer model", async () => {
+    const user = userEvent.setup();
+    let live: { conversationId: string; state: "off" | "ready" | "setup"; phase: "idle" | "running" | "blocked"; url: string | null; tabId: string | null; error: string | null; setupNeeded: null; actionId: string | null } = { conversationId: "c1", state: "off", phase: "idle", url: null, tabId: null, error: null, setupNeeded: null, actionId: null };
+    let activeId: string | null = null;
+    const browserTabs = () => ({ tabs: live.state === "off" ? [] : [
+      { id: "live-page", conversationId: "c1", title: "Projeto · Live", url: "http://localhost:5173/", loading: false },
+      { id: "other-page", conversationId: "c1", title: "Documentação", url: "https://example.com/", loading: false },
+    ], activeId, backend: "embedded" });
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_impeccable_live") return live;
+      if (command === "get_workflow_catalog") return { revision: 0, agents: [], flows: [], builtinAgents: [], builtinFlows: [] };
+      if (command === "start_impeccable_live") {
+        live = { ...live, state: "ready", phase: "running", url: "http://localhost:5173/", tabId: "live-page", error: null, actionId: "live-action" };
+        activeId = "live-page";
+        for (const handler of listeners.get("browser:changed") ?? []) handler({ event: "browser:changed", id: 1, payload: { conversationId: "c1" } });
+        return live;
+      }
+      if (command === "get_browser_tabs") return browserTabs();
+      if (command === "browser_command") { activeId = (args as { request: { id?: string } }).request.id ?? null; return {}; }
+      return emptyChat();
+    });
+    let configured: AgentModelConfig = {};
+    const save = vi.fn(async (key: string, choice: ModelChoice) => { configured = { ...configured, [key]: choice }; view.rerender(<LiveChat />); return true; });
+    vi.mocked(useChatAgentModels).mockImplementation(() => ({ data: configured, error: null, saving: false, save, refresh: vi.fn() }));
+    function LiveChat() {
+      const chat = useChat("c1");
+      const [designer, setDesigner] = useState<DesignerSession | null>(null);
+      return <><ChatArea onDesignerChange={setDesigner} library={populatedLibrary()} chat={chat} modelGroups={[
+        { provider: "Codex", providerKind: "openai-codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo inicial", reasoningLevels: ["medium"], defaultReasoningLevel: "medium" }] },
+        { provider: "Outro provedor", providerKind: "custom", models: [{ value: "alternate/new-model", label: "Modelo alternativo", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] },
+      ]} /><DesignerPanel session={designer ?? undefined} /></>;
+    }
+    const view = render(<LiveChat />);
+    await user.type(await screen.findByRole("textbox", { name: "Mensagem" }), "Rascunho preservado");
+    const start = await screen.findByRole("button", { name: "Ativar Impeccable Live" });
+    await waitFor(() => expect(start).toBeEnabled());
+    await user.click(start);
+    expect(await screen.findByRole("status", { name: "Estado do Designer" })).toHaveTextContent("Em andamento");
+    expect(screen.queryByRole("status", { name: "Estado do Impeccable Live" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Documentação" }));
+    expect(screen.getByRole("status", { name: "Estado do Designer" })).toHaveTextContent("Em andamento");
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+    (await screen.findByRole("menuitem", { name: "Outro provedor" })).focus();
+    await user.keyboard("{ArrowRight}");
+    (await screen.findByRole("menuitem", { name: "Modelo alternativo" })).focus();
+    await user.keyboard("{ArrowRight}");
+    await user.click(within(await screen.findByRole("group", { name: "Raciocínio" })).getByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Modelo alternativo · Alto"));
+    await user.click(screen.getByRole("tab", { name: "Projeto · Live" }));
+    live = { ...live, state: "setup", phase: "blocked", tabId: null, error: "Não foi possível conectar ao Designer." };
+    await act(async () => { for (const handler of listeners.get("impeccable-live:changed") ?? []) handler({ event: "impeccable-live:changed", id: 1, payload: live }); });
+    const status = screen.getByRole("status", { name: "Estado do Designer" });
+    expect(status).toBeVisible();
+    expect(status).toHaveTextContent(live.error!);
+    await user.click(within(status).getByRole("button", { name: "Retomar Live" }));
+    expect(call).toHaveBeenCalledWith("start_impeccable_live", { conversationId: "c1", url: "http://localhost:5173/", options: { executor: "jarvis", account: "alternate", model: "new-model", reasoning: "high", mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } });
+    expect(call.mock.calls.filter(([command]) => command === "start_impeccable_live")).toHaveLength(2);
+    expect(call.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+    await user.click(screen.getByRole("tab", { name: "Chat" }));
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho preservado");
   });
   it("retries with the current composer provider, model and reasoning while preserving the failed message and image", async () => {
     const user = userEvent.setup();
@@ -667,6 +732,26 @@ describe("Persistent live conversation", () => {
     expect(await screen.findByRole("button", { name: "Autorizar uma vez" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Autorizar ação no navegador?")).toBeVisible();
+  });
+  it("keeps the Live page visible and provides an explicit route to answer a required question", async () => {
+    const user = userEvent.setup();
+    let activeId: string | null = "live-page";
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_impeccable_live") return { conversationId: "c1", state: "ready", phase: "running", actionId: "event-1", url: "http://localhost:5173/", tabId: "live-page", error: null, setupNeeded: null };
+      if (command === "get_browser_tabs") return { tabs: [{ id: "live-page", conversationId: "c1", title: "Projeto · Live", url: "http://localhost:5173/", loading: false }], activeId, backend: "embedded" };
+      if (command === "browser_command" && (args as { request: { action: string } }).request.action === "select") { activeId = null; return {}; }
+      return emptyChat();
+    });
+    render(<TestChat />);
+    await screen.findByRole("tab", { name: "Projeto · Live" });
+    const pendingQuestion = { turnId: "turn1", toolId: "ask1", questions: [{ id: "position", question: "Qual posição prefere para a versão?", options: [{ label: "Ao lado do nome" }, { label: "No topo" }] }] };
+    await update({ ...emptyChat(), revision: 2, activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }], pendingQuestion });
+    expect(screen.getByRole("tab", { name: "Projeto · Live" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("status", { name: "Solicitação pendente no Live" })).toHaveTextContent("Uma solicitação precisa da sua resposta");
+    expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Responder no chat" }));
+    expect(await screen.findByRole("region", { name: "Perguntas do Jarvis" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
   });
   it("keeps a rejected message draft and disables send without an account", async () => {
     const user = userEvent.setup();

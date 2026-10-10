@@ -2,6 +2,14 @@ import { expect, it } from "vitest";
 import { coreFixture } from "@/test/core-fixtures";
 import { ACTIVE_CORE_IDS, activeCore, coreDownloadEventSchema, coreSnapshotSchema } from "./core-components";
 
+it("defaults older Core snapshots to installable components and preserves native bundled metadata", () => {
+  const snapshot = coreFixture();
+  const legacy = { ...snapshot, items: snapshot.items.map(item => ({ ...item, bundled: undefined })) };
+  expect(coreSnapshotSchema.parse(legacy).items.every(item => item.bundled === false)).toBe(true);
+  snapshot.items.find(item => item.id === "impeccable")!.bundled = true;
+  expect(coreSnapshotSchema.parse(snapshot).items.find(item => item.id === "impeccable")!.bundled).toBe(true);
+});
+
 it("accepts the unified OpenMontage Core with only Context7 optional", () => {
   const snapshot = coreFixture();
   const context7 = snapshot.items.find(item => item.id === "context7")!;

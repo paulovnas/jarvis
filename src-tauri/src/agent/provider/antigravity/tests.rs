@@ -106,30 +106,25 @@ fn replay_preserves_signed_calls_and_applies_cca_bypass_only_to_each_groups_firs
 }
 
 #[test]
-fn unsigned_thought_replay_is_readable_for_gemini_and_omitted_for_claude() {
+fn replay_keeps_signed_thoughts_private_and_omits_unsigned_thoughts() {
     for model in ["gemini-3.8-flash", "claude-sonnet-4-6"] {
         let signed =
             json!({"thought":true,"text":"Signed reasoning","thoughtSignature":"c2lnbmVk"});
         let input = vec![
             json!({"role":"user","content":"Continue"}),
             json!({"type":"reasoning","summary":[{"text":"Prior plan"}],"_antigravity_model":model,"_antigravity_part":{"thought":true,"text":"Prior plan"}}),
+            json!({"type":"reasoning","summary":[{"text":"Interrupted plan"}],"_antigravity_model":model,"_antigravity_part":{"thought":true,"text":"Interrupted plan","thoughtSignature":"skip_thought_signature_validator"}}),
             json!({"type":"reasoning","summary":[{"text":"Signed reasoning"}],"_antigravity_model":model,"_antigravity_part":signed}),
+            json!({"role":"assistant","content":"The first change is ready for review."}),
         ];
         let replay = contents(&input, model).unwrap();
         let parts = replay[1]["parts"].as_array().unwrap();
-        assert_eq!(parts.last().unwrap(), &input[2]["_antigravity_part"]);
-        if model.starts_with("gemini") {
-            assert_eq!(parts.len(), 2);
-            assert!(parts[0]["text"].as_str().unwrap().contains("Prior plan"));
-            assert!(parts[0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("reference only"));
-            assert!(parts[0].get("thought").is_none());
-            assert!(parts[0].get("thoughtSignature").is_none());
-        } else {
-            assert_eq!(parts.len(), 1);
-        }
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], input[3]["_antigravity_part"]);
+        assert_eq!(parts[1]["text"], "The first change is ready for review.");
+        let replay = serde_json::to_string(&replay).unwrap();
+        assert!(!replay.contains("Prior plan"));
+        assert!(!replay.contains("Interrupted plan"));
     }
 }
 

@@ -52,16 +52,53 @@ pub(crate) fn validate_service_tier(
     model: &ProviderModel,
     tier: Option<crate::agent::workflow::settings::ServiceTier>,
 ) -> Result<(), ProviderError> {
+    validate_catalog_service_tier(
+        credential.custom.is_none() && credential.project_id.is_none(),
+        model,
+        tier,
+    )
+}
+
+fn validate_catalog_service_tier(
+    is_openai_codex: bool,
+    model: &ProviderModel,
+    tier: Option<crate::agent::workflow::settings::ServiceTier>,
+) -> Result<(), ProviderError> {
     if tier.is_none() {
         return Ok(());
     }
-    if credential.custom.is_some() || credential.project_id.is_some() || !model.supports_fast {
+    if !is_openai_codex || !model.supports_fast {
         return Err(ProviderError::new(
             "invalid_service_tier",
             "O modo Fast não está disponível para este modelo nesta conta. Selecione Normal ou outro modelo ChatGPT compatível. Atualize os modelos do provedor se necessário.",
         ));
     }
     Ok(())
+}
+
+fn selected_model<'a>(
+    models: &'a [ProviderModel],
+    model: &str,
+    reasoning: Option<&str>,
+) -> Result<&'a ProviderModel, ProviderError> {
+    let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
+        ProviderError::new(
+            "invalid_model",
+            "O modelo selecionado não está disponível nesta conta.",
+        )
+    })?;
+    if reasoning.is_some_and(|effort| {
+        !selected
+            .reasoning_levels
+            .iter()
+            .any(|level| level == effort)
+    }) {
+        return Err(ProviderError::new(
+            "invalid_reasoning",
+            "O nível de raciocínio não é aceito pelo modelo selecionado.",
+        ));
+    }
+    Ok(selected)
 }
 
 impl ProviderModel {
@@ -1866,6 +1903,41 @@ impl Default for OpenAiCodexState {
 }
 
 impl OpenAiCodexState {
+    /// Selecting a saved model uses public metadata; OAuth is resolved when sending.
+    pub(crate) fn validate_model_choice(
+        &self,
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        choice: &crate::agent::workflow::settings::ModelChoice,
+    ) -> Result<(), ProviderError> {
+        custom::validate_alias(&choice.account)?;
+        let account = catalog_cache::list(state, home)?
+            .into_iter()
+            .find(|account| account.alias == choice.account)
+            .ok_or_else(|| {
+                ProviderError::new("account_missing", "A conta selecionada foi desconectada.")
+            })?;
+        if !account.enabled {
+            return Err(ProviderError::new(
+                "account_disabled",
+                "Ative a conta nas configurações para usá-la.",
+            ));
+        }
+        if !account.models_available {
+            return Err(ProviderError::new(
+                "catalog_unavailable",
+                "Atualize os modelos da conta nas configurações para selecionar um modelo.",
+            ));
+        }
+        let models = visible_models(account.models, &account.disabled_models);
+        let selected = selected_model(&models, &choice.model, choice.reasoning.as_deref())?;
+        validate_catalog_service_tier(
+            account.provider_kind == "openai-codex",
+            selected,
+            choice.service_tier,
+        )
+    }
+
     /// Resolve app gateway credentials without selecting or rediscovering a model.
     /// Only an explicitly bound, enabled OpenAI Codex account is eligible.
     pub(crate) fn app_credential(
@@ -1975,23 +2047,7 @@ impl OpenAiCodexState {
         reasoning: Option<&str>,
     ) -> Result<(CodexCredential, ProviderModel), ProviderError> {
         let (mut credential, models) = self.credential_and_models(state, home, alias)?;
-        let selected = models.iter().find(|item| item.id == model).ok_or_else(|| {
-            ProviderError::new(
-                "invalid_model",
-                "O modelo selecionado não está disponível nesta conta.",
-            )
-        })?;
-        if reasoning.is_some_and(|effort| {
-            !selected
-                .reasoning_levels
-                .iter()
-                .any(|level| level == effort)
-        }) {
-            return Err(ProviderError::new(
-                "invalid_reasoning",
-                "O nível de raciocínio não é aceito pelo modelo selecionado.",
-            ));
-        }
+        let selected = selected_model(&models, model, reasoning)?;
         credential.inference_model = Some(selected.clone());
         if credential.account_id.starts_with("opencode-go:") {
             credential.custom = Some(opencode_go::model_config(state, home, alias, model)?);
@@ -2074,18 +2130,50 @@ impl OpenAiCodexState {
         }
         if credential.expires <= current_time_millis()? + 60_000 {
             credential = refresh_credential(&self.manager.endpoints, &credential)?;
+            if credential.account_id != record.account_id
+                || (record.provider_kind == "antigravity") != credential.project_id.is_some()
+            {
+                return Err(ProviderError::new(
+                    "account_mismatch",
+                    "A renovação retornou outra conta. Reconecte a conta desejada.",
+                ));
+            }
             self.manager
                 .secret_store
                 .store(alias, &credential)
                 .map_err(|_| ProviderError::internal())?;
         }
-        let client = build_codex_client().map_err(|_| ProviderError::internal())?;
-        let models = fetch_provider_models(&client, &mut credential).ok_or_else(|| {
-            ProviderError::new(
-                "catalog_unavailable",
-                "Não foi possível verificar os modelos da conta. Tente novamente.",
-            )
-        })?;
+        // OpenAI discovery must not gate inference for a previously known model.
+        // Antigravity discovery also resolves transport routes and must still run.
+        let models = match catalog_cache::list(state, home)?
+            .into_iter()
+            .find(|account| {
+                account.alias == alias
+                    && account.provider_kind == "openai-codex"
+                    && account.models_available
+            }) {
+            Some(account) => account.models,
+            None => {
+                let client = build_codex_client().map_err(|_| ProviderError::internal())?;
+                let models = fetch_provider_models(&client, &mut credential).ok_or_else(|| {
+                    ProviderError::new(
+                        "catalog_unavailable",
+                        "Não foi possível verificar os modelos da conta. Tente novamente.",
+                    )
+                })?;
+                catalog_cache::remember(
+                    home,
+                    &records,
+                    &[ProviderAccount::from_record(
+                        record.clone(),
+                        Some(&credential),
+                        models.clone(),
+                        true,
+                    )],
+                );
+                models
+            }
+        };
         let disabled = state
             .with_connection(home, |db| {
                 persistence::list_provider_model_exclusions(db, alias)
@@ -3456,6 +3544,186 @@ mod oauth_tests {
         assert!(persistence::require_enabled_account(&state, &home, &records[0].alias).is_err());
         drop(state);
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn saved_model_choices_use_public_metadata_and_inference_still_requires_matching_auth() {
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let alias = "openai-codex-offline";
+        let records = state
+            .with_connection(home.path(), |db| {
+                persistence::insert_provider_account(db, alias, "fixture-account")?;
+                persistence::list_provider_accounts(db)
+            })
+            .unwrap();
+        let model: ProviderModel = serde_json::from_value(serde_json::json!({
+            "id":"known-model", "name":"Known model", "reasoningLevels":["high"],
+            "defaultReasoningLevel":"high", "supportsFast":true
+        }))
+        .unwrap();
+        let account =
+            ProviderAccount::from_record(records[0].clone(), None, vec![model.clone()], true);
+        catalog_cache::remember(home.path(), &records, &[account]);
+        let secrets = Arc::new(InMemorySecretStore::default());
+        secrets.fail_load(true);
+        let oauth = OpenAiCodexState {
+            manager: Arc::new(OAuthManager::production(secrets.clone())),
+        };
+        let choice = serde_json::from_value(serde_json::json!({
+            "account":alias, "model":"known-model", "reasoning":"high", "serviceTier":"priority",
+            "fallback":{"executor":"claude", "account":"", "model":"sonnet", "reasoning":"low"}
+        }))
+        .unwrap();
+        crate::agent::workflow::settings::validate_choice(&state, &oauth, home.path(), &choice)
+            .unwrap();
+        assert_eq!(
+            oauth
+                .inference_model(&state, home.path(), alias, "known-model", Some("high"))
+                .err()
+                .unwrap()
+                .code,
+            "credential_missing"
+        );
+
+        secrets.fail_load(false);
+        let mut credential = CodexCredential::new(
+            "synthetic",
+            "synthetic-refresh",
+            current_time_millis().unwrap() + 300_000,
+            "different-account",
+            None,
+            None,
+        );
+        secrets.store(alias, &credential).unwrap();
+        assert_eq!(
+            oauth
+                .inference_model(&state, home.path(), alias, "known-model", Some("high"))
+                .err()
+                .unwrap()
+                .code,
+            "account_mismatch"
+        );
+        credential.account_id = "fixture-account".into();
+        secrets.store(alias, &credential).unwrap();
+        let (_, selected) = oauth
+            .inference_model(&state, home.path(), alias, "known-model", Some("high"))
+            .unwrap();
+        assert_eq!(selected, model);
+
+        credential.expires = 0;
+        secrets.store(alias, &credential).unwrap();
+        let (url, server) = fake_token_server(
+            serde_json::json!({"access_token":jwt("different-account"),"refresh_token":"rotated","expires_in":3600}).to_string(),
+            "200 OK",
+        );
+        let oauth = OpenAiCodexState {
+            manager: new_manager(url, Duration::from_secs(5), secrets.clone(), vec![]),
+        };
+        assert_eq!(
+            oauth
+                .inference_model(&state, home.path(), alias, "known-model", Some("high"))
+                .err()
+                .unwrap()
+                .code,
+            "account_mismatch"
+        );
+        assert_eq!(secrets.load(alias).unwrap().account_id, "fixture-account");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn offline_model_choices_reject_invalid_models_and_changed_account_settings() {
+        use crate::agent::workflow::settings::{validate_choice, ModelChoice};
+
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let alias = "openai-codex-choice";
+        let records = state
+            .with_connection(home.path(), |db| {
+                persistence::insert_provider_account(db, alias, "fixture-account")?;
+                persistence::list_provider_accounts(db)
+            })
+            .unwrap();
+        let model = serde_json::from_value(serde_json::json!({
+            "id":"known-model", "name":"Known model", "reasoningLevels":["high"],
+            "defaultReasoningLevel":"high", "supportsFast":false
+        }))
+        .unwrap();
+        let account = ProviderAccount::from_record(records[0].clone(), None, vec![model], true);
+        catalog_cache::remember(home.path(), &records, &[account]);
+        let oauth = OpenAiCodexState::default();
+        let choice: ModelChoice = serde_json::from_value(serde_json::json!({
+            "account":alias, "model":"known-model", "reasoning":"high"
+        }))
+        .unwrap();
+        for (patch, code) in [
+            (
+                serde_json::json!({"model":"unknown-model"}),
+                "invalid_model",
+            ),
+            (
+                serde_json::json!({"reasoning":"unsupported"}),
+                "invalid_reasoning",
+            ),
+            (
+                serde_json::json!({"serviceTier":"priority"}),
+                "invalid_service_tier",
+            ),
+        ] {
+            let mut invalid = serde_json::to_value(&choice).unwrap();
+            invalid
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            let invalid: ModelChoice = serde_json::from_value(invalid).unwrap();
+            assert_eq!(
+                serde_json::to_value(
+                    validate_choice(&state, &oauth, home.path(), &invalid).unwrap_err()
+                )
+                .unwrap()["code"],
+                code
+            );
+        }
+        validate_choice(&state, &oauth, home.path(), &choice).unwrap();
+        update_provider_model_enabled(&state, home.path(), alias, "known-model", false).unwrap();
+        assert_eq!(
+            serde_json::to_value(
+                validate_choice(&state, &oauth, home.path(), &choice).unwrap_err()
+            )
+            .unwrap()["code"],
+            "invalid_model"
+        );
+        update_provider_model_enabled(&state, home.path(), alias, "known-model", true).unwrap();
+        state
+            .with_connection(home.path(), |db| {
+                db.execute("UPDATE provider_accounts SET enabled=0", [])
+                    .map_err(PersistenceError::from)
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(
+                validate_choice(&state, &oauth, home.path(), &choice).unwrap_err()
+            )
+            .unwrap()["code"],
+            "account_disabled"
+        );
+        state
+            .with_connection(home.path(), |db| {
+                db.execute(
+                    "UPDATE provider_accounts SET enabled=1,account_id='replacement'",
+                    [],
+                )
+                .map_err(PersistenceError::from)
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(
+                validate_choice(&state, &oauth, home.path(), &choice).unwrap_err()
+            )
+            .unwrap()["code"],
+            "catalog_unavailable"
+        );
     }
 
     static NEXT_HOME: AtomicU64 = AtomicU64::new(1);

@@ -63,6 +63,24 @@ it("only offers new browser tabs for the loaded embedded backend and preserves e
   expect(screen.getByRole("button", { name: "Vincular aba externa" })).toBeVisible();
 });
 
+it("keeps browser feedback visible outside the hidden Chat panel without remounting the draft", async () => {
+  const user = userEvent.setup();
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [{ id: "web", conversationId: "chat", title: "Projeto · Live", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  const banner = <div role="status" aria-label="Estado Live">Designer trabalhando</div>;
+  const view = render(<FileWorkspace browser={browser} browserBanner={banner}><ChatDraft /></FileWorkspace>);
+  const draft = screen.getByRole("textbox", { name: "Rascunho do chat" });
+  await user.type(draft, "Continuar depois");
+  expect(screen.queryByRole("status", { name: "Estado Live" })).not.toBeInTheDocument();
+  view.rerender(<FileWorkspace browser={{ ...browser, snapshot: { ...browser.snapshot, activeId: "web" } }} browserBanner={banner}><ChatDraft /></FileWorkspace>);
+  expect(screen.getByRole("status", { name: "Estado Live" })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Endereço do navegador" })).toHaveValue("http://localhost:5173");
+  await waitFor(() => expect(draft).not.toBeVisible());
+  view.rerender(<FileWorkspace browser={browser} browserBanner={banner}><ChatDraft /></FileWorkspace>);
+  expect(screen.queryByRole("status", { name: "Estado Live" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Rascunho do chat" })).toBe(draft);
+  expect(draft).toHaveValue("Continuar depois");
+});
+
 beforeEach(() => {
   mockedInvoke.mockReset().mockImplementation(async (command, args) => {
     const input = args as { projectId: string; path: string } | undefined;

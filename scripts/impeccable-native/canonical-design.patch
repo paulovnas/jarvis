@@ -1,0 +1,510 @@
+diff --git a/crates/cli/src/main.rs b/crates/cli/src/main.rs
+index c18f073..69eba33 100644
+--- a/crates/cli/src/main.rs
++++ b/crates/cli/src/main.rs
+@@ -25,6 +25,10 @@ fn main() {
+ }
+ 
+ fn run(args: &[String], io: &mut Io) -> i32 {
++    if let Err(message) = impeccable_common::design::resolve(&io.cwd.to_string_lossy(), &io.env) {
++        io.err(&format!("Impeccable: {message}\n"));
++        return 1;
++    }
+     // cli/bin/cli.js dispatch: help / version / detect / ignores / skills verbs
+     let Some(verb) = args.first().map(String::as_str) else {
+         io.out(impeccable_detect::ROOT_USAGE);
+diff --git a/crates/common/src/design.rs b/crates/common/src/design.rs
+new file mode 100644
+index 0000000..01eb49d
+--- /dev/null
++++ b/crates/common/src/design.rs
+@@ -0,0 +1,153 @@
++//! Optional execution-private design binding for native hosts. No project file is copied.
++use std::{collections::HashMap, fs, path::Path};
++
++pub const PATH_ENV: &str = "IMPECCABLE_DESIGN_PATH";
++pub const ROOT_ENV: &str = "IMPECCABLE_DESIGN_ROOT";
++
++/// Both paths are host-owned. A configured but unusable document is an error,
++/// never authorization to rediscover a different root DESIGN.md.
++pub fn resolve(cwd: &str, env: &HashMap<String, String>) -> Result<Option<String>, String> {
++    let Some(value) = env.get(PATH_ENV) else {
++        return Ok(None);
++    };
++    let path = Path::new(value);
++    if value.is_empty()
++        || value.contains('\0')
++        || !path.is_absolute()
++        || !path
++            .extension()
++            .and_then(|ext| ext.to_str())
++            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
++    {
++        return Err(
++            "IMPECCABLE_DESIGN_PATH deve apontar para um arquivo Markdown absoluto.".into(),
++        );
++    }
++    let root_value = env
++        .get(ROOT_ENV)
++        .filter(|root| !root.is_empty() && !root.contains('\0'))
++        .ok_or("IMPECCABLE_DESIGN_ROOT não foi definido para o documento canônico.")?;
++    let root_path = Path::new(root_value);
++    if !root_path.is_absolute() {
++        return Err("IMPECCABLE_DESIGN_ROOT deve ser uma pasta absoluta.".into());
++    }
++    let root = fs::canonicalize(root_path)
++        .map_err(|_| "A raiz do documento de design não está disponível.")?;
++    let cwd = fs::canonicalize(cwd)
++        .map_err(|_| "A pasta de execução do Impeccable não está disponível.")?;
++    if !root.is_dir() || !cwd.is_dir() || !cwd.starts_with(&root) {
++        return Err("A execução do Impeccable está fora da raiz de design configurada.".into());
++    }
++    let file = fs::canonicalize(path)
++        .map_err(|_| "O documento de design configurado não existe ou não pode ser acessado.")?;
++    if !file.is_file() || !file.starts_with(&root) {
++        return Err("O documento de design deve ser um arquivo dentro da raiz configurada.".into());
++    }
++    let file = file
++        .to_str()
++        .ok_or("O caminho do documento de design não é UTF-8.")?;
++    // Node's Live assets need ordinary Win32 paths, not verbatim canonical paths.
++    let file = if let Some(unc) = file.strip_prefix(r"\\?\UNC\") {
++        format!(r"\\{unc}")
++    } else {
++        file.strip_prefix(r"\\?\").unwrap_or(file).to_string()
++    };
++    Ok(Some(file))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++    static NEXT: AtomicUsize = AtomicUsize::new(0);
++    struct Fixture(std::path::PathBuf);
++    impl Fixture {
++        fn new() -> Self {
++            let path = std::env::temp_dir().join(format!(
++                "impeccable-canonical-design-{}-{}",
++                std::process::id(),
++                NEXT.fetch_add(1, Ordering::Relaxed)
++            ));
++            fs::create_dir_all(path.join("app")).unwrap();
++            fs::create_dir_all(path.join(".jarvis/knowledge")).unwrap();
++            fs::write(path.join(".jarvis/knowledge/design.md"), "# Canonical").unwrap();
++            Self(fs::canonicalize(path).unwrap())
++        }
++        fn env(&self) -> HashMap<String, String> {
++            HashMap::from([
++                (ROOT_ENV.into(), self.0.to_string_lossy().into_owned()),
++                (
++                    PATH_ENV.into(),
++                    self.0
++                        .join(".jarvis/knowledge/design.md")
++                        .to_string_lossy()
++                        .into_owned(),
++                ),
++            ])
++        }
++        fn cwd(&self) -> String {
++            self.0.to_string_lossy().into_owned()
++        }
++    }
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            let _ = fs::remove_dir_all(&self.0);
++        }
++    }
++
++    #[test]
++    fn canonical_design_binding_survives_child_app_cwd_without_copying() {
++        let fixture = Fixture::new();
++        let path = resolve(&fixture.cwd(), &fixture.env()).unwrap().unwrap();
++        assert!(
++            Path::new(&path).ends_with(Path::new(".jarvis").join("knowledge").join("design.md"))
++        );
++        assert_eq!(
++            resolve(&fixture.0.join("app").to_string_lossy(), &fixture.env()).unwrap(),
++            Some(path)
++        );
++        assert!(!fixture.0.join("DESIGN.md").exists());
++        assert_eq!(resolve(&fixture.cwd(), &HashMap::new()).unwrap(), None);
++    }
++
++    #[test]
++    fn canonical_design_rejects_missing_relative_unbound_and_cross_project_files() {
++        let fixture = Fixture::new();
++        let external = Fixture::new();
++        let mut env = fixture.env();
++        env.insert(PATH_ENV.into(), "design.md".into());
++        assert!(resolve(&fixture.cwd(), &env)
++            .unwrap_err()
++            .contains("absoluto"));
++        env = fixture.env();
++        env.remove(ROOT_ENV);
++        assert!(resolve(&fixture.cwd(), &env)
++            .unwrap_err()
++            .contains(ROOT_ENV));
++        env = fixture.env();
++        env.insert(PATH_ENV.into(), external.env()[PATH_ENV].clone());
++        assert!(resolve(&fixture.cwd(), &env)
++            .unwrap_err()
++            .contains("dentro da raiz"));
++        assert!(resolve(&external.cwd(), &fixture.env())
++            .unwrap_err()
++            .contains("fora da raiz"));
++        fs::remove_file(fixture.0.join(".jarvis/knowledge/design.md")).unwrap();
++        assert!(resolve(&fixture.cwd(), &fixture.env())
++            .unwrap_err()
++            .contains("não existe"));
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn canonical_design_rejects_a_symlink_escape() {
++        let fixture = Fixture::new();
++        let external = Fixture::new();
++        let file = fixture.0.join(".jarvis/knowledge/design.md");
++        fs::remove_file(&file).unwrap();
++        std::os::unix::fs::symlink(external.env()[PATH_ENV].clone(), file).unwrap();
++        assert!(resolve(&fixture.cwd(), &fixture.env())
++            .unwrap_err()
++            .contains("dentro da raiz"));
++    }
++}
+diff --git a/crates/common/src/lib.rs b/crates/common/src/lib.rs
+index 9f9227d..be22c13 100644
+--- a/crates/common/src/lib.rs
++++ b/crates/common/src/lib.rs
+@@ -6,6 +6,7 @@
+ //! `io.stdout` / `io.stderr`, reads `io.stdin()` lazily, and returns the exit
+ //! code. Only the `cli` binary calls `std::process::exit`.
+ 
++pub mod design;
+ pub mod git;
+ pub mod jsp;
+ pub mod proc;
+diff --git a/crates/context/src/context.rs b/crates/context/src/context.rs
+index d631778..f045bdd 100644
+--- a/crates/context/src/context.rs
++++ b/crates/context/src/context.rs
+@@ -158,8 +158,13 @@ pub fn resolve_context(cwd: &str, options: &TargetOptions, env: &Env) -> Resolve
+         .as_deref()
+         .and_then(|d| first_existing(d, &DESIGN_NAMES))
+         .or_else(|| root_context_dir.as_deref().and_then(|d| first_existing(d, &DESIGN_NAMES)));
++    // The host binds one authoritative file; never resurrect a competing local document.
++    let canonical_design = env.contains_key(impeccable_common::design::PATH_ENV);
++    if canonical_design {
++        design_path = impeccable_common::design::resolve(&project.target_dir, env).ok().flatten();
++    }
+     let mut env_context_dir: Option<String> = None;
+-    if product_path.is_none() && design_path.is_none() {
++    if product_path.is_none() && design_path.is_none() && !canonical_design {
+         env_context_dir = resolve_env_context_dir(&abs_cwd, env);
+         if let Some(d) = &env_context_dir {
+             product_path = first_existing(d, &PRODUCT_NAMES);
+@@ -1260,3 +1265,55 @@ pub fn has_visual_implementation(project_root: &str) -> bool {
+     let _ = is_dir;
+     styled >= 3
+ }
++
++
++#[cfg(test)]
++mod jarvis_canonical_design_tests {
++    use super::*;
++    use std::{collections::HashMap, fs, path::PathBuf};
++    struct Fixture(PathBuf);
++    impl Fixture {
++        fn new() -> Self {
++            let path = std::env::temp_dir().join(format!("impeccable-context-canonical-{}-{:?}", std::process::id(), std::thread::current().id()));
++            fs::create_dir_all(path.join(".git")).unwrap();
++            fs::create_dir_all(path.join("app")).unwrap();
++            fs::create_dir_all(path.join(".jarvis/knowledge")).unwrap();
++            fs::write(path.join("PRODUCT.md"), "# Existing product").unwrap();
++            fs::write(path.join("DESIGN.md"), "# Competing root").unwrap();
++            fs::write(path.join("app/package.json"), "{}").unwrap();
++            fs::write(path.join("app/DESIGN.md"), "# Competing child").unwrap();
++            fs::write(path.join(".jarvis/knowledge/design.md"), "# Canonical design").unwrap();
++            Self(fs::canonicalize(path).unwrap())
++        }
++        fn env(&self) -> Env {
++            HashMap::from([
++                (impeccable_common::design::ROOT_ENV.into(), self.0.to_string_lossy().into_owned()),
++                (impeccable_common::design::PATH_ENV.into(), self.0.join(".jarvis/knowledge/design.md").to_string_lossy().into_owned()),
++            ])
++        }
++    }
++    impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
++    #[test]
++    fn canonical_design_overrides_competitors_without_changing_product_or_app_scope() {
++        let fixture = Fixture::new();
++        let cwd = fixture.0.to_string_lossy();
++        let env = fixture.env();
++        let resolved = resolve_context(&cwd, &TargetOptions::default(), &env);
++        assert_eq!(fs::canonicalize(resolved.design_path.unwrap()).unwrap(), fs::canonicalize(&env[impeccable_common::design::PATH_ENV]).unwrap());
++        assert_eq!(fs::canonicalize(resolved.product_path.unwrap()).unwrap(), fs::canonicalize(fixture.0.join("PRODUCT.md")).unwrap());
++        let ctx = load_context(&cwd, &TargetOptions { target_path: Some("app".into()) }, &env);
++        assert_eq!(ctx.design.as_deref(), Some("# Canonical design"));
++        assert_eq!(fs::canonicalize(ctx.project_root).unwrap(), fixture.0.join("app"));
++        assert_eq!(fs::canonicalize(ctx.design_context_dir.unwrap()).unwrap(), fixture.0.join(".jarvis/knowledge"));
++        assert_eq!(load_context(&cwd, &TargetOptions::default(), &Env::new()).design.as_deref(), Some("# Competing root"));
++    }
++    #[test]
++    fn missing_registered_design_never_resurrects_local_competing_file() {
++        let fixture = Fixture::new();
++        fs::remove_file(fixture.0.join(".jarvis/knowledge/design.md")).unwrap();
++        let ctx = load_context(&fixture.0.to_string_lossy(), &TargetOptions::default(), &fixture.env());
++        assert!(!ctx.has_design);
++        assert_eq!(ctx.design_path, None);
++        assert_eq!(ctx.product.as_deref(), Some("# Existing product"));
++    }
++}
+diff --git a/crates/detect/src/cli.rs b/crates/detect/src/cli.rs
+index 69a9216..e1b2b77 100644
+--- a/crates/detect/src/cli.rs
++++ b/crates/detect/src/cli.rs
+@@ -11,7 +11,7 @@ use serde_json::Value;
+ use crate::config::{
+     filter_detection_findings, read_detection_config, should_ignore_detection_file, DetectionConfig,
+ };
+-use crate::design_system::{load_design_system_for_target, DesignSystemCache};
++use crate::design_system::{load_design_system_for_target_with_env, DesignSystemCache};
+ use crate::detect_text::{detect_text, TextOptions};
+ use crate::engines::{EngineError, Engines, ScanOptions};
+ use crate::file_system::{
+@@ -264,11 +264,12 @@ impl<'a> Ctx<'a> {
+         let (Some(local_path), true) = (local_path, self.design_system_enabled) else {
+             return self.base.clone();
+         };
+-        match load_design_system_for_target(
++        match load_design_system_for_target_with_env(
+             local_path,
+             Some(&mut self.cache),
+             &self.cwd,
+             &self.home,
++            &self.io.env,
+         ) {
+             Some(ds) => {
+                 ScanOptions {
+diff --git a/crates/detect/src/design_system.rs b/crates/detect/src/design_system.rs
+index 478e2a2..c9fd90d 100644
+--- a/crates/detect/src/design_system.rs
++++ b/crates/detect/src/design_system.rs
+@@ -1090,7 +1090,20 @@ fn mtime_ms(p: &str) -> Option<f64> {
+ 
+ /// JS: design-system.mjs#loadDesignSystemForCwd
+ pub fn load_design_system_for_cwd(cwd: &str) -> Option<DesignSystem> {
+-    let md = resolve_design_md_path(cwd)?;
++    load_design_system_for_cwd_with_env(cwd, &Default::default())
++}
++
++/// Jarvis passes an execution-private binding; upstream discovery remains the default.
++pub fn load_design_system_for_cwd_with_env(
++    cwd: &str,
++    env: &std::collections::HashMap<String, String>,
++) -> Option<DesignSystem> {
++    let md = if env.contains_key(impeccable_common::design::PATH_ENV) {
++        let path = impeccable_common::design::resolve(cwd, env).ok().flatten()?;
++        DesignMdPath { context_dir: jsp::dirname(&path), path }
++    } else {
++        resolve_design_md_path(cwd)?
++    };
+     let md_stat = mtime_ms(&md.path);
+     let text = read_text(&md.path)?;
+     let frontmatter = parse_frontmatter(&text)?;
+@@ -1472,9 +1485,35 @@ pub fn load_design_system_for_target(
+     cache: Option<&mut DesignSystemCache>,
+     cwd: &str,
+     home: &str,
++) -> Option<Rc<DesignSystem>> {
++    load_design_system_for_target_with_env(target_path, cache, cwd, home, &Default::default())
++}
++
++pub fn load_design_system_for_target_with_env(
++    target_path: &str,
++    cache: Option<&mut DesignSystemCache>,
++    cwd: &str,
++    home: &str,
++    env: &std::collections::HashMap<String, String>,
+ ) -> Option<Rc<DesignSystem>> {
+     let start_dir = design_system_start_dir(target_path, cwd);
+     let found = find_design_root(&start_dir, cwd, home);
++    if env.contains_key(impeccable_common::design::PATH_ENV) {
++        let path = impeccable_common::design::resolve(&start_dir, env).ok().flatten()?;
++        // Keep sidecar ownership at the detected app root, never at the knowledge directory.
++        let project_root = found.as_ref()
++            .filter(|root| impeccable_common::design::resolve(&root.dir, env).is_ok())
++            .map(|root| root.dir.as_str()).unwrap_or(cwd);
++        let key = format!("canonical:{path}:root:{project_root}");
++        if let Some(hit) = cache.as_ref().and_then(|cache| cache.get(&key)) {
++            return hit.clone();
++        }
++        let loaded = load_design_system_for_cwd_with_env(project_root, env).map(Rc::new);
++        if let Some(cache) = cache {
++            cache.insert(key, loaded.clone());
++        }
++        return loaded;
++    }
+     let key = match &found {
+         Some(f) => format!("root:{}", f.dir),
+         None => "\0none".to_string(),
+@@ -2272,6 +2311,41 @@ mod tests {
+ 
+     const DESIGN_MD: &str = "---\ntypography:\n  body:\n    fontFamily: \"Palatino, Georgia, serif\"\n---\n# Project A Design System\n";
+ 
++
++    #[test]
++    fn canonical_design_detector_uses_registered_tokens_and_app_sidecar() {
++        let d = TempDir::new("canonical-design");
++        d.write("package.json", "{}");
++        d.write("DESIGN.md", DESIGN_MD);
++        d.write(".jarvis/knowledge/design.md", "---\ntypography:\n  body:\n    fontFamily: Arial\ncolors:\n  primary: '#123456'\n---\n# Canonical\n");
++        d.write(".impeccable/design.json", "{\"schemaVersion\":2,\"extensions\":{}}");
++        d.write("src/index.css", "body { font-family: Arial; color: #123456; }");
++        let env = std::collections::HashMap::from([
++            (impeccable_common::design::ROOT_ENV.into(), d.path()),
++            (impeccable_common::design::PATH_ENV.into(), d.join(".jarvis/knowledge/design.md")),
++        ]);
++        let mut cache = DesignSystemCache::new();
++        let ds = load_design_system_for_target_with_env("src/index.css", Some(&mut cache), &d.path(), &far_home(), &env).unwrap();
++        assert_eq!(ds.allowed_fonts, vec!["arial"]);
++        assert_eq!(std::fs::canonicalize(ds.source_path.as_ref().unwrap()).unwrap(), std::fs::canonicalize(d.join(".jarvis/knowledge/design.md")).unwrap());
++        assert_eq!(std::fs::canonicalize(ds.sidecar_path.as_ref().unwrap()).unwrap(), std::fs::canonicalize(d.join(".impeccable/design.json")).unwrap());
++        assert!(is_allowed_color_raw("#123456", Some(&ds)));
++        assert!(!is_allowed_font("palatino", Some(&ds)));
++        assert_eq!(load_design_system_for_cwd(&d.path()).unwrap().allowed_fonts, vec!["palatino", "georgia"]);
++    }
++
++    #[test]
++    fn canonical_design_detector_rejects_unusable_binding_without_local_fallback() {
++        let d = TempDir::new("canonical-missing");
++        d.write("DESIGN.md", DESIGN_MD);
++        let env = std::collections::HashMap::from([
++            (impeccable_common::design::ROOT_ENV.into(), d.path()),
++            (impeccable_common::design::PATH_ENV.into(), d.join("missing.md")),
++        ]);
++        assert!(load_design_system_for_cwd_with_env(&d.path(), &env).is_none());
++        assert!(load_design_system_for_target_with_env(&d.path(), None, &d.path(), &far_home(), &env).is_none());
++    }
++
+     fn ds_with(colors: serde_json::Value) -> DesignSystem {
+         let fm: Map<String, Value> = serde_json::from_value(serde_json::json!({ "colors": colors })).unwrap();
+         normalize_design_system(Some(&fm), None, Some("/p/DESIGN.md"), None, false)
+diff --git a/crates/hook/src/hook_lib.rs b/crates/hook/src/hook_lib.rs
+index 529a9bb..cb3e380 100644
+--- a/crates/hook/src/hook_lib.rs
++++ b/crates/hook/src/hook_lib.rs
+@@ -16,7 +16,7 @@ use impeccable_detect::config::{
+     normalize_ignore_rule, normalize_ignore_value, normalize_ignore_value_entries, DetectionConfig,
+     IgnoreValueEntry,
+ };
+-use impeccable_detect::design_system::{load_design_system_for_cwd, resolve_design_md_path, DesignSystem};
++use impeccable_detect::design_system::{load_design_system_for_cwd, load_design_system_for_cwd_with_env, resolve_design_md_path, DesignSystem};
+ use impeccable_detect::detect_text::{detect_text, TextOptions};
+ use impeccable_detect::engines::{HtmlEngine, ScanOptions};
+ use once_cell::sync::Lazy;
+@@ -1668,6 +1668,12 @@ pub fn design_system_options_for_file(
+         },
+         &rt.env,
+     );
++    if rt.env.contains_key(impeccable_common::design::PATH_ENV) {
++        return HookScanOptions {
++            design_system: load_design_system_for_cwd_with_env(&project.project_root, &rt.env)
++                .map(Rc::new),
++        };
++    }
+     // A local DESIGN.md owns the scope even if it has no usable frontmatter.
+     // Fall back only when the app has no document, never to a sibling app.
+     let root = if resolve_design_md_path(&project.project_root).is_some() {
+diff --git a/crates/live/src/roots.rs b/crates/live/src/roots.rs
+index 633c413..53be576 100644
+--- a/crates/live/src/roots.rs
++++ b/crates/live/src/roots.rs
+@@ -294,9 +294,13 @@ pub fn resolve_roots(cwd: &str, target_path: Option<&str>, env: &Env) -> RootsRe
+     let product_path = walk_up(&app_root, &effective_repo_root, env, |dir| {
+         find_context_file(dir, &PRODUCT_NAMES)
+     });
+-    let design_path = walk_up(&app_root, &effective_repo_root, env, |dir| {
+-        find_context_file(dir, &DESIGN_NAMES)
+-    });
++    let design_path = if env.contains_key(impeccable_common::design::PATH_ENV) {
++        impeccable_common::design::resolve(&app_root, env).ok().flatten()
++    } else {
++        walk_up(&app_root, &effective_repo_root, env, |dir| {
++            find_context_file(dir, &DESIGN_NAMES)
++        })
++    };
+     let context_root = product_path
+         .as_deref()
+         .map(jsp::dirname)
+@@ -510,3 +514,58 @@ pub fn enter_live_root(args: &mut Vec<String>, io: &mut Io) -> Result<Option<Roo
+     }
+     Ok(Some(manifest))
+ }
++
++
++#[cfg(test)]
++mod jarvis_canonical_design_tests {
++    use super::*;
++    use std::{fs, path::PathBuf};
++    struct Fixture(PathBuf);
++    impl Fixture {
++        fn new() -> Self {
++            let path = std::env::temp_dir().join(format!("impeccable-live-canonical-{}-{:?}", std::process::id(), std::thread::current().id()));
++            fs::create_dir_all(path.join(".git")).unwrap();
++            fs::create_dir_all(path.join("app")).unwrap();
++            fs::create_dir_all(path.join(".jarvis/knowledge")).unwrap();
++            fs::write(path.join("PRODUCT.md"), "# Existing product").unwrap();
++            fs::write(path.join("DESIGN.md"), "# Competing root").unwrap();
++            fs::write(path.join("app/package.json"), "{}").unwrap();
++            fs::write(path.join("app/vite.config.ts"), "export default {}").unwrap();
++            fs::write(path.join("app/DESIGN.md"), "# Competing child").unwrap();
++            fs::write(path.join(".jarvis/knowledge/design.md"), "---\nname: Canonical\ncolors:\n  primary: '#123456'\n---\n# Canonical\n\n## Overview\nThe same project knowledge.\n").unwrap();
++            Self(fs::canonicalize(path).unwrap())
++        }
++        fn env(&self) -> Env {
++            Env::from([
++                (impeccable_common::design::ROOT_ENV.into(), self.0.to_string_lossy().into_owned()),
++                (impeccable_common::design::PATH_ENV.into(), self.0.join(".jarvis/knowledge/design.md").to_string_lossy().into_owned()),
++            ])
++        }
++    }
++    impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
++    #[test]
++    fn canonical_design_live_boot_and_panel_share_one_file_across_app_root() {
++        let fixture = Fixture::new();
++        let env = fixture.env();
++        let RootsResult::Manifest(roots) = resolve_roots(&fixture.0.to_string_lossy(), Some("app"), &env) else { panic!("expected configured app") };
++        assert_eq!(fs::canonicalize(&roots.app_root).unwrap(), fixture.0.join("app"));
++        assert_eq!(fs::canonicalize(roots.design_path.as_ref().unwrap()).unwrap(), fs::canonicalize(&env[impeccable_common::design::PATH_ENV]).unwrap());
++        let ctx = crate::server_state::resolve_project_context(&roots.app_root, &env, Some(&roots));
++        assert_eq!(ctx.resolved_design_path, roots.design_path);
++        let md = fs::read_to_string(ctx.resolved_design_path.unwrap()).unwrap();
++        let parsed = crate::design_md::parse_design_md(&md).unwrap();
++        assert_eq!(parsed["frontmatter"]["colors"]["primary"], "#123456");
++        assert_eq!(parsed["frontmatter"]["name"], "Canonical");
++        assert_eq!(fs::read_to_string(fixture.0.join("app/DESIGN.md")).unwrap(), "# Competing child");
++    }
++    #[test]
++    fn canonical_design_live_roots_do_not_fall_back_when_registered_file_is_missing() {
++        let fixture = Fixture::new();
++        fs::remove_file(fixture.0.join(".jarvis/knowledge/design.md")).unwrap();
++        let RootsResult::Manifest(mut roots) = resolve_roots(&fixture.0.to_string_lossy(), Some("app"), &fixture.env()) else { panic!("expected configured app") };
++        assert_eq!(roots.design_path, None);
++        roots.design_path = Some(fixture.0.join("app/DESIGN.md").to_string_lossy().into_owned());
++        let ctx = crate::server_state::resolve_project_context(&roots.app_root, &fixture.env(), Some(&roots));
++        assert_eq!(ctx.resolved_design_path, None);
++    }
++}
+diff --git a/crates/live/src/server_state.rs b/crates/live/src/server_state.rs
+index 1de8572..b45ee88 100644
+--- a/crates/live/src/server_state.rs
++++ b/crates/live/src/server_state.rs
+@@ -1667,6 +1667,7 @@ pub fn resolve_project_context(
+     let ctx = impeccable_context::context::load_context(cwd, &TargetOptions::default(), env);
+     let design_path = match &ctx.design_path {
+         Some(p) => Some(jsp::resolve(cwd, &[p])),
++        None if env.contains_key(impeccable_common::design::PATH_ENV) => None,
+         None => roots
+             .and_then(|r| r.design_path.clone())
+             .filter(|p| crate::util::exists(p)),

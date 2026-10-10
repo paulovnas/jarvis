@@ -13,6 +13,7 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { SettingsSkeleton } from "./LoadingSkeletons";
 import { accountList, enabledModels, mergeModelCatalogRefresh, type ProviderAccount } from "@/core/provider-accounts";
 import { Inspector } from "./Inspector";
+import type { DesignerSession } from "./DesignerPanel";
 import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
 import { useChat } from "@/hooks/use-chat";
@@ -64,6 +65,8 @@ export function Home() {
     void library.select({ kind: "project", id: projectId }).then(selected => { if (!selected) setKanbanProjectId(null); });
   };
   const chat = useChat(library.snapshot?.selection.conversationId ?? null);
+  const [designer, setDesigner] = useState<DesignerSession | null>(null);
+  const onDesignerChange = useCallback((session: DesignerSession | null) => setDesigner(session), []);
   const workflow = useWorkflow(library.snapshot?.selection.conversationId ?? null);
   const agentModels = useAgentModels();
   const runningConversationIds = useAgentActivity();
@@ -209,7 +212,7 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} terminalCount={terminalCounts.get(dashboardProject.id) ?? 0} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} onRefreshModels={canRefreshModels ? refreshModels : undefined} refreshingModels={refreshingModels} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} terminalCount={terminalCounts.get(dashboardProject.id) ?? 0} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onDesignerChange={onDesignerChange} drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} onRefreshModels={canRefreshModels ? refreshModels : undefined} refreshingModels={refreshingModels} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle
@@ -227,7 +230,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector designer={designer?.conversationId === library.snapshot?.selection.conversationId ? designer ?? undefined : undefined} library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={openSettings} />

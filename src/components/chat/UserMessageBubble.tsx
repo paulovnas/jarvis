@@ -1,19 +1,23 @@
 import { FileCode2, User } from "lucide-react";
+import { useMemo } from "react";
 import { Hint } from "@/components/ui/hint";
 import type { ChatMessage } from "./types";
 import { MessageContent } from "./MessageContent";
+import { LiveRequestCard } from "./LiveRequestCard";
+import { liveRequestMessage } from "./live-request-message";
 
 interface UserMessageBubbleProps {
   message: ChatMessage;
 }
 
 export function UserMessageBubble({ message }: UserMessageBubbleProps) {
+  const liveRequest = useMemo(() => liveRequestMessage(message.content), [message.content]);
   return (
     <div
       data-testid={`user-message-${message.id}`}
       className="my-5 flex w-full justify-end"
     >
-      <div className="flex min-w-0 max-w-[90%] flex-col items-end gap-2">
+      <div className={`flex min-w-0 max-w-[90%] flex-col items-end gap-2 ${liveRequest ? "w-[min(32rem,90%)]" : ""}`}>
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex min-w-0 max-w-full flex-wrap justify-end gap-1.5">
             {message.attachments.map((att) => (
@@ -33,13 +37,13 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
           </div>
         )}
 
-        <div className="instrument-panel group relative min-w-0 max-w-full border-primary/15 bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-foreground">
+        {liveRequest ? <LiveRequestCard request={liveRequest} timestamp={message.timestamp} /> : <div className="instrument-panel group relative min-w-0 max-w-full border-primary/15 bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-foreground">
           <p className="whitespace-pre-wrap break-words"><MessageContent content={message.content} parts={message.parts} /></p>
           <div className="mt-2 flex items-center justify-end gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
             <span>{message.timestamp}</span>
             <User className="size-3 text-[#61afef]" />
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

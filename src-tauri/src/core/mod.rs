@@ -206,6 +206,16 @@ impl Installation {
         Ok(path)
     }
     pub fn path(&self, home: &Path) -> Result<PathBuf, CoreError> {
+        if self.directory == design::NATIVE_DIRECTORY {
+            let record =
+                design::native_record().ok_or_else(|| error("Impeccable nativo indisponível."))?;
+            if self.version != record.version || self.files != record.files {
+                return Err(error("Registro do Impeccable nativo inválido."));
+            }
+            return design::native_directory()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| error("Impeccable nativo indisponível."));
+        }
         if !relative(&self.directory)
             || self.files.is_empty()
             || self.files.iter().any(|f| !relative(f))
@@ -234,6 +244,12 @@ impl Installation {
     }
 }
 pub fn installed(home: &Path, id: ComponentId) -> Result<Installation, CoreError> {
+    if id == ComponentId::Impeccable {
+        if let Some(record) = design::native_record() {
+            record.validate(home, id)?;
+            return Ok(record);
+        }
+    }
     let item = read_manifest(home)?
         .installations
         .remove(&id)
@@ -277,6 +293,7 @@ pub struct CoreItem {
     latest_version: Option<String>,
     update_available: bool,
     installed: bool,
+    bundled: bool,
     configured: bool,
     stage: Option<String>,
     download: Option<DownloadProgress>,
@@ -291,7 +308,7 @@ pub struct Snapshot {
     pub items: Vec<CoreItem>,
     pub checking: bool,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct StateData {
     latest: BTreeMap<ComponentId, String>,
     errors: BTreeMap<ComponentId, String>,
@@ -319,6 +336,8 @@ pub struct CoreState {
     data: Arc<Mutex<StateData>>,
     install_lock: Arc<tokio::sync::Mutex<()>>,
     cancellation: InstallationCancellation,
+    #[cfg(test)]
+    snapshot_reads: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl CoreState {
     pub(crate) fn busy_for_update(&self) -> bool {
@@ -356,17 +375,40 @@ impl CoreState {
         }
     }
     pub fn snapshot(&self, home: &Path) -> Result<Snapshot, CoreError> {
+        #[cfg(test)]
+        self.snapshot_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let manifest_result = read_manifest(home);
         let manifest_error = manifest_result.as_ref().err().map(|e| e.message.clone());
-        let manifest = manifest_result.unwrap_or_default();
-        let data = self.data.lock().map_err(|_| error("Core indisponível."))?;
+        let mut manifest = manifest_result.unwrap_or_default();
+        if let Some(record) = design::native_record() {
+            manifest
+                .installations
+                .insert(ComponentId::Impeccable, record);
+        }
+        let validations: BTreeMap<_, _> = ComponentId::ALL
+            .into_iter()
+            .filter_map(|id| {
+                manifest
+                    .installations
+                    .get(&id)
+                    .map(|record| (id, record.validate(home, id)))
+            })
+            .collect();
+        // Integrity checks must not hold the state lock during filesystem and hashing work.
+        let data = self
+            .data
+            .lock()
+            .map_err(|_| error("Core indisponível."))?
+            .clone();
         let items: Vec<_> = ComponentId::ALL
             .into_iter()
             .map(|id| {
                 let record = manifest.installations.get(&id);
-                let validation = record.map(|r| r.validate(home, id));
+                let validation = validations.get(&id);
                 let valid = validation.as_ref().is_some_and(|result| result.is_ok());
                 let latest = data.latest.get(&id).cloned();
+                let bundled = id == ComponentId::Impeccable && design::native_directory().is_some();
                 let diagnostics = data.diagnostics.get(&id).cloned().unwrap_or_default();
                 let health_error = manifest_error.clone().or_else(|| {
                     diagnostics
@@ -381,9 +423,11 @@ impl CoreState {
                     installed_version: record.map(|r| r.version.clone()),
                     latest_version: latest.clone(),
                     installed: valid,
+                    bundled,
                     configured: valid
                         && (id != ComponentId::Context7 || context7::configured(home)),
-                    update_available: valid
+                    update_available: !bundled
+                        && valid
                         && record
                             .zip(latest.as_ref())
                             .is_some_and(|(r, v)| newer(v, &r.version)),
@@ -407,6 +451,28 @@ impl CoreState {
             items,
             checking: data.checking,
         })
+    }
+    async fn snapshot_async(&self, home: &Path) -> Result<Snapshot, CoreError> {
+        let core = self.clone();
+        let home = home.to_owned();
+        tokio::task::spawn_blocking(move || core.snapshot(&home))
+            .await
+            .map_err(|_| error("Não foi possível verificar o Core."))?
+    }
+    fn refresh_updates(&self, snapshot: &mut Snapshot) -> Result<(), CoreError> {
+        let data = self.data.lock().map_err(|_| error("Core indisponível."))?;
+        snapshot.checking = data.checking;
+        for item in &mut snapshot.items {
+            item.latest_version = data.latest.get(&item.id).cloned();
+            item.update_available = !item.bundled
+                && item.installed
+                && item
+                    .installed_version
+                    .as_ref()
+                    .zip(item.latest_version.as_ref())
+                    .is_some_and(|(current, latest)| newer(latest, current));
+        }
+        Ok(())
     }
     fn stage(&self, app: &tauri::AppHandle, home: &Path, id: ComponentId, stage: &str) {
         if let Ok(mut data) = self.data.lock() {
@@ -457,7 +523,7 @@ pub async fn get_core_status(
         .path()
         .home_dir()
         .map_err(|_| error("Pasta pessoal indisponível."))?;
-    core.snapshot(&home)
+    core.snapshot_async(&home).await
 }
 #[tauri::command]
 pub async fn check_core_updates(
@@ -479,6 +545,9 @@ pub async fn check_core_updates(
     core.emit(&app, &home);
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
         for id in ComponentId::ALL {
+            if id == ComponentId::Impeccable && design::native_directory().is_some() {
+                continue;
+            }
             let release = install::component_release(id).await;
             core.data
                 .lock()
@@ -512,6 +581,13 @@ pub async fn install_core_component(
     core: tauri::State<'_, CoreState>,
     id: ComponentId,
 ) -> Result<Snapshot, CoreError> {
+    if id == ComponentId::Impeccable && design::native_directory().is_some() {
+        let home = app
+            .path()
+            .home_dir()
+            .map_err(|_| error("Pasta pessoal indisponível."))?;
+        return core.snapshot_async(&home).await;
+    }
     let _activity = crate::updater::begin_activity(&app).map_err(|message| error(&message))?;
     let _lock = core
         .install_lock

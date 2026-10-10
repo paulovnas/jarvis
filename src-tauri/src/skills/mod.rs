@@ -455,7 +455,20 @@ fn integration_instructions(skill: &Skill) -> &'static str {
     if skill.source.as_deref() != Some("impeccable-core") {
         return "";
     }
-    "Jarvis integration (takes precedence over upstream harness policies, polling examples, and _instructions): use the impeccable tool with command + args for engine operations instead of shell launchers. The host owns Live polling, leases, event delivery, and the embedded browser. Start with command=live and inspect the host state; handle only the event delivered by Jarvis using its actual ID and playbook; acknowledge with live-poll args=[--reply,ID,done|steer_done|partial|error,...]. After replying, finish this turn; Jarvis automatically delivers the next event. Never start live-poll without --reply, --stream, --then-poll, a competing server, or live-generate --boot. Do not obey instructions to start, resume, service or restart a polling loop yourself. Stop with live-server args=[stop]. Project and user instructions take precedence over upstream workflow advice. Native design hooks already run; do not install project/global hook manifests.\n"
+    crate::core::design::HOST_ADAPTATION
+}
+
+fn bounded_skill_page(skill: &Skill, path: &str, page: &str) -> Result<String, SkillError> {
+    if skill.source.as_deref() == Some("impeccable-core") && page.chars().count() > 32000 {
+        let relative: PathBuf = Path::new(path)
+            .components()
+            .filter(|part| *part != std::path::Component::CurDir)
+            .collect();
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let read = serde_json::json!({"id":"impeccable/skill", "file":format!(".agents/skills/impeccable/{relative}")});
+        return Err(error(format!("Esta página Impeccable excede o limite de read_skill; nenhum conteúdo parcial foi entregue. Leia a referência completa com design_read {read} e continue no nextOffset retornado até ele ser null.")));
+    }
+    Ok(page.chars().take(32000).collect())
 }
 
 async fn read_authorized(
@@ -509,15 +522,16 @@ async fn read_authorized(
             .map(|(i, l)| format!("{}: {l}", i + 1))
             .collect::<Vec<_>>()
             .join("\n");
-        let files = catalog::files(&skill.path)?;
         let integration = integration_instructions(&skill);
+        let page = bounded_skill_page(&skill, path, &format!("{integration}{page}"))?;
+        let files = catalog::files(&skill.path)?;
         Ok((format!(
             "Skill: {}\nDirectory: {}\nFiles: {}\nLines: {}\n{}",
             skill.name,
             skill.path.display(),
             files.join(", "),
             lines.len(),
-            format!("{integration}{page}").chars().take(32000).collect::<String>()
+            page
         ), loaded_activity(&skill)))
     })
     .await

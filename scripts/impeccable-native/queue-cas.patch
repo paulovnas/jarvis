@@ -1,0 +1,615 @@
+--- /dev/null
++++ b/crates/live/src/jarvis_request_guard.rs
+@@ -0,0 +1,286 @@
++//! Optional Jarvis host admission/cancellation fencing. Upstream callers keep
++//! their original protocol; guarded host requests never cross a human revision.
++use crate::{session::SessionStore, util::Env};
++use serde_json::Value;
++use std::{fs, io::Read, path::Path};
++
++const MAX_JOURNAL: u64 = 2 * 1024 * 1024;
++const MAX_ENTRY: usize = 256 * 1024;
++
++fn same_submission(left: &Value, right: &Value) -> bool {
++    [
++        "type",
++        "id",
++        "action",
++        "freeformPrompt",
++        "prompt",
++        "message",
++        "clientSentAt",
++        "pageUrl",
++        "element",
++        "count",
++    ]
++    .iter()
++    .all(|key| left.get(key) == right.get(key))
++}
++
++/// The first human sequence is stable across scaffold enrichment. The pending
++/// sequence also changes for lifecycle events, fencing an old cancellation.
++fn identity(id: &str, bytes: &[u8]) -> Option<(u64, Option<u64>)> {
++    let text = std::str::from_utf8(bytes).ok()?;
++    let mut previous = 0;
++    let mut request: Option<(u64, Value)> = None;
++    let mut pending = None;
++    let mut finalized = false;
++    for line in text.lines().filter(|line| !line.trim().is_empty()) {
++        if line.len() > MAX_ENTRY {
++            return None;
++        }
++        let record: Value = serde_json::from_str(line).ok()?;
++        let seq = record["seq"].as_u64().filter(|seq| *seq > previous)?;
++        let event = record.get("event").filter(|event| event.is_object())?;
++        let kind = event["type"].as_str()?;
++        if record["id"] != id || event["id"] != id || record["type"] != kind {
++            return None;
++        }
++        previous = seq;
++        match kind {
++            "generate" | "steer" | "manual_edit_apply" | "variant_mount_failed" => {
++                if finalized
++                    || !request
++                        .as_ref()
++                        .is_some_and(|(_, prior)| same_submission(prior, event))
++                {
++                    request = Some((seq, event.clone()));
++                }
++                pending = Some(seq);
++                finalized = false;
++            }
++            "accept" | "discard" | "carbonize_cleanup" => {
++                if request.is_none() {
++                    request = Some((seq, event.clone()));
++                }
++                pending = Some(seq);
++                finalized = false;
++            }
++            "agent_done" | "steer_done" | "variants_ready" | "complete" | "discarded"
++            | "agent_error" => {
++                pending = None;
++                finalized = true;
++            }
++            _ => {}
++        }
++    }
++    request.map(|(seq, _)| (seq, pending))
++}
++
++/// Attach the immutable host binding to CLI acknowledgements. A host-bound
++/// command cannot fall back to an unguarded local journal append.
++pub(crate) fn bind_reply(body: &mut Value, env: &Env) -> Result<bool, String> {
++    let Some(raw) = env.get("JARVIS_LIVE_REQUEST_SEQ") else {
++        return Ok(false);
++    };
++    let seq = raw
++        .parse::<u64>()
++        .ok()
++        .filter(|seq| *seq > 0)
++        .ok_or_else(|| "invalid_jarvis_request".to_string())?;
++    let kind = env
++        .get("JARVIS_LIVE_EVENT_TYPE")
++        .filter(|kind| !kind.is_empty())
++        .ok_or_else(|| "invalid_jarvis_request".to_string())?;
++    body["jarvisRequestSeq"] = Value::from(seq);
++    body["jarvisEventType"] = Value::from(kind.as_str());
++    Ok(true)
++}
++
++/// Called with the live server mutex held, before leases, acknowledgements,
++/// manual apply resolution or source rollback. No canonical files are written.
++pub(crate) fn matches(
++    store: &SessionStore,
++    id: &str,
++    request_seq: u64,
++    pending_seq: Option<u64>,
++) -> bool {
++    if id.is_empty()
++        || id.len() > 128
++        || !id
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
++    {
++        return false;
++    }
++    for directory in [&store.root_dir, &store.legacy_root_dir] {
++        let directory = Path::new(directory);
++        let path = directory.join(format!("{id}.jsonl"));
++        let Ok(meta) = fs::symlink_metadata(&path) else {
++            continue;
++        };
++        if meta.is_symlink() || !meta.is_file() || meta.len() > MAX_JOURNAL {
++            return false;
++        }
++        let (Ok(root), Ok(canonical)) = (directory.canonicalize(), path.canonicalize()) else {
++            return false;
++        };
++        if canonical.parent() != Some(root.as_path()) {
++            return false;
++        }
++        let mut options = fs::OpenOptions::new();
++        options.read(true);
++        let Ok(file) = options.open(&path) else {
++            return false;
++        };
++        let mut bytes = Vec::new();
++        if file.take(MAX_JOURNAL + 1).read_to_end(&mut bytes).is_err()
++            || bytes.len() as u64 > MAX_JOURNAL
++        {
++            return false;
++        }
++        return identity(id, &bytes).is_some_and(|(current, pending)| {
++            current == request_seq && pending_seq.is_none_or(|expected| pending == Some(expected))
++        });
++    }
++    false
++}
++
++/// A reused action ID can leave an older in-memory queue payload because
++/// upstream deduplicates id+type. Reconcile only against its canonical snapshot.
++pub(crate) fn pending(store: &SessionStore, id: &str) -> Option<serde_json::Map<String, Value>> {
++    store
++        .read_state(id, false)
++        .ok()?
++        .snapshot
++        .get("pendingEvent")?
++        .as_object()
++        .cloned()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn journal(events: &[Value]) -> Vec<u8> {
++        events
++            .iter()
++            .enumerate()
++            .map(|(index, event)| {
++                format!(
++                    "{}\n",
++                    json!({"seq":index + 1,"id":"action","type":event["type"],"event":event})
++                )
++            })
++            .collect::<String>()
++            .into_bytes()
++    }
++
++    #[test]
++    fn jarvis_cas_same_action_new_human_request_is_not_old_request() {
++        let bytes = journal(&[
++            json!({"id":"action","type":"generate","freeformPrompt":"Badge"}),
++            json!({"id":"action","type":"generate","freeformPrompt":"Ícones"}),
++        ]);
++        assert_eq!(identity("action", &bytes), Some((2, Some(2))));
++    }
++
++    #[test]
++    fn jarvis_cas_enrichment_preserves_human_identity_but_advances_pending() {
++        let event = json!({"id":"action","type":"generate","freeformPrompt":"Badge"});
++        let mut enriched = event.clone();
++        enriched["generationReadyAt"] = json!(123);
++        assert_eq!(
++            identity("action", &journal(&[event, enriched])),
++            Some((1, Some(2)))
++        );
++    }
++
++    #[test]
++    fn jarvis_cas_lifecycle_and_completed_ack_cannot_clear_new_pending() {
++        let start = json!({"id":"action","type":"generate","freeformPrompt":"Badge"});
++        let done = json!({"id":"action","type":"agent_done"});
++        let accept = json!({"id":"action","type":"accept","chosen":1});
++        assert_eq!(
++            identity("action", &journal(&[start.clone(), done.clone()])),
++            Some((1, None))
++        );
++        assert_eq!(
++            identity("action", &journal(&[start, done, accept])),
++            Some((1, Some(3)))
++        );
++    }
++
++    #[test]
++    fn jarvis_cas_repeated_prompt_after_completion_is_new_human_request() {
++        let event = json!({"id":"action","type":"steer","message":"Teste"});
++        assert_eq!(
++            identity(
++                "action",
++                &journal(&[
++                    event.clone(),
++                    json!({"id":"action","type":"steer_done"}),
++                    event
++                ])
++            ),
++            Some((3, Some(3)))
++        );
++    }
++
++    #[test]
++    fn jarvis_cas_rejects_corrupt_or_wrong_action_journal() {
++        assert_eq!(
++            identity(
++                "different",
++                &journal(&[json!({"id":"action","type":"steer"})])
++            ),
++            None
++        );
++        assert_eq!(identity("action", b"not json\n"), None);
++    }
++    #[test]
++    fn jarvis_cas_cancel_checks_current_pending_sequence_and_never_writes_journal() {
++        let directory = std::env::temp_dir().join(format!(
++            "jarvis-cas-{}-{}",
++            std::process::id(),
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap()
++                .as_nanos()
++        ));
++        std::fs::create_dir(&directory).unwrap();
++        let store = SessionStore {
++            root_dir: directory.to_string_lossy().into_owned(),
++            legacy_root_dir: directory.join("legacy").to_string_lossy().into_owned(),
++            session_id: None,
++        };
++        let event = json!({"id":"action","type":"generate","freeformPrompt":"Badge"});
++        let mut enriched = event.clone();
++        enriched["generationReadyAt"] = json!(123);
++        let bytes = journal(&[
++            event,
++            enriched,
++            json!({"id":"action","type":"accept","chosen":1}),
++        ]);
++        let file = directory.join("action.jsonl");
++        std::fs::write(&file, &bytes).unwrap();
++        assert!(matches(&store, "action", 1, None));
++        assert!(!matches(&store, "action", 1, Some(2)));
++        assert!(matches(&store, "action", 1, Some(3)));
++        assert!(!matches(&store, "action", 2, Some(3)));
++        assert_eq!(std::fs::read(file).unwrap(), bytes);
++        std::fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[test]
++    fn jarvis_cas_cli_host_binding_is_required_and_keeps_reply_source_metadata() {
++        let mut env = Env::new();
++        let mut body = json!({"id":"action","type":"complete","sourceEventType":"accept"});
++        assert!(!bind_reply(&mut body, &env).unwrap());
++        env.insert("JARVIS_LIVE_REQUEST_SEQ".into(), "7".into());
++        assert!(bind_reply(&mut body, &env).is_err());
++        env.insert("JARVIS_LIVE_EVENT_TYPE".into(), "accept".into());
++        assert!(bind_reply(&mut body, &env).unwrap());
++        assert_eq!(body["jarvisRequestSeq"], 7);
++        assert_eq!(body["jarvisEventType"], "accept");
++        assert_eq!(body["sourceEventType"], "accept");
++    }
++}
+--- a/crates/live/src/lib.rs
++++ b/crates/live/src/lib.rs
+@@ -18,6 +18,7 @@
+ pub mod inject;
+ pub mod instructions;
+ pub mod journal;
++mod jarvis_request_guard;
+ pub mod json_error;
+ pub mod live_http;
+ pub mod manifests;
+--- a/crates/live/src/live_complete.rs
++++ b/crates/live/src/live_complete.rs
+@@ -132,6 +132,9 @@
+         if let Some(m) = &args.message {
+             body["message"] = json!(m);
+         }
++        if crate::jarvis_request_guard::bind_reply(&mut body, &env).is_err() {
++            return Some(json!({"ok":false,"error":"invalid_jarvis_request"}));
++        }
+         if info.token.is_none() {
+             body.as_object_mut().map(|o| o.shift_remove("token"));
+         }
+@@ -160,6 +163,10 @@
+         return 0;
+     }
+ 
++    if env.contains_key("JARVIS_LIVE_REQUEST_SEQ") {
++        println(io, &json_pretty(&json!({"ok":false,"id":id,"error":"jarvis_request_changed_or_helper_unavailable"})));
++        return 1;
++    }
+     let store = create_live_session_store(&cwd, &env, Some(&id));
+     let event = match args.status {
+         "discarded" => json!({ "type": "discarded", "id": id }),
+--- a/crates/live/src/live_poll.rs
++++ b/crates/live/src/live_poll.rs
+@@ -194,8 +194,10 @@
+ }
+ 
+ /// JS: postReply(base, token, reply)
+-fn post_reply(base: &str, token: &str, reply: &Reply) -> Result<(), PollError> {
+-    let body = serde_json::to_string(&build_poll_reply_payload(token, reply)).unwrap_or_default();
++fn post_reply(base: &str, token: &str, reply: &Reply, env: &Env) -> Result<(), PollError> {
++    let mut payload = build_poll_reply_payload(token, reply);
++    crate::jarvis_request_guard::bind_reply(&mut payload, env).map_err(PollError::Other)?;
++    let body = serde_json::to_string(&payload).unwrap_or_default();
+     let res = agent(300_000)
+         .post(&format!("{}/poll", base))
+         .set("Content-Type", "application/json")
+@@ -549,7 +551,7 @@
+         },
+     };
+     let mut ack: Option<Value> = None;
+-    if let Err(e) = post_reply(base, token, &reply) {
++    if let Err(e) = post_reply(base, token, &reply, &io.env) {
+         let msg = match e {
+             PollError::Auth => {
+                 "Authentication failed. The server token may have changed.".to_string()
+@@ -735,7 +737,7 @@
+             }
+         };
+         let then_poll = argv.iter().any(|a| a == "--then-poll");
+-        return match post_reply(&base, &token, &reply) {
++        return match post_reply(&base, &token, &reply, &env) {
+             Ok(()) => {
+                 let ack = reply_ack_json(&reply);
+                 if then_poll {
+--- a/crates/live/src/live_server.rs
++++ b/crates/live/src/live_server.rs
+@@ -22,7 +22,7 @@
+ use crate::random::random_uuid;
+ use crate::roots::enter_live_root;
+ use crate::server_state::{
+-    lease_event, lock, now_i64, resolve_project_context, truthy, ServerState, Shared,
++    lock, now_i64, resolve_project_context, truthy, ServerState, Shared,
+     DEFAULT_POLL_TIMEOUT, SSE_HEARTBEAT_INTERVAL_MS,
+ };
+ use crate::session::create_live_session_store;
+@@ -747,6 +747,7 @@
+                 .collect();
+             let body = json!({
+                 "status": "ok",
++                "jarvisQueueProtocol": 1,
+                 "port": st.port,
+                 "connectedClients": st.sse_clients.len(),
+                 "pendingEvents": pending,
+@@ -775,7 +776,7 @@
+                 &cors,
+                 json_res(
+                     200,
+-                    json!({ "status": "ok", "port": port, "mode": "variant", "hasProjectContext": has_ctx, "connectedClients": clients }),
++                    json!({ "status": "ok", "jarvisQueueProtocol": 1, "port": port, "mode": "variant", "hasProjectContext": has_ctx, "connectedClients": clients }),
+                 ),
+             );
+         }
+@@ -1376,7 +1377,46 @@
+         .map(str::trim)
+         .filter(|s| !s.is_empty())
+         .map(str::to_string);
++    let expected_request = match req.query_get("jarvisRequestSeq") {
++        None => None,
++        Some(value) => match value.parse::<u64>().ok().filter(|seq| *seq > 0) {
++            Some(value) if event_id.is_some() => Some(value),
++            _ => {
++                respond(&mut stream, cors, json_res(400, json!({"error":"invalid_jarvis_request"})));
++                return;
++            }
++        },
++    };
+     let mut st = lock(shared);
++    if let Some(expected) = expected_request {
++        if !crate::jarvis_request_guard::matches(&st.store, event_id.as_deref().unwrap_or(""), expected, None) {
++            respond(&mut stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++            return;
++        }
++    }
++    if expected_request.is_some() {
++        if let Some(current) = crate::jarvis_request_guard::pending(&st.store, event_id.as_deref().unwrap_or("")) {
++            let id = current.get("id");
++            let kind = current.get("type");
++            // Preserve canonical scaffold readiness while replacing stale payloads.
++            st.pending_events.retain(|entry| entry.event.get("id") != id || entry.event.get("type") == kind);
++            if let Some(entry) = st.pending_events.iter_mut().find(|entry| entry.event.get("id") == id && entry.event.get("type") == kind) {
++                entry.event = current;
++            } else {
++                let seq = st.next_event_seq;
++                st.next_event_seq += 1;
++                st.pending_events.push(crate::server_state::PendingEntry { event:current, lease_until:0, seq });
++            }
++        } else {
++            // Recovery after an error ACK is handled by the host from the
++            // immutable journal, never by leasing an orphan in-memory entry.
++            st.last_poll_at = now_i64();
++            st.broadcast_agent_polling_if_changed();
++            drop(st);
++            respond(&mut stream, cors, json_res(200, json!({"type":"timeout"})));
++            return;
++        }
++    }
+     st.last_poll_at = now_i64();
+     if let Some(idx) = st.find_available_pending_event(types.as_deref(), event_id.as_deref()) {
+         st.pending_events[idx].lease_until = now_i64() + lease_ms;
+@@ -1386,8 +1426,17 @@
+         // Leasing may run the generation preflight (a child process); the
+         // arrival-order claim ends here.
+         ticket.release();
+-        let event = lease_event(shared, seq, event, lease_ms);
+-        respond(&mut stream, cors, json_res(200, Value::Object(event)));
++        let event = crate::server_state::lease_event_guarded(shared, seq, event, lease_ms, expected_request);
++        let status = if event.get("type").and_then(Value::as_str) == Some("jarvis_request_changed") { 409 } else { 200 };
++        respond(&mut stream, cors, json_res(status, Value::Object(event)));
++        return;
++    }
++    // Guarded host polls never park: a later flush must not lease a newer
++    // request using the same action ID after the compare has already passed.
++    if expected_request.is_some() {
++        st.broadcast_agent_polling_if_changed();
++        drop(st);
++        respond(&mut stream, cors, json_res(200, json!({"type":"timeout"})));
+         return;
+     }
+     let (poll_id, rx) = st.park_poll(lease_ms, types, event_id);
+@@ -1565,6 +1614,66 @@
+     let msg_id_val = msg.get("id").cloned().unwrap_or(Value::Null);
+     let msg_type = msg.get("type").and_then(|v| v.as_str()).map(String::from);
+     let mut st = lock(shared);
++    let expected_request = msg.get("jarvisRequestSeq");
++    let expected_pending = msg.get("jarvisPendingEventSeq");
++    let host_cancel = msg.get("jarvisCancel") == Some(&Value::Bool(true));
++    if expected_request.is_some() || expected_pending.is_some() || host_cancel {
++        let request_seq = expected_request.and_then(Value::as_u64).filter(|seq| *seq > 0);
++        let pending_seq = expected_pending.and_then(Value::as_u64).filter(|seq| *seq > 0);
++        if request_seq.is_none() || msg_id.is_none()
++            || (expected_pending.is_some() && pending_seq.is_none())
++            || (host_cancel && (pending_seq.is_none() || msg_type.as_deref() != Some("error")))
++        {
++            respond(stream, cors, json_res(400, json!({"error":"invalid_jarvis_request"})));
++            return;
++        }
++        let id = msg_id.as_deref().unwrap_or("");
++        if !crate::jarvis_request_guard::matches(&st.store, id, request_seq.unwrap_or(0), pending_seq) {
++            respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++            return;
++        }
++        if let Some(expected_kind) = msg.get("jarvisEventType") {
++            let Some(expected_kind) = expected_kind.as_str().filter(|kind| !kind.is_empty()) else {
++                respond(stream, cors, json_res(400, json!({"error":"invalid_jarvis_request"})));
++                return;
++            };
++            if let Some(current) = crate::jarvis_request_guard::pending(&st.store, id) {
++                let kind = current.get("type").and_then(Value::as_str);
++                if kind != Some(expected_kind) && !(expected_kind == "accept" && kind == Some("carbonize_cleanup")) {
++                    respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++                    return;
++                }
++            }
++        }
++        if host_cancel {
++            let source = msg.get("sourceEventType").and_then(Value::as_str);
++            if !st.pending_events.iter().any(|entry| {
++                entry.event.get("id").and_then(Value::as_str) == Some(id)
++                    && source == entry.event.get("type").and_then(Value::as_str)
++            }) {
++                respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++                return;
++            }
++            // Host removal only settles the canonical request and browser UI.
++            // Never enter upstream manual-apply rollback or source-edit paths.
++            let message = msg.get("message").and_then(Value::as_str).unwrap_or("Solicitação removida da fila do Designer.");
++            let event = json!({"type":"agent_error","id":id,"sourceEventType":source,"message":message});
++            if st.store.append_event(&event).is_err() {
++                respond(stream, cors, json_res(500, json!({"error":"jarvis_cancel_not_persisted"})));
++                return;
++            }
++            st.acknowledge_pending_event(Some(id), source);
++            if let Some(index) = st.pending_apply_deferreds.iter().position(|(key, _)| key == id) {
++                let (_, deferred) = st.pending_apply_deferreds.remove(index);
++                let _ = deferred.tx.send(Err(message.into()));
++            }
++            st.flush_pending_polls();
++            st.broadcast(&json!({"type":"error","id":id,"message":message}));
++            drop(st);
++            respond(stream, cors, json_res(200, json!({"ok":true})));
++            return;
++        }
++    }
+     let cwd = st.cwd.clone();
+ 
+     // 1. In-flight manual apply deferred
+@@ -1852,8 +1961,24 @@
+             );
+             return;
+         }
++        st = lock(shared);
++        // Compile released the mutex. Repeat the human/phase compare before
++        // publishing or journaling an ACK that could erase a newer request.
++        if let Some(expected) = expected_request.and_then(Value::as_u64) {
++            if !crate::jarvis_request_guard::matches(&st.store, &id, expected, None) {
++                respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++                return;
++            }
++            if let Some(expected_kind) = msg.get("jarvisEventType").and_then(Value::as_str) {
++                if let Some(current) = crate::jarvis_request_guard::pending(&st.store, &id) {
++                    if current.get("type").and_then(Value::as_str) != Some(expected_kind) {
++                        respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
++                        return;
++                    }
++                }
++            }
++        }
+         let _ = bump_svelte_component_preview_revision(&id, &cwd);
+-        st = lock(shared);
+     }
+     // 9. Journal
+     if truthy(msg.get("id")) && !skip_journal_reply {
+--- a/crates/live/src/server_state.rs
++++ b/crates/live/src/server_state.rs
+@@ -1393,9 +1393,24 @@
+     entry_event: Map<String, Value>,
+     lease_ms: i64,
+ ) -> Map<String, Value> {
+-    let mut event = entry_event;
+-    prepare_generate_event_for_lease(shared, seq, &mut event);
++    lease_event_guarded(shared, seq, entry_event, lease_ms, None)
++}
++
++/// Host-bound leases repeat their compare after the generation child process.
++pub fn lease_event_guarded(
++    shared: &Shared,
++    seq: i64,
++    mut event: Map<String, Value>,
++    lease_ms: i64,
++    expected_request: Option<u64>,
++) -> Map<String, Value> {
++    if !prepare_generate_event_for_lease(shared, seq, &mut event, expected_request) {
++        return json!({"type":"jarvis_request_changed"}).as_object().cloned().unwrap_or_default();
++    }
+     let mut st = lock(shared);
++    if expected_request.is_some_and(|expected| !guarded_event_matches(&st, &event, expected)) {
++        return json!({"type":"jarvis_request_changed"}).as_object().cloned().unwrap_or_default();
++    }
+     if !truthy(event.get("id")) {
+         st.pending_events.retain(|e| e.seq != seq);
+         return event;
+@@ -1420,13 +1435,22 @@
+ }
+ 
+ /// JS: prepareGenerateEventForLease(entry)
+-fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<String, Value>) {
++fn guarded_event_matches(st: &ServerState, event: &Map<String, Value>, expected: u64) -> bool {
++    let id = ev_str(event, "id").unwrap_or("");
++    crate::jarvis_request_guard::matches(&st.store, id, expected, None)
++        && crate::jarvis_request_guard::pending(&st.store, id).is_some_and(|current| current.get("type") == event.get("type"))
++}
++
++fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<String, Value>, expected_request: Option<u64>) -> bool {
+     if ev_str(event, "type") != Some("generate") || truthy(event.get("scaffoldAttempted")) {
+-        return;
++        return true;
+     }
+     let id = ev_str(event, "id").unwrap_or("").to_string();
+     let (cwd, env, cached) = {
+         let mut st = lock(shared);
++        if expected_request.is_some_and(|expected| !guarded_event_matches(&st, event, expected)) {
++            return false;
++        }
+         st.record_agent_phase(&id, "picked_up", &[]);
+         st.record_agent_phase(&id, "scaffolding", &[]);
+         let sig = crate::preflight::target_signature(event);
+@@ -1435,6 +1459,9 @@
+     };
+     let result = run_generation_preflight(event, &cwd, &env, cached.as_deref());
+     let mut st = lock(shared);
++    if expected_request.is_some_and(|expected| !guarded_event_matches(&st, event, expected)) {
++        return false;
++    }
+     match &result {
+         PreflightOutcome::Skipped => {}
+         PreflightOutcome::Ok {
+@@ -1494,6 +1521,7 @@
+         },
+         &[("durationMs", duration), ("previewMode", preview_mode)],
+     );
++    true
+ }
+ 
+ pub enum PreflightOutcome {

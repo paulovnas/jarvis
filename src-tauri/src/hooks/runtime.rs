@@ -511,7 +511,10 @@ pub(crate) struct Output {
     pub(crate) truncated: bool,
 }
 
-async fn drain(mut stream: impl AsyncRead + Unpin) -> std::io::Result<(String, bool)> {
+async fn drain(
+    mut stream: impl AsyncRead + Unpin,
+    limit: usize,
+) -> std::io::Result<(String, bool)> {
     let mut captured = Vec::new();
     let mut truncated = false;
     let mut buffer = [0; 4096];
@@ -520,7 +523,7 @@ async fn drain(mut stream: impl AsyncRead + Unpin) -> std::io::Result<(String, b
         if size == 0 {
             break;
         }
-        let kept = size.min(MAX_OUTPUT.saturating_sub(captured.len()));
+        let kept = size.min(limit.saturating_sub(captured.len()));
         captured.extend_from_slice(&buffer[..kept]);
         truncated |= kept < size;
     }
@@ -557,6 +560,18 @@ pub(crate) async fn execute_process(
     timeout_seconds: u64,
     signal: watch::Receiver<bool>,
 ) -> Result<Result<Output, String>, Cancelled> {
+    execute_process_with_output_limit(command, input, timeout_seconds, signal, MAX_OUTPUT).await
+}
+
+/// A host-owned caller may need a larger bounded capture before reducing
+/// document excerpts, so trailing runtime directives are not discarded.
+pub(crate) async fn execute_process_with_output_limit(
+    command: tokio::process::Command,
+    input: &[u8],
+    timeout_seconds: u64,
+    signal: watch::Receiver<bool>,
+    output_limit: usize,
+) -> Result<Result<Output, String>, Cancelled> {
     let child = match crate::agent::shell::spawn_process_with_stdin(
         command,
         std::process::Stdio::piped(),
@@ -564,14 +579,24 @@ pub(crate) async fn execute_process(
         Ok(child) => child,
         Err(_) => return Ok(Err("Não foi possível iniciar o comando.".into())),
     };
-    execute_child(child, input, timeout_seconds, signal).await
+    execute_child_with_output_limit(child, input, timeout_seconds, signal, output_limit).await
 }
 
 async fn execute_child(
+    child: Box<dyn process_wrap::tokio::ChildWrapper>,
+    input: &[u8],
+    timeout_seconds: u64,
+    signal: watch::Receiver<bool>,
+) -> Result<Result<Output, String>, Cancelled> {
+    execute_child_with_output_limit(child, input, timeout_seconds, signal, MAX_OUTPUT).await
+}
+
+async fn execute_child_with_output_limit(
     mut child: Box<dyn process_wrap::tokio::ChildWrapper>,
     input: &[u8],
     timeout_seconds: u64,
     mut signal: watch::Receiver<bool>,
+    output_limit: usize,
 ) -> Result<Result<Output, String>, Cancelled> {
     let (Some(stdout), Some(stderr), Some(mut stdin)) = (
         child.stdout().take(),
@@ -590,8 +615,12 @@ async fn execute_child(
             drop(stdin);
             Ok::<_, std::io::Error>(())
         };
-        let (stdout, stderr, status, written) =
-            tokio::join!(drain(stdout), drain(stderr), child.wait(), write);
+        let (stdout, stderr, status, written) = tokio::join!(
+            drain(stdout, output_limit),
+            drain(stderr, output_limit),
+            child.wait(),
+            write
+        );
         // A hook may deliberately decide without reading stdin. Its exit status
         // and decision remain authoritative when the pipe closes early.
         if let Err(error) = written {
@@ -1208,6 +1237,28 @@ mod tests {
         assert_eq!(output.stdout, literal);
         assert!(!root.path().join("escaped").exists());
         assert!(!root.path().join("another").exists());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn larger_host_capture_retains_trailing_context_without_changing_default_hook_limit() {
+        let output = format!(
+            "{}\nRESOLVED_CONTEXT: actual routing",
+            "x".repeat(MAX_OUTPUT + 1)
+        );
+        let (_sender, signal) = watch::channel(false);
+        for (limit, truncated) in [(MAX_OUTPUT, true), (512 * 1024, false)] {
+            let mut command = tokio::process::Command::new("/usr/bin/printf");
+            command.args(["%s", &output]);
+            let captured = if limit == MAX_OUTPUT {
+                execute_process(command, b"", 5, signal.clone()).await
+            } else {
+                execute_process_with_output_limit(command, b"", 5, signal.clone(), limit).await
+            }
+            .unwrap_or_else(|_| panic!("unexpected cancellation"))
+            .unwrap();
+            assert_eq!(captured.truncated, truncated);
+            assert_eq!(captured.stdout.contains("RESOLVED_CONTEXT"), !truncated);
+        }
     }
     #[test]
     fn mcp_hook_input_templates_preserve_json_types_and_missing_fields_never_dispatch() {

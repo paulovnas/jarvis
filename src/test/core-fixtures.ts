@@ -10,5 +10,5 @@ export function coreFixture(installed = true): CoreSnapshot {
     { id: "openmontage", name: "OpenMontage", repository: "https://github.com/calesthio/OpenMontage" },
     { id: "comfyui", name: "ComfyUI", repository: "https://github.com/Comfy-Org/ComfyUI" },
     { id: "graft", name: "Graft", repository: "https://github.com/trailhq/Graft" },
-  ].map(item => ({ ...item, id: item.id as CoreSnapshot["items"][number]["id"], installed, configured: installed, installedVersion: installed ? "1.0.0" : null, latestVersion: "1.0.0", updateAvailable: false, stage: null, download: null, error: null, healthError: null, diagnostics: [] })) };
+  ].map(item => ({ ...item, id: item.id as CoreSnapshot["items"][number]["id"], bundled: false, installed, configured: installed, installedVersion: installed ? "1.0.0" : null, latestVersion: "1.0.0", updateAvailable: false, stage: null, download: null, error: null, healthError: null, diagnostics: [] })) };
 }

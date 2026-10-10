@@ -43,3 +43,6 @@ updater.key
 
 # Beads / Dolt files (added by bd init)
 *.gate.lock*
+# Prepared native engine; immutable sources and SHA pins remain versioned.
+/src-tauri/resources/impeccable/bin/
+/src-tauri/resources/impeccable/jarvis-design.json

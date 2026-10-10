@@ -61,6 +61,57 @@ fn saving_reuses_existing_markdown_and_rejects_stale_editor_revisions() {
 }
 
 #[test]
+fn canonical_design_prefers_registered_knowledge_and_the_most_specific_scope() {
+    let (_temp, root) = fixture();
+    fs::create_dir_all(root.join("a/src")).unwrap();
+    fs::create_dir(root.join("b")).unwrap();
+    fs::write(root.join("a/src/page.tsx"), "page").unwrap();
+    let shared = edit(&root, ".", Kind::Design, "Shared knowledge", "");
+    let scoped = edit(&root, "a", Kind::Design, "Scoped knowledge", "");
+    fs::write(root.join("DESIGN.md"), "Competing root identity").unwrap();
+    fs::write(root.join("a/DESIGN.md"), "Competing app identity").unwrap();
+    assert_eq!(
+        design_path(&root, None).unwrap().unwrap(),
+        Path::new(&shared.path)
+    );
+    assert_eq!(
+        design_path(&root, Some("a/src/page.tsx")).unwrap().unwrap(),
+        Path::new(&scoped.path)
+    );
+    assert_eq!(
+        design_path(&root, Some("b")).unwrap().unwrap(),
+        Path::new(&shared.path)
+    );
+    assert_eq!(design_paths(&root, &["a".into(), "a/src".into()]).len(), 1);
+    fs::remove_file(root.join(&shared.path)).unwrap();
+    assert!(design_path(&root, Some("b")).is_err());
+    assert_eq!(
+        fs::read_to_string(root.join("DESIGN.md")).unwrap(),
+        "Competing root identity"
+    );
+}
+
+#[test]
+fn canonical_design_discovers_existing_documents_without_creating_knowledge() {
+    let (_temp, root) = fixture();
+    fs::create_dir_all(root.join("app/docs")).unwrap();
+    fs::write(root.join("DESIGN.md"), "Shared design").unwrap();
+    fs::write(root.join("app/docs/Design.md"), "App design").unwrap();
+    assert_eq!(
+        design_path(&root, Some("app")).unwrap().unwrap(),
+        Path::new("app/docs/Design.md")
+    );
+    assert_eq!(
+        design_path(&root, None).unwrap().unwrap(),
+        Path::new("DESIGN.md")
+    );
+    assert!(!root.join(".jarvis").exists());
+    fs::create_dir_all(root.join(".jarvis/knowledge")).unwrap();
+    fs::write(root.join(INDEX), "invalid").unwrap();
+    assert!(design_path(&root, None).is_err());
+}
+
+#[test]
 fn scoped_search_includes_shared_facts_and_excludes_other_repositories() {
     let (_temp, root) = fixture();
     fs::create_dir(root.join("front")).unwrap();

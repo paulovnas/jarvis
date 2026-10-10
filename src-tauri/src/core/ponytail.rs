@@ -91,8 +91,8 @@ fn read(package: &Path, relative: &str) -> Result<String, CoreError> {
     Ok(text)
 }
 
-// The upstream Pi extension selects one intensity's table row and worked
-// example. Jarvis also omits CLI lifecycle sections because Core owns activation.
+// Upstream selects one level's table row and worked example. Core owns activation,
+// so omit host lifecycle controls from both the v4 sections and the v5 paragraph.
 fn full_rules(source: &str) -> Result<String, CoreError> {
     let normalized = source.trim_start_matches('\u{feff}').replace("\r\n", "\n");
     let (frontmatter, body) = normalized
@@ -108,6 +108,10 @@ fn full_rules(source: &str) -> Result<String, CoreError> {
     let mut fence: Option<char> = None;
     let mut ladder = false;
     let mut boundaries = false;
+    let mut scope = false;
+    let mut complete_change = false;
+    let mut safety = false;
+    let mut levels = false;
     let mut full = false;
     for line in body.lines() {
         let trimmed = line.trim_start();
@@ -128,9 +132,18 @@ fn full_rules(source: &str) -> Result<String, CoreError> {
                 let heading = heading.trim();
                 ladder |= heading == "The ladder";
                 boundaries |= heading == "When NOT to be lazy";
+                scope |= heading == "Before you write";
+                complete_change |= heading == "The smallest complete change";
+                levels |= heading == "Levels";
                 skip_section = matches!(heading, "Persistence" | "Boundaries");
             }
             if skip_section {
+                continue;
+            }
+            safety |= line
+                .strip_prefix("Never cut:")
+                .is_some_and(|requirements| !requirements.trim().is_empty());
+            if line.starts_with("Active for the whole session until ") {
                 continue;
             }
             if let Some(label) = line.strip_prefix('|').and_then(|row| row.split('|').next()) {
@@ -157,7 +170,9 @@ fn full_rules(source: &str) -> Result<String, CoreError> {
             result.push(line);
         }
     }
-    if !ladder || !boundaries || !full || fence.is_some() {
+    let legacy = ladder && boundaries;
+    let current = scope && complete_change && safety && levels;
+    if !(legacy || current) || !full || fence.is_some() {
         return Err(invalid());
     }
     Ok(result.join("\n").trim().to_owned())

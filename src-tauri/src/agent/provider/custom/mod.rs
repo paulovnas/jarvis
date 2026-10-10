@@ -413,8 +413,10 @@ async fn receive(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             value = tokio::time::timeout(idle, response.chunk()) => match value {
                 Err(_) if completions.finished() => return completions.finish(scope),
-                Err(_) => return Err(AgentError::new("provider_timeout", "O endpoint ficou sem responder.")),
-                Ok(value) => value.map_err(super::stream_read_error)?,
+                Err(_) => return Err(super::with_response_request_id(
+                    super::timeout_error(crate::diagnostics::ProviderTransportStage::ResponseStream), &response,
+                )),
+                Ok(value) => value.map_err(super::stream_read_error).map_err(|error| super::with_response_request_id(error, &response))?,
             },
         };
         let Some(chunk) = chunk else {

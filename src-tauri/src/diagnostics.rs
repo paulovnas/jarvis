@@ -121,11 +121,29 @@ struct RunMarker {
     shutdown_reason: Option<ShutdownReason>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProviderTransportStage {
+    Connect,
+    ResponseHeaders,
+    ResponseStream,
+}
+
+impl ProviderTransportStage {
+    pub(crate) fn operation(self) -> &'static str {
+        match self {
+            Self::Connect => "provider_connect",
+            Self::ResponseHeaders => "provider_response_headers",
+            Self::ResponseStream => "provider_response_stream",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderMetadata {
     pub(crate) http_status: Option<u16>,
     pub(crate) upstream_code: Option<String>,
     pub(crate) request_id: Option<String>,
+    pub(crate) transport_stage: Option<ProviderTransportStage>,
 }
 
 impl ProviderMetadata {
@@ -138,6 +156,7 @@ impl ProviderMetadata {
             http_status: http_status.filter(|status| (100..=599).contains(status)),
             upstream_code: upstream_code.and_then(|value| safe_token(value, 96)),
             request_id: request_id.and_then(|value| safe_token(value, 160)),
+            transport_stage: None,
         }
     }
 }
@@ -868,6 +887,9 @@ pub(crate) fn record_provider_failure(
     record.category = Some(category);
     record.correlation_id = correlation(correlation_value);
     if let Some(metadata) = metadata {
+        record.operation = metadata
+            .transport_stage
+            .map(|stage| stage.operation().into());
         record.http_status = metadata.http_status;
         record.upstream_code.clone_from(&metadata.upstream_code);
         record.request_id.clone_from(&metadata.request_id);

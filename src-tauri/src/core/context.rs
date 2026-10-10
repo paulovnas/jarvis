@@ -575,9 +575,9 @@ pub fn fallback_result(name: &str, output: &str) -> String {
     format!("{start}\n[…]\n{end}\n\nIndexing is unavailable. The complete result is preserved in local chat history, but is NOT searchable in Context-mode. Request a small read-only excerpt from its original source if needed. Do not rerun mutations to recover output.")
 }
 fn should_index(name: &str, output: &str) -> bool {
-    // Skill instructions must be read in full. Their native paginated reader is
-    // already bounded. Small exact edit excerpts remain verbatim as well.
-    output.len() > OUTPUT_BUDGET && name != "read_skill"
+    // Skill and playbook pages are already bounded and must remain complete.
+    // Re-indexing their JSON envelopes hides required workflow sections.
+    output.len() > OUTPUT_BUDGET && !matches!(name, "read_skill" | "design_read")
 }
 
 fn compact_result(name: &str, output: &str, source: &str, indexed: &str) -> String {
@@ -924,6 +924,39 @@ mod tests {
         }
         assert!(!should_index("read_skill", &large));
         assert!(!should_index("read", "17: exact source to edit"));
+    }
+    #[tokio::test]
+    async fn paginated_design_references_keep_the_full_body_and_cursor_without_indexing() {
+        let directory = tempfile::tempdir().unwrap();
+        let context = ContextMode::without_project(directory.path(), "design-reference");
+        let (_sender, signal) = watch::channel(false);
+        let content = format!(
+            "# New visual work\n{}\n## Required confirmation\n{}",
+            "á".repeat(6000),
+            "b".repeat(5900)
+        );
+        for next in [json!(12000), Value::Null] {
+            let output = json!({
+                "id": "impeccable/new-work", "file": ".agents/skills/impeccable/reference/new-work.md",
+                "content": content, "offset": 0, "nextOffset": next
+            }).to_string();
+            assert!(output.len() > OUTPUT_BUDGET);
+            assert!(context
+                .post_tool(
+                    "design_read",
+                    &json!({"id": "impeccable/new-work"}),
+                    &output,
+                    false,
+                    "design-page",
+                    signal.clone()
+                )
+                .await
+                .unwrap()
+                .is_none());
+            assert_eq!(fallback_result("design_read", &output), output);
+            assert!(context.take_activity().is_empty());
+            assert!(should_index("mcp_design_observation", &output));
+        }
     }
     #[test]
     fn recall_is_bounded_and_retrieval_cannot_be_filtered_out() {

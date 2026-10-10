@@ -306,7 +306,11 @@ const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn connection_error(error: reqwest::Error, message: &str) -> AgentError {
     if error.is_timeout() {
-        AgentError::new("provider_timeout", "O provedor ficou sem responder.")
+        timeout_error(if error.is_connect() {
+            crate::diagnostics::ProviderTransportStage::Connect
+        } else {
+            crate::diagnostics::ProviderTransportStage::ResponseHeaders
+        })
     } else {
         AgentError::new("provider_network", message)
     }
@@ -314,10 +318,33 @@ fn connection_error(error: reqwest::Error, message: &str) -> AgentError {
 
 fn stream_read_error(error: reqwest::Error) -> AgentError {
     if error.is_timeout() {
-        AgentError::new("provider_timeout", "O provedor ficou sem responder.")
+        timeout_error(crate::diagnostics::ProviderTransportStage::ResponseStream)
     } else {
         protocol_error()
     }
+}
+
+fn timeout_error(stage: crate::diagnostics::ProviderTransportStage) -> AgentError {
+    let message = match stage {
+        crate::diagnostics::ProviderTransportStage::Connect =>
+            "Não foi possível estabelecer conexão com o provedor no prazo esperado. Verifique a conexão e tente novamente.",
+        crate::diagnostics::ProviderTransportStage::ResponseHeaders =>
+            "O provedor não iniciou a resposta no prazo esperado. Tente novamente ou escolha outro provedor.",
+        crate::diagnostics::ProviderTransportStage::ResponseStream =>
+            "O provedor não enviou novos dados da resposta no prazo esperado. Tente novamente ou escolha outro provedor.",
+    };
+    let mut error = with_provider_metadata(
+        AgentError::new("provider_timeout", message),
+        None,
+        None,
+        None,
+    );
+    error
+        .provider_metadata
+        .as_mut()
+        .expect("metadata was inserted")
+        .transport_stage = Some(stage);
+    error
 }
 
 #[derive(Default)]
@@ -620,11 +647,13 @@ fn with_provider_metadata(
     upstream_code: Option<&str>,
     request_id: Option<&str>,
 ) -> AgentError {
-    error.provider_metadata = Some(Box::new(crate::diagnostics::ProviderMetadata::new(
-        status,
-        upstream_code,
-        request_id,
-    )));
+    let transport_stage = error
+        .provider_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.transport_stage);
+    let mut metadata = crate::diagnostics::ProviderMetadata::new(status, upstream_code, request_id);
+    metadata.transport_stage = transport_stage;
+    error.provider_metadata = Some(Box::new(metadata));
     error
 }
 fn with_response_request_id(mut error: AgentError, response: &reqwest::Response) -> AgentError {
@@ -641,6 +670,7 @@ fn with_response_request_id(mut error: AgentError, response: &reqwest::Response)
             http_status: None,
             upstream_code: None,
             request_id,
+            transport_stage: None,
         }));
     }
     error
@@ -1166,7 +1196,10 @@ pub(super) async fn receive(
     loop {
         let chunk = tokio::select! {
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-            result = tokio::time::timeout(parser.wait_timeout(), response.chunk()) => result.map_err(|_| AgentError::new("provider_timeout", "O provedor ficou sem responder."))?.map_err(stream_read_error)?,
+            result = tokio::time::timeout(parser.wait_timeout(), response.chunk()) => result
+                .map_err(|_| timeout_error(crate::diagnostics::ProviderTransportStage::ResponseStream))
+                .and_then(|result| result.map_err(stream_read_error))
+                .map_err(|error| with_response_request_id(error, &response))?,
         };
         let Some(chunk) = chunk else {
             return Err(protocol_error());
@@ -2459,6 +2492,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tls_connection_timeout_identifies_transport_stage_without_exposing_the_url() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let request = http_client().unwrap().get(format!(
+            "https://{}/private-route?token=private",
+            listener.local_addr().unwrap()
+        ));
+        let (connected_tx, connected) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let server = tokio::task::spawn_blocking(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            stream.read_exact(&mut [0]).unwrap();
+            connected_tx.send(()).unwrap();
+            held.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        let (_cancel, signal) = watch::channel(false);
+        let task = tokio::spawn(async move { receive(request, signal, |_| Ok(())).await });
+        connected.await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(21)).await;
+        let error = task.await.unwrap().unwrap_err();
+        assert_eq!(error.code, "provider_timeout");
+        assert!(retry::retryable(&error));
+        assert!(error.message.contains("estabelecer conexão"));
+        assert!(!error.message.contains("private"));
+        let metadata = error.provider_metadata.unwrap();
+        assert_eq!(
+            metadata.transport_stage,
+            Some(crate::diagnostics::ProviderTransportStage::Connect)
+        );
+        assert_eq!(metadata.http_status, None);
+        assert_eq!(metadata.request_id, None);
+        release.send(()).unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn http_header_and_body_stalls_still_timeout() {
         for send_first_event in [false, true] {
             let ControlledSseServer {
@@ -2487,7 +2560,17 @@ mod tests {
             }
             tokio::time::pause();
             tokio::time::advance(STREAM_IDLE_TIMEOUT + Duration::from_secs(1)).await;
-            assert_eq!(task.await.unwrap().unwrap_err().code, "provider_timeout");
+            let error = task.await.unwrap().unwrap_err();
+            assert_eq!(error.code, "provider_timeout");
+            assert!(retry::retryable(&error));
+            assert_eq!(
+                error.provider_metadata.unwrap().transport_stage,
+                Some(if send_first_event {
+                    crate::diagnostics::ProviderTransportStage::ResponseStream
+                } else {
+                    crate::diagnostics::ProviderTransportStage::ResponseHeaders
+                })
+            );
             drop(chunks);
             server.await.unwrap();
             tokio::time::resume();

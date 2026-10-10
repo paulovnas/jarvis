@@ -257,31 +257,99 @@ async fn inspect(home: &Path, id: ComponentId) -> Vec<Check> {
     checks
 }
 
-fn enforce(app: &tauri::AppHandle, core: &CoreState, home: &Path) {
-    if !core.snapshot(home).is_ok_and(|s| s.ready) {
+fn publish(app: &tauri::AppHandle, snapshot: &Snapshot) {
+    if !snapshot.ready {
         app.state::<crate::agent::AgentState>()
             .stop_for_core_failure();
     }
-    core.emit(app, home);
+    let _ = app.emit("core:changed", snapshot);
 }
 
-async fn diagnose(app: &tauri::AppHandle, core: &CoreState, home: &Path) -> Result<(), CoreError> {
+async fn enforce(
+    app: &tauri::AppHandle,
+    core: &CoreState,
+    home: &Path,
+) -> Result<Snapshot, CoreError> {
+    let result = core.snapshot_async(home).await;
+    if let Ok(snapshot) = &result {
+        publish(app, snapshot);
+    } else {
+        app.state::<crate::agent::AgentState>()
+            .stop_for_core_failure();
+    }
+    result
+}
+
+fn diagnostic_result(snapshot: &mut Snapshot, id: ComponentId, checks: Vec<Check>) {
+    if let Some(item) = snapshot.items.iter_mut().find(|item| item.id == id) {
+        item.installed = checks.first().is_some_and(|check| check.passed);
+        item.configured = item.installed
+            && (id != ComponentId::Context7 || checks.last().is_some_and(|check| check.passed));
+        item.health_error = checks
+            .iter()
+            .find(|check| !check.passed)
+            .map(|check| check.message.clone());
+        item.diagnostics = checks;
+        item.stage = None;
+        item.download = None;
+    }
+    snapshot.ready = snapshot.items.iter().all(|item| {
+        !item.id.required() || (item.installed && item.configured && item.health_error.is_none())
+    });
+}
+
+async fn diagnose_components(
+    core: &CoreState,
+    home: &Path,
+    mut report: impl FnMut(&Snapshot),
+) -> Result<Snapshot, CoreError> {
+    // Progress reuses this operation's verified state; the final pass still detects tampering.
+    let mut snapshot = core.snapshot_async(home).await?;
+    core.refresh_updates(&mut snapshot)?;
+    report(&snapshot);
+    for id in ComponentId::ALL {
+        {
+            let mut data = core.data.lock().map_err(|_| error("Core indisponível."))?;
+            data.stages.insert(id, "Analisando componente".into());
+            data.downloads.remove(&id);
+        }
+        if let Some(item) = snapshot.items.iter_mut().find(|item| item.id == id) {
+            item.stage = Some("Analisando componente".into());
+            item.download = None;
+        }
+        core.refresh_updates(&mut snapshot)?;
+        report(&snapshot);
+        let checks = inspect(home, id).await;
+        {
+            let mut data = core.data.lock().map_err(|_| error("Core indisponível."))?;
+            data.diagnostics.insert(id, checks.clone());
+            data.stages.remove(&id);
+        }
+        diagnostic_result(&mut snapshot, id, checks);
+        core.refresh_updates(&mut snapshot)?;
+        report(&snapshot);
+    }
+    let snapshot = core.snapshot_async(home).await?;
+    report(&snapshot);
+    Ok(snapshot)
+}
+
+async fn diagnose(
+    app: &tauri::AppHandle,
+    core: &CoreState,
+    home: &Path,
+) -> Result<Snapshot, CoreError> {
     let _activity = crate::updater::begin_activity(app).map_err(error)?;
     let _lock = core
         .install_lock
         .try_lock()
         .map_err(|_| error("Aguarde a operação atual do Core."))?;
-    for id in ComponentId::ALL {
-        core.stage(app, home, id, "Analisando componente");
-        let checks = inspect(home, id).await;
-        {
-            let mut data = core.data.lock().map_err(|_| error("Core indisponível."))?;
-            data.diagnostics.insert(id, checks);
-            data.stages.remove(&id);
-        }
-        enforce(app, core, home);
+    let result = diagnose_components(core, home, |snapshot| publish(app, snapshot)).await;
+    if result.is_err() {
+        app.state::<crate::agent::AgentState>()
+            .stop_for_core_failure();
     }
-    Ok(())
+    result
 }
 
 #[tauri::command]
@@ -293,8 +361,7 @@ pub async fn diagnose_core(
         .path()
         .home_dir()
         .map_err(|_| error("Pasta pessoal indisponível."))?;
-    diagnose(&app, &core, &home).await?;
-    core.snapshot(&home)
+    diagnose(&app, &core, &home).await
 }
 
 #[tauri::command]
@@ -304,6 +371,9 @@ pub async fn repair_core_component(
     id: ComponentId,
     reinstall: bool,
 ) -> Result<Snapshot, CoreError> {
+    if id == ComponentId::Impeccable && design::native_directory().is_some() {
+        return Err(error("O Impeccable faz parte do Jarvis. Reinstale o aplicativo para restaurar seus recursos nativos."));
+    }
     let _activity = crate::updater::begin_activity(&app).map_err(error)?;
     let _lock = core
         .install_lock
@@ -374,9 +444,9 @@ pub async fn repair_core_component(
             data.errors.remove(&id);
         }
     }
-    enforce(&app, &core, &home);
+    let snapshot = enforce(&app, &core, &home).await;
     result?;
-    core.snapshot(&home)
+    snapshot
 }
 
 pub fn start_monitor(app: &tauri::AppHandle) {
@@ -389,7 +459,7 @@ pub fn start_monitor(app: &tauri::AppHandle) {
         let mut checked = None::<Instant>;
         loop {
             if !core.busy_for_update() {
-                enforce(&app, &core, &home);
+                let _ = enforce(&app, &core, &home).await;
                 if checked.is_none_or(|at| at.elapsed() >= Duration::from_secs(300))
                     && diagnose(&app, &core, &home).await.is_ok()
                 {

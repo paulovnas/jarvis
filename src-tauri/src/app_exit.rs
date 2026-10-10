@@ -75,6 +75,13 @@ pub(crate) fn allow(app: &tauri::AppHandle) {
     }
 }
 
+pub(crate) fn prepared(app: &tauri::AppHandle) -> bool {
+    app.state::<ExitState>()
+        .0
+        .lock()
+        .is_ok_and(|decision| decision.allowed)
+}
+
 /// Returns true when Tauri must keep the app/window alive.
 pub(crate) fn request(app: &tauri::AppHandle) -> bool {
     match request_inner(app) {
@@ -135,7 +142,7 @@ pub(crate) fn cancel_app_exit(state: tauri::State<'_, ExitState>) -> Result<(), 
 
 #[tauri::command]
 pub(crate) fn confirm_app_exit(app: tauri::AppHandle) -> Result<(), String> {
-    // Save before granting exit. A storage error leaves all processes intact.
+    // Terminal persistence must succeed before exit is granted; Live is already stopped.
     crate::prepare_exit(&app)?;
     app.exit(0);
     Ok(())

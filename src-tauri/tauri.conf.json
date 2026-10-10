@@ -41,7 +41,8 @@
     "resources": {
       "../browser-extension/dist/": "browser-extension/",
       "../browser-extension/dist-firefox/": "browser-extension-firefox/",
-      "resources/jarvito/announcements/": "jarvito/announcements/"
+      "resources/jarvito/announcements/": "jarvito/announcements/",
+      "resources/impeccable/": "impeccable/"
     },
     "icon": [
       "icons/32x32.png",

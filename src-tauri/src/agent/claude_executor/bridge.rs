@@ -213,6 +213,12 @@ impl<'a> Bridge<'a> {
             match crate::core::design::Pack::open(home) {
                 Ok(pack) => Some(pack),
                 Err(error) => {
+                    if execution
+                        .as_ref()
+                        .is_some_and(workflow::Execution::designer)
+                    {
+                        return Err(core_runtime::design_unavailable(session, error).await);
+                    }
                     activities.push(crate::core::activity::Activity::unavailable(
                         crate::core::ComponentId::Impeccable,
                         "design_preparation",
@@ -233,17 +239,20 @@ impl<'a> Bridge<'a> {
                     owner.project_id()?,
                 )?);
             }
-            let user = session
-                .data
-                .lock()
-                .map_err(|_| AgentError::internal())?
-                .turns
-                .last()
-                .ok_or_else(AgentError::internal)?
-                .turn
-                .user
-                .clone();
-            if let Some(activity) = core_runtime::prepare_design(
+            if exec.designer() {
+                activities.extend(
+                    core_runtime::prepare_design_context(
+                        session,
+                        pack,
+                        &scope,
+                        &brief,
+                        &mut core_runtime::DesignPreparation::default(),
+                        false,
+                        signal.clone(),
+                    )
+                    .await?,
+                );
+            } else if let Some(activity) = core_runtime::prepare_design(
                 session,
                 pack.prepare_context(&session.root, &user, &scope, &brief),
                 &mut None,
@@ -500,10 +509,13 @@ impl<'a> Bridge<'a> {
         }
         let prepared = contract.preflight(tool)?;
         self.repeated.before_call(tool)?;
+        let design_preflight =
+            core_runtime::design_preflight(self.session, self.execution.as_ref(), tool)?;
         if let Some(reason) = self
             .execution
             .as_ref()
             .and_then(|exec| exec.preflight(tool))
+            .or(design_preflight)
             .or_else(|| publication::blocks_unsupervised_tool(tool))
             .or_else(|| {
                 self.context

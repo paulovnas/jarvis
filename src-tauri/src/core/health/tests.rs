@@ -81,6 +81,115 @@ fn update_network_errors_do_not_block_but_failed_local_checks_do() {
     assert!(core.require_ready(home.path()).is_ok());
 }
 
+#[tokio::test]
+async fn diagnosis_reports_every_component_without_revalidating_all_packs_for_progress() {
+    let home = tempfile::tempdir().unwrap();
+    let core = CoreState::default();
+    let mut stages = Vec::new();
+    let snapshot = diagnose_components(&core, home.path(), |snapshot| {
+        for item in &snapshot.items {
+            if item.stage.is_some() {
+                stages.push(item.id);
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(stages, ComponentId::ALL);
+    assert_eq!(
+        core.snapshot_reads
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
+    assert!(!snapshot.ready);
+    assert!(snapshot.items.iter().all(|item| {
+        item.stage.is_none() && !item.diagnostics.is_empty() && item.health_error.is_some()
+    }));
+    assert!(core.data.lock().unwrap().stages.is_empty());
+}
+
+#[tokio::test]
+async fn diagnosis_progress_preserves_concurrent_update_discovery() {
+    let home = tempfile::tempdir().unwrap();
+    let core = CoreState::default();
+    core.data.lock().unwrap().checking = true;
+    let mut initial = true;
+    let mut progress = 0;
+    diagnose_components(&core, home.path(), |snapshot| {
+        if initial {
+            assert!(snapshot.checking);
+            let mut data = core.data.lock().unwrap();
+            data.checking = false;
+            data.latest.insert(ComponentId::Ponytail, "5.1.0".into());
+            initial = false;
+        } else {
+            assert!(!snapshot.checking);
+            assert_eq!(
+                snapshot
+                    .items
+                    .iter()
+                    .find(|item| item.id == ComponentId::Ponytail)
+                    .unwrap()
+                    .latest_version
+                    .as_deref(),
+                Some("5.1.0")
+            );
+            progress += 1;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(progress, ComponentId::ALL.len() * 2 + 1);
+}
+
+#[test]
+fn diagnostic_progress_keeps_failures_visible_and_final_status_rechecks_integrity() {
+    let home = tempfile::tempdir().unwrap();
+    let manifest = fixture(home.path());
+    let core = CoreState::default();
+    let mut snapshot = core.snapshot(home.path()).unwrap();
+    assert!(snapshot.ready);
+    diagnostic_result(
+        &mut snapshot,
+        ComponentId::Beads,
+        vec![
+            Check::result("Arquivos e recursos", Ok(()), "Pronto"),
+            Check::result("Execução local", Err(error("Não inicia")), ""),
+        ],
+    );
+    assert!(!snapshot.ready);
+    let beads = snapshot
+        .items
+        .iter()
+        .find(|item| item.id == ComponentId::Beads)
+        .unwrap();
+    assert!(beads.installed);
+    assert_eq!(beads.health_error.as_deref(), Some("Não inicia"));
+    assert!(beads.stage.is_none());
+
+    // No persistent validity cache: the next complete status detects changed installation files.
+    let path = root(home.path())
+        .join(&manifest.installations[&ComponentId::Ponytail].directory)
+        .join("verified");
+    fs::remove_file(path).unwrap();
+    diagnostic_result(
+        &mut snapshot,
+        ComponentId::Beads,
+        vec![
+            Check::result("Arquivos e recursos", Ok(()), "Pronto"),
+            Check::result("Execução local", Ok(()), "Pronto"),
+        ],
+    );
+    assert!(snapshot.ready);
+    let final_status = core.snapshot(home.path()).unwrap();
+    assert!(!final_status.ready);
+    assert!(final_status
+        .items
+        .iter()
+        .any(|item| item.id == ComponentId::Ponytail && !item.installed));
+    assert!(core.require_ready(home.path()).is_err());
+}
+
 #[test]
 fn recovers_damaged_manifest_from_receipts_without_erasing_data() {
     let home = tempfile::tempdir().unwrap();

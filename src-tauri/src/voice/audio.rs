@@ -115,7 +115,7 @@ impl CaptureSender {
         let size = samples.len();
         if self
             .queued
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
                 queued.checked_add(size).filter(|size| *size <= self.limit)
             })
             .is_err()

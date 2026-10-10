@@ -634,26 +634,63 @@ pub(super) fn overview(root: &Path) -> String {
     text
 }
 
-/// Reuse the canonical design documents in the native Impeccable preparation.
-pub(crate) fn design_paths(root: &Path, scopes: &[String]) -> Vec<std::path::PathBuf> {
-    load_index(root)
-        .map(|index| {
-            index
-                .entries
-                .into_iter()
-                .filter(|entry| {
-                    entry.kind == Kind::Design
-                        && (entry.scope == "."
-                            || scopes.iter().any(|scope| applies(&entry.scope, scope)))
-                })
-                .filter_map(|entry| {
-                    markdown_path(root, &entry.path, false)
-                        .ok()
-                        .map(|_| std::path::PathBuf::from(entry.path))
-                })
-                .collect()
+/// One design source per target: registered knowledge wins over file discovery.
+pub(crate) fn design_path(
+    root: &Path,
+    target: Option<&str>,
+) -> Result<Option<std::path::PathBuf>, AgentError> {
+    let index = load_index(root)?;
+    let target = tools::scoped(root, target.unwrap_or("."), false)?;
+    let directory = if target.is_dir() {
+        target.as_path()
+    } else {
+        target.parent().unwrap_or(root)
+    };
+    let scope = scope_path(root, &directory.to_string_lossy())?;
+    if let Some(entry) = index
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == Kind::Design && applies(&entry.scope, &scope))
+        .max_by_key(|entry| {
+            if entry.scope == "." {
+                0
+            } else {
+                entry.scope.len()
+            }
         })
-        .unwrap_or_default()
+    {
+        markdown_path(root, &entry.path, false)?;
+        return Ok(Some(std::path::PathBuf::from(&entry.path)));
+    }
+    for directory in directory
+        .ancestors()
+        .take_while(|path| path.starts_with(root))
+    {
+        let scope = scope_path(root, &directory.to_string_lossy())?;
+        let entry = entry_for(root, &index, &scope, Kind::Design);
+        if root
+            .join(&entry.path)
+            .try_exists()
+            .map_err(|_| error("Não foi possível consultar o design do projeto."))?
+        {
+            markdown_path(root, &entry.path, false)?;
+            return Ok(Some(std::path::PathBuf::from(entry.path)));
+        }
+    }
+    Ok(None)
+}
+
+/// Reuse canonical design sources without also loading competing root copies.
+pub(crate) fn design_paths(root: &Path, scopes: &[String]) -> Vec<std::path::PathBuf> {
+    scopes
+        .iter()
+        .take(8)
+        .map(|scope| Some(scope.as_str()))
+        .chain(scopes.is_empty().then_some(None))
+        .filter_map(|target| design_path(root, target).ok().flatten())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 pub(super) fn scoped_rules(
     root: &Path,

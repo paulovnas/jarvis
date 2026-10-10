@@ -77,6 +77,7 @@ fn provider_metadata_accepts_only_bounded_identifiers() {
     assert_eq!(valid.http_status, Some(429));
     assert_eq!(valid.upstream_code.as_deref(), Some("rate_limit_exceeded"));
     assert_eq!(valid.request_id.as_deref(), Some("req_01J-safe:value"));
+    assert_eq!(valid.transport_stage, None);
 
     let invalid = ProviderMetadata::new(
         Some(999),
@@ -86,6 +87,54 @@ fn provider_metadata_accepts_only_bounded_identifiers() {
     assert_eq!(invalid.http_status, None);
     assert_eq!(invalid.upstream_code, None);
     assert_eq!(invalid.request_id, None);
+}
+
+#[test]
+fn provider_transport_stages_survive_sanitized_summary_and_export() {
+    use std::io::Read as _;
+    let directory = tempfile::tempdir().unwrap();
+    let state = state(directory.path(), 'a');
+    for stage in [
+        ProviderTransportStage::Connect,
+        ProviderTransportStage::ResponseHeaders,
+        ProviderTransportStage::ResponseStream,
+    ] {
+        let mut record = Record::new(&state, EventKind::ProviderFailure, Level::Error);
+        record.provider = Some("custom".into());
+        record.category = Some("provider_timeout".into());
+        record.operation = Some(stage.operation().into());
+        state.record(record);
+    }
+    let summary = state.summary().unwrap();
+    assert_eq!(
+        summary
+            .recent_events
+            .iter()
+            .filter_map(|event| event.operation.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            "provider_connect",
+            "provider_response_headers",
+            "provider_response_stream"
+        ]
+    );
+    let destination = directory.path().join("timeouts.zip");
+    state.export(&destination).unwrap();
+    let mut archive = zip::ZipArchive::new(File::open(destination).unwrap()).unwrap();
+    let mut log = String::new();
+    archive
+        .by_name("logs/events.jsonl")
+        .unwrap()
+        .read_to_string(&mut log)
+        .unwrap();
+    assert_eq!(log.lines().count(), 3);
+    for line in log.lines() {
+        let record: Record = serde_json::from_str(line).unwrap();
+        assert_eq!(record.event, EventKind::ProviderFailure);
+        assert_eq!(record.http_status, None);
+        assert_eq!(record.upstream_code, None);
+        assert_eq!(record.request_id, None);
+    }
 }
 
 #[test]

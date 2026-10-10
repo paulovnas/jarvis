@@ -45,6 +45,23 @@ fn validate_next_queued_executor(data: &SessionData) -> Result<(), AgentError> {
 }
 
 impl Session {
+    /// Live has its own durable queue; admission must never drain an unrelated recovered turn.
+    pub(super) fn submit_live_message(
+        &self,
+        content: String,
+        options: TurnOptions,
+        parts: Vec<skill_input::MessagePart>,
+    ) -> Result<watch::Receiver<bool>, AgentError> {
+        let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
+        if self.journal_maintenance.load(Ordering::Acquire) {
+            return Err(journal_maintenance::maintenance_error());
+        }
+        let signal = self.reserve_locked(&mut data, content, options, None, parts)?;
+        // The old interrupted turn remains in the journal; only explicit user retry can resume it.
+        data.recovery = None;
+        Ok(signal)
+    }
+
     pub(super) fn edit_queued(&self, id: &str, content: String) -> Result<(), AgentError> {
         if content.trim().is_empty() || content.len() > 100_000 {
             return Err(AgentError::new(
@@ -121,6 +138,26 @@ impl Session {
         options: TurnOptions,
         parts: Vec<skill_input::MessagePart>,
     ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
+        self.submit_message_with_selection(content, options, parts, true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn submit_explicit_message(
+        &self,
+        content: String,
+        options: TurnOptions,
+        parts: Vec<skill_input::MessagePart>,
+    ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
+        self.submit_message_with_selection(content, options, parts, false)
+    }
+
+    fn submit_message_with_selection(
+        &self,
+        content: String,
+        options: TurnOptions,
+        parts: Vec<skill_input::MessagePart>,
+        inherit_active: bool,
+    ) -> Result<Option<watch::Receiver<bool>>, AgentError> {
         let mut data = self.data.lock().map_err(|_| AgentError::internal())?;
         if self.journal_maintenance.load(Ordering::Acquire) {
             return Err(journal_maintenance::maintenance_error());
@@ -153,7 +190,7 @@ impl Session {
         let mut options = data
             .turns
             .last()
-            .filter(|_| data.active.is_some() || data.recovery.is_some())
+            .filter(|_| inherit_active && (data.active.is_some() || data.recovery.is_some()))
             .map(|turn| turn.turn.options.clone())
             .unwrap_or(options);
         if selected == workflow::settings::chat::selection_key(&options).ok() {
@@ -584,6 +621,106 @@ mod tests {
     use super::*;
     use crate::agent::tests::Fixture;
     use std::fs;
+
+    #[test]
+    fn live_admission_does_not_resume_or_enqueue_an_old_request() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        session
+            .reserve("Teste? antigo".into(), tests_options())
+            .unwrap();
+        assert_eq!(
+            session
+                .submit_live_message("Novo pedido de ícones".into(), tests_options(), vec![])
+                .unwrap_err()
+                .code,
+            "already_running"
+        );
+        assert!(session.snapshot().unwrap().queued_messages.is_empty());
+        finish(&session, Err(AgentError::new("provider_limit", "Limite")));
+        let old_turn = session.snapshot().unwrap().turns[0].id.clone();
+        session.data.lock().unwrap().recovery = Some(old_turn.clone());
+        let _signal = session
+            .submit_live_message("Novo pedido de ícones".into(), tests_options(), vec![])
+            .unwrap();
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.history.total, 2);
+        let data = session.data.lock().unwrap();
+        assert_eq!(data.turns[0].turn.id, old_turn);
+        assert_eq!(data.turns[0].turn.user, "Teste? antigo");
+        assert_eq!(data.turns[0].turn.status, TurnStatus::Error);
+        drop(data);
+        assert_eq!(snapshot.turns.last().unwrap().user, "Novo pedido de ícones");
+        assert!(snapshot.queued_messages.is_empty());
+        assert!(session.data.lock().unwrap().recovery.is_none());
+    }
+
+    #[test]
+    fn live_admission_preserves_selected_model_and_designer_while_another_turn_runs() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        session
+            .reserve("Existing request".into(), tests_options())
+            .unwrap();
+        let mut options = tests_options();
+        options.account = "another-provider".into();
+        options.model = "selected-live-model".into();
+        options.approval_mode = ApprovalMode::Yolo;
+        options.workflow = Some(workflow::Flow::Designer);
+        options.reasoning = Some("high".into());
+        session
+            .submit_explicit_message("Live alteration".into(), options.clone(), vec![])
+            .unwrap();
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.turns.last().unwrap().user, "Existing request");
+        assert_eq!(snapshot.queued_messages[0].content, "Live alteration");
+        assert_eq!(
+            serde_json::to_value(&snapshot.queued_messages[0].options).unwrap(),
+            serde_json::to_value(options).unwrap()
+        );
+    }
+
+    #[test]
+    fn resuming_a_live_action_queued_after_failure_delivers_it_only_once() {
+        let fixture = Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        let content = "Impeccable Live · ação action-1";
+        session
+            .reserve("Previous request".into(), tests_options())
+            .unwrap();
+        session.submit(content.into(), tests_options()).unwrap();
+        let queued = session.snapshot().unwrap().queued_messages[0].clone();
+        finish(
+            &session,
+            Err(AgentError::new("provider_limit", "Limit reached")),
+        );
+        assert_eq!(session.snapshot().unwrap().queued_messages[0].id, queued.id);
+        assert!(session.reserve_next().unwrap().is_some());
+        let snapshot = session.snapshot().unwrap();
+        assert!(snapshot.queued_messages.is_empty());
+        assert_eq!(snapshot.turns.last().unwrap().user, content);
+        assert_eq!(
+            serde_json::to_value(&snapshot.turns.last().unwrap().options).unwrap(),
+            serde_json::to_value(&queued.options).unwrap()
+        );
+        finish(&session, Ok(()));
+        assert!(session.reserve_next().unwrap().is_none());
+        assert_eq!(
+            session
+                .snapshot()
+                .unwrap()
+                .turns
+                .iter()
+                .filter(|turn| turn.user == content)
+                .count(),
+            1
+        );
+        assert!(journal::load_all(&session.journal)
+            .unwrap()
+            .1
+            .queue
+            .is_empty());
+    }
 
     #[test]
     fn editing_queued_text_is_atomic_durable_and_preserves_identity_options_and_resources() {

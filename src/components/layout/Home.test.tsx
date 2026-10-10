@@ -25,6 +25,30 @@ const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
 describe("Home shell", () => {
+  it("shares one Live controller with the Designer sidebar and removes a pending task without changing the composer draft", async () => {
+    const user = userEvent.setup();
+    const task = { requestId: "session:12", actionId: "session", revision: 3, content: "Alinhe a versão", status: "pending", beadId: "jarvis-123", turnId: null, createdAt: 1791568800000 };
+    const status = { conversationId: "c1", state: "off", phase: "idle", actionId: null, url: null, tabId: null, error: null, setupNeeded: null, tasks: [task] };
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => {
+      if (command === "get_impeccable_live") return status;
+      if (command === "remove_impeccable_live_task") return { ...status, tasks: [] };
+      return original(command, args, options);
+    });
+    render(<Home />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    field.focus();
+    await user.paste("Meu rascunho continua aqui");
+    expect(field).toHaveTextContent("Meu rascunho continua aqui");
+    await user.click(screen.getByRole("tab", { name: "Designer" }));
+    await user.click(await screen.findByRole("button", { name: "Remover alteração: Alinhe a versão" }));
+    expect(invokeMock).toHaveBeenCalledWith("remove_impeccable_live_task", { conversationId: "c1", requestId: "session:12", expectedRevision: 3 });
+    await waitFor(() => expect(screen.queryByText("Alinhe a versão")).not.toBeInTheDocument());
+    expect(field).toHaveTextContent("Meu rascunho continua aqui");
+    expect(invokeMock.mock.calls.filter(([command]) => command === "get_impeccable_live")).toHaveLength(1);
+    expect(invokeMock.mock.calls.some(([command]) => command === "start_agent_turn" || command === "start_impeccable_live")).toBe(false);
+    expect(screen.queryByRole("status", { name: "Estado do Impeccable Live" })).not.toBeInTheDocument();
+  });
   it("keeps saved Fast chats valid until refreshed capabilities confirm incompatibility", async () => {
     const user = userEvent.setup();
     const account: ProviderAccount = { alias: "work", providerKind: "openai-codex", enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, modelsStale: true, models: [{ id: "gpt-test", name: "GPT Test", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] };

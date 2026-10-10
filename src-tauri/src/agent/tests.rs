@@ -1,6 +1,7 @@
 use super::*;
 use std::fs;
 
+mod impeccable_live_e2e;
 mod mcp_continuation;
 
 #[cfg(unix)]

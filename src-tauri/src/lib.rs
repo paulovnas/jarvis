@@ -241,6 +241,8 @@ pub fn run() {
             let diagnostics =
                 diagnostics::initialize(lease.root(), &app.package_info().version.to_string());
             agent::telemetry::initialize(lease.root(), &app.package_info().version.to_string());
+            core::design::setup(&app.path().resource_dir()?, &home)
+                .map_err(|error| std::io::Error::other(error.message))?;
             app.state::<agent::AgentState>()
                 .setup_execution_grants(lease.root())
                 .map_err(std::io::Error::other)?;
@@ -399,8 +401,14 @@ pub fn run() {
                 updater::install_app_update,
                 core::get_core_status,
                 core::impeccable_live::get_impeccable_live,
+                core::impeccable_live::set_impeccable_live_options,
                 core::impeccable_live::start_impeccable_live,
                 core::impeccable_live::stop_impeccable_live,
+                core::impeccable_live::cancel_impeccable_live_action,
+                core::impeccable_live::controls::edit_impeccable_live_task,
+                core::impeccable_live::controls::remove_impeccable_live_task,
+                core::impeccable_live::controls::resume_impeccable_live_task,
+                agent::browser::live::impeccable_live_action_feedback,
                 core::check_core_updates,
                 core::install_core_component,
                 core::cancel_core_installation,
@@ -586,6 +594,11 @@ pub fn run() {
                 if app_exit::request(app) {
                     api.prevent_exit();
                 }
+            } else if matches!(event, tauri::RunEvent::Exit) && !app_exit::prepared(app) {
+                // Native macOS Quit can emit Exit without an ExitRequested event.
+                if let Err(error) = prepare_exit(app) {
+                    eprintln!("Falha ao finalizar os serviços do Jarvis: {error}");
+                }
             }
         });
 }
@@ -619,16 +632,77 @@ fn prepare_exit_with_reason(
     if let Ok(home) = app.path().home_dir() {
         app.state::<agent::AgentState>().finish_hook_sessions(&home);
     }
-    shutdown_services(
-        &app.state::<system::SystemState>(),
-        &app.state::<agent::AgentState>(),
+    shutdown_with_live_cleanup(
+        || core::impeccable_live::shutdown_sync(app),
+        || {
+            shutdown_services(
+                &app.state::<system::SystemState>(),
+                &app.state::<agent::AgentState>(),
+            )
+        },
     )?;
-    core::impeccable_live::shutdown_sync(app);
     app.state::<remote::RemoteState>().shutdown();
     app.state::<voice::VoiceState>().shutdown(app, None);
     app_exit::allow(app);
     diagnostics::finish(reason);
     Ok(())
+}
+
+fn shutdown_with_live_cleanup(
+    stop_live: impl FnOnce(),
+    stop_services: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    // Detached Live helpers must stop even when terminal persistence prevents exit.
+    stop_live();
+    stop_services()
+}
+
+#[cfg(test)]
+mod shutdown_policy_tests {
+    use super::shutdown_with_live_cleanup;
+    use std::cell::RefCell;
+
+    #[test]
+    fn live_cleanup_is_not_skipped_when_another_service_prevents_exit() {
+        let events = RefCell::new(Vec::new());
+        let error = "A restauração dos terminais não pôde ser salva.".to_owned();
+        let result = shutdown_with_live_cleanup(
+            || events.borrow_mut().push("live stopped"),
+            || {
+                events.borrow_mut().push("terminal persistence failed");
+                Err(error.clone())
+            },
+        );
+        assert_eq!(result, Err(error));
+        assert_eq!(
+            events.into_inner(),
+            ["live stopped", "terminal persistence failed"]
+        );
+    }
+
+    #[test]
+    fn successful_shutdown_cleans_live_before_other_services_on_every_attempt() {
+        let events = RefCell::new(Vec::new());
+        for _ in 0..2 {
+            shutdown_with_live_cleanup(
+                || events.borrow_mut().push("live stopped"),
+                || {
+                    events.borrow_mut().push("services stopped");
+                    Ok(())
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            events.into_inner(),
+            [
+                "live stopped",
+                "services stopped",
+                "live stopped",
+                "services stopped"
+            ]
+        );
+    }
 }
 
 fn shutdown_services(

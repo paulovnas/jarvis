@@ -275,6 +275,7 @@ export function ChatComposer({
   const effectiveModel = currentModelDef?.value;
   const effectiveTier = effectiveSelection?.serviceTier;
   const choiceReady = selectionReady && !modelError && !customUnavailable && !chatModels?.saving && !choosingModel && !compacting;
+  const liveOptions: TurnOptions | undefined = choiceReady && currentModelDef ? { ...executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) }), mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } : undefined;
   useEffect(() => {
     if (!choiceReady || !effectiveModel) { onExecutionChoiceChange?.(null); return; }
     const choice = executionChoice({ executor: effectiveExecutor, model: effectiveModel, reasoning, ...(effectiveTier === "priority" ? { serviceTier: "priority" } : {}) });
@@ -369,9 +370,8 @@ export function ChatComposer({
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
           {draftKey && <VoiceControls target={`chat:${draftKey}`} disabled={disabled || compacting || sending || !selectionReady} onDictation={text => { setDraft(mergeDrafts(draftRef.current, { content: text })); input.current?.focus(); }} />}
-          {designLive && <Hint content={designLive.status.state === "setup" ? "O Designer está preparando o Live. Clique para desligar." : designLive.active ? "Desligar Impeccable Live" : "Editar o projeto visualmente com Impeccable Live"}><Button type="button" variant="ghost" size="icon" aria-label={designLive.active ? "Desligar Impeccable Live" : "Ativar Impeccable Live"} aria-pressed={designLive.active} disabled={!designLive.loaded || designLive.busy || (!designLive.active && (disabled || compacting || sending || !selectionReady || !!modelError || !currentModelDef))} className={`size-7.5 cursor-pointer rounded-full ${designLive.active ? "bg-onedark-purple/15 text-onedark-purple" : "text-muted-foreground hover:text-onedark-purple"}`} onClick={() => {
-            const choice = currentModelDef ? executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) }) : null;
-            if (choice || designLive.active) void designLive.toggle(choice ? { ...choice, mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } : undefined, liveUrl);
+          {designLive && <Hint content={designLive.active ? "Desligar Impeccable Live" : "Editar o projeto visualmente com Impeccable Live"}><Button type="button" variant="ghost" size="icon" aria-label={designLive.active ? "Desligar Impeccable Live" : "Ativar Impeccable Live"} aria-pressed={designLive.active} disabled={!designLive.loaded || designLive.busy || (!designLive.active && (disabled || sending || !liveOptions))} className={`size-7.5 cursor-pointer rounded-full ${designLive.active ? "bg-onedark-purple/15 text-onedark-purple" : "text-muted-foreground hover:text-onedark-purple"}`} onClick={() => {
+            if (liveOptions || designLive.active) void designLive.toggle(liveOptions, liveUrl);
           }}>{designLive.busy ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <MousePointer2 className="size-3.5" />}</Button></Hint>}
           <div className="composer-options flex flex-1 items-center gap-0.5">
             <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />

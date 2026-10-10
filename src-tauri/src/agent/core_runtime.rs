@@ -195,6 +195,230 @@ pub(super) fn prepare_design(
     Ok(Some(prepared.activity))
 }
 
+#[derive(Default)]
+pub(super) struct DesignPreparation {
+    fingerprint: Option<String>,
+    context: Option<(String, String)>,
+}
+
+fn design_request(session: &Session) -> Result<String, AgentError> {
+    let data = session.data.lock().map_err(|_| AgentError::internal())?;
+    let turn = data.turns.last().ok_or_else(AgentError::internal)?;
+    let steering = turn
+        .wire
+        .iter()
+        .rev()
+        .find(|item| item["_jarvis_auxiliary"] == true)
+        .and_then(|item| item["content"].as_str())
+        .unwrap_or("");
+    Ok(format!("{}\n{steering}", turn.turn.user))
+}
+
+pub(super) async fn design_unavailable(
+    session: &Session,
+    cause: crate::core::CoreError,
+) -> AgentError {
+    if cause.code == "cancelled" {
+        return AgentError::cancelled();
+    }
+    let message = format!("O Designer precisa do Impeccable pronto para iniciar. {} Verifique o componente em Configurações → Ferramentas → Core e tente novamente; o histórico e o progresso foram preservados.", cause.message);
+    let activity = Activity::unavailable(ComponentId::Impeccable, "design_preparation", &message);
+    if let Err(error) = record_async(session, vec![activity]).await {
+        return error;
+    }
+    AgentError::new("impeccable_preparation", &message)
+}
+
+/// A successful host-owned context command precedes inference for both native
+/// providers and the Claude bridge. Cache receipts survive provider changes;
+/// compaction replays their directives without starting another process.
+pub(super) async fn prepare_design_context(
+    session: &Session,
+    pack: &crate::core::design::Pack,
+    scopes: &[String],
+    brief: &str,
+    state: &mut DesignPreparation,
+    replay: bool,
+    signal: watch::Receiver<bool>,
+) -> Result<Vec<Activity>, AgentError> {
+    if *signal.borrow() {
+        return Err(AgentError::cancelled());
+    }
+    let request = design_request(session)?;
+    let (key, target) = match pack.context_key(&session.root, &request, scopes) {
+        Ok(value) => value,
+        Err(cause) => return Err(design_unavailable(session, cause).await),
+    };
+    let changed = state
+        .context
+        .as_ref()
+        .is_none_or(|(previous, _)| previous != &key);
+    let mut activities = Vec::new();
+    if changed {
+        let cached = {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            data.turns
+                .iter()
+                .rev()
+                .flat_map(|turn| turn.wire.iter().rev())
+                .find(|item| item["_jarvis_impeccable_context"] == key)
+                .and_then(|item| item["content"].as_str())
+                .map(str::to_owned)
+        };
+        let prompt = if let Some(prompt) = cached {
+            let mut activity = Activity::new(
+                ComponentId::Impeccable,
+                "context",
+                "Contexto do Impeccable revalidado e reutilizado",
+            );
+            activity.status = Status::Reused;
+            activity.fingerprint = Some(key.clone());
+            activities.push(activity);
+            prompt
+        } else {
+            let prepared = match pack
+                .run_context(&session.root, target.as_deref(), &key, signal.clone())
+                .await
+            {
+                Ok(prepared) => prepared,
+                Err(cause) => return Err(design_unavailable(session, cause).await),
+            };
+            activities.push(prepared.activity);
+            prepared.prompt
+        };
+        if *signal.borrow() {
+            return Err(AgentError::cancelled());
+        }
+        state.context = Some((key.clone(), prompt));
+    }
+    if changed || replay {
+        let prompt = &state.context.as_ref().ok_or_else(AgentError::internal)?.1;
+        session.update_async(|data| {
+            data.turns.last_mut().unwrap().wire.push(json!({
+                "role":"user", "_jarvis_runtime":true, "_jarvis_impeccable_context":key, "content":prompt,
+            }));
+        }).await?;
+    }
+    if let Some(activity) = prepare_design(
+        session,
+        pack.prepare_context(&session.root, &request, scopes, brief),
+        &mut state.fingerprint,
+        replay,
+    )? {
+        activities.push(activity);
+    }
+    Ok(activities)
+}
+
+pub(super) fn design_preflight(
+    session: &Session,
+    execution: Option<&super::workflow::Execution>,
+    tool: &ToolCall,
+) -> Result<Option<String>, AgentError> {
+    let Some(execution) = execution.filter(|execution| execution.designer()) else {
+        return Ok(None);
+    };
+    let (_, brief) = execution.design_inputs()?;
+    design_edit_guard(session, &brief, tool)
+}
+
+fn design_edit_guard(
+    session: &Session,
+    brief: &str,
+    tool: &ToolCall,
+) -> Result<Option<String>, AgentError> {
+    if !matches!(
+        tool.name.as_str(),
+        "write" | "edit" | "apply_patch" | "bash" | "process_start" | "terminal_start"
+    ) && !crate::core::context::needs_approval(&tool.name)
+    {
+        return Ok(None);
+    }
+    let request = design_request(session)?;
+    let data = session.data.lock().map_err(|_| AgentError::internal())?;
+    let turn = data.turns.last().ok_or_else(AgentError::internal)?;
+    let context_key = turn
+        .wire
+        .iter()
+        .rev()
+        .find_map(|item| item["_jarvis_impeccable_context"].as_str());
+    if context_key.is_none()
+        || !turn
+            .wire
+            .iter()
+            .any(|item| item["_jarvis_core_design"] == true)
+    {
+        return Ok(Some("A preparação real do Impeccable não está disponível nesta execução. Não faça alterações nem afirme que usou o Core; preserve o pedido e corrija a disponibilidade do componente pelo Jarvis antes de continuar.".into()));
+    }
+    let rejection = turn
+        .wire
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(position, item)| {
+            (item["_jarvis_auxiliary"] == true
+                && item["content"]
+                    .as_str()
+                    .is_some_and(crate::core::design::replacement_world))
+            .then_some(position)
+        });
+    let current_brief = turn
+        .turn
+        .steps
+        .iter()
+        .flat_map(|step| &step.tools)
+        .any(|call| {
+            call.name == "design_brief"
+                && call.status == "completed"
+                && call.args["text"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty())
+                && rejection.is_none_or(|rejection| {
+                    turn.wire.iter().enumerate().any(|(position, item)| {
+                        position > rejection
+                            && item["type"] == "function_call"
+                            && item["name"] == "design_brief"
+                            && item["call_id"] == call.id
+                    })
+                })
+        });
+    let replacement = rejection.is_some() || crate::core::design::replacement_world(&request);
+    if !current_brief
+        && (replacement || (brief.trim().is_empty() && !scoped_design_refinement(&request)))
+    {
+        return Ok(Some("Antes de implementar, registre a direção aceita com design_brief: objetivo da superfície, decisões do usuário, identidade a preservar ou mundo a substituir, anti-referências e critérios visuais. Use as decisões já fornecidas; pergunte somente o que realmente falta. Em redesign, DESIGN.md antigo é evidência, não obrigação de repetir a aparência rejeitada. Esta operação não foi executada; registre o briefing e tente novamente.".into()));
+    }
+    Ok(None)
+}
+
+fn scoped_design_refinement(request: &str) -> bool {
+    let request = request.to_lowercase();
+    [
+        "badge",
+        "botão",
+        "botao",
+        "button",
+        "margem",
+        "padding",
+        "posição",
+        "posicao",
+        "alinhamento",
+        "align",
+        "ícone",
+        "icone",
+        "tooltip",
+        "switch",
+    ]
+    .iter()
+    .any(|word| request.contains(word))
+        && ![
+            "toda a", "todo o", "inteira", "inteiro", "entire", "whole", "global", "refator",
+            "reformul", "redesign",
+        ]
+        .iter()
+        .any(|word| request.contains(word))
+}
+
 pub(super) async fn diagnose(
     session: &Session,
     registry: &mut lsp::Registry,
@@ -301,6 +525,341 @@ mod tests {
         tests::{options, session, Fixture},
         ApprovalMode, Step,
     };
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn host_design_context_is_actual_cached_replayed_and_reused_across_selected_providers() {
+        let fixture = Fixture::new();
+        let package = tempfile::tempdir().unwrap();
+        let pack = crate::core::design::tests::pack_fixture(package.path());
+        let session = session(&fixture);
+        let signal = session
+            .reserve(
+                "Ajuste a posição da badge de versão".into(),
+                options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let mut preparation = DesignPreparation::default();
+        let first = prepare_design_context(
+            &session,
+            &pack,
+            &[],
+            "",
+            &mut preparation,
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            first
+                .iter()
+                .filter(|activity| activity.action == "context")
+                .count(),
+            1
+        );
+        record_async(&session, first).await.unwrap();
+        // A second process would fail: unchanged context must be reused.
+        std::fs::write(package.path().join("bin/impeccable"), "#!/bin/sh\nexit 7\n").unwrap();
+        assert!(prepare_design_context(
+            &session,
+            &pack,
+            &[],
+            "",
+            &mut preparation,
+            false,
+            signal.clone()
+        )
+        .await
+        .unwrap()
+        .is_empty());
+        session
+            .update(true, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .wire
+                    .retain(|item| item["_jarvis_runtime"] != true)
+            })
+            .unwrap();
+        prepare_design_context(
+            &session,
+            &pack,
+            &[],
+            "",
+            &mut preparation,
+            true,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .wire
+            .iter()
+            .any(|item| item["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("RESOLVED_CONTEXT:"))));
+        super::super::finish(&session, Ok(()));
+        let mut selected = options(ApprovalMode::Yolo);
+        selected.account = "another-account".into();
+        selected.model = "another-model".into();
+        let signal = session
+            .reserve("Continue com a mesma correção".into(), selected)
+            .unwrap();
+        let resumed = prepare_design_context(
+            &session,
+            &pack,
+            &[],
+            "",
+            &mut DesignPreparation::default(),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+        assert!(resumed
+            .iter()
+            .any(|activity| activity.action == "context" && activity.status == Status::Reused));
+        assert_eq!(
+            session
+                .data
+                .lock()
+                .unwrap()
+                .turns
+                .last()
+                .unwrap()
+                .turn
+                .options
+                .model,
+            "another-model"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_design_context_is_recoverable_never_cached_and_cancellation_is_not_a_failure_receipt(
+    ) {
+        let fixture = Fixture::new();
+        let package = tempfile::tempdir().unwrap();
+        let pack = crate::core::design::tests::pack_fixture(package.path());
+        let session = session(&fixture);
+        let signal = session
+            .reserve(
+                "Crie uma página de apresentação".into(),
+                options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let binary = package.path().join("bin/impeccable");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf 'Fixture context failed' >&2\nexit 1\n",
+        )
+        .unwrap();
+        let mut preparation = DesignPreparation::default();
+        let failure = prepare_design_context(
+            &session,
+            &pack,
+            &[],
+            "",
+            &mut preparation,
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.code, "impeccable_preparation");
+        assert!(failure.message.contains("Fixture context failed"));
+        assert!(preparation.context.is_none());
+        assert!(!session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .wire
+            .iter()
+            .any(|item| item["_jarvis_impeccable_context"].is_string()));
+        assert_eq!(
+            session.snapshot().unwrap().turns[0].steps[0].core_activities[0].status,
+            Status::Unavailable
+        );
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf 'RESOLVED_CONTEXT:\\n{\"target\":\".\"}\\n'\n",
+        )
+        .unwrap();
+        assert!(
+            prepare_design_context(&session, &pack, &[], "", &mut preparation, false, signal)
+                .await
+                .unwrap()
+                .iter()
+                .any(|activity| activity.action == "context" && activity.status == Status::Applied)
+        );
+        let before = session.snapshot().unwrap().turns[0].steps[0]
+            .core_activities
+            .len();
+        let (_sender, cancelled) = watch::channel(true);
+        let error =
+            prepare_design_context(&session, &pack, &[], "", &mut preparation, false, cancelled)
+                .await
+                .unwrap_err();
+        assert_eq!(error.code, "cancelled");
+        assert_eq!(
+            session.snapshot().unwrap().turns[0].steps[0]
+                .core_activities
+                .len(),
+            before
+        );
+    }
+
+    #[test]
+    fn design_mutations_wait_for_actual_preparation_and_redesign_direction_without_rebriefing_small_fixes(
+    ) {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve(
+                "Refaça a página: não gostei do visual branco e azul".into(),
+                options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let write = ToolCall {
+            id: "write".into(),
+            name: "write".into(),
+            args: json!({"path":"page.tsx","content":"new design"}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let read = ToolCall {
+            name: "read".into(),
+            ..write.clone()
+        };
+        assert!(design_edit_guard(&session, "", &read).unwrap().is_none());
+        assert!(
+            design_edit_guard(&session, "Historical blue design", &write)
+                .unwrap()
+                .unwrap()
+                .contains("preparação real")
+        );
+        session
+            .update(true, |data| {
+                let current = data.turns.last_mut().unwrap();
+                current.wire.extend([
+                    json!({"_jarvis_impeccable_context":"actual-context-key"}),
+                    json!({"_jarvis_core_design":true}),
+                ]);
+            })
+            .unwrap();
+        for name in [
+            "write",
+            "edit",
+            "apply_patch",
+            "bash",
+            "process_start",
+            "terminal_start",
+            "ctx_execute",
+            "ctx_execute_file",
+            "ctx_batch_execute",
+        ] {
+            let mutation = ToolCall {
+                name: name.into(),
+                ..write.clone()
+            };
+            assert!(
+                design_edit_guard(&session, "Historical blue design", &mutation)
+                    .unwrap()
+                    .unwrap()
+                    .contains("design_brief")
+            );
+        }
+        session.update(true, |data| data.turns.last_mut().unwrap().turn.steps.push(Step { tools: vec![ToolCall { name:"design_brief".into(), args:json!({"text":"Accepted new world; white and blue are rejected anti-references"}), status:"completed".into(), ..write.clone() }], ..Step::default() })).unwrap();
+        assert!(design_edit_guard(&session, "", &write).unwrap().is_none());
+        session
+            .update(true, |data| {
+                let current = data.turns.last_mut().unwrap();
+                current.turn.user = "Ajuste a posição da badge de versão".into();
+                current.turn.steps.clear();
+            })
+            .unwrap();
+        assert!(design_edit_guard(&session, "", &write).unwrap().is_none());
+        assert!(design_preflight(&session, None, &write).unwrap().is_none());
+    }
+
+    #[test]
+    fn explicit_mid_turn_rejection_requires_a_direction_checkpoint_after_steering() {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        session
+            .reserve(
+                "Melhore a página com o briefing existente".into(),
+                options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let brief = |id: &str| ToolCall {
+            id: id.into(),
+            name: "design_brief".into(),
+            args: json!({"text":"Accepted direction"}),
+            status: "completed".into(),
+            output: "Briefing salvo".into(),
+            duration_ms: 1,
+        };
+        let write = ToolCall {
+            name: "write".into(),
+            args: json!({"path":"page.tsx","content":"implementation"}),
+            ..brief("write")
+        };
+        session.update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.wire.extend([json!({"_jarvis_impeccable_context":"actual"}), json!({"_jarvis_core_design":true}), json!({"type":"function_call","name":"design_brief","call_id":"old"}), json!({"type":"function_call_output","call_id":"old","output":"Briefing salvo"})]);
+            current.turn.steps.push(Step { tools:vec![brief("old")], ..Step::default() });
+        }).unwrap();
+        assert!(design_edit_guard(&session, "Existing direction", &write)
+            .unwrap()
+            .is_none());
+        session.update(true, |data| data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_auxiliary":true,"content":"Não gostei do visual da página; refaça sem repetir branco e azul."}))).unwrap();
+        assert!(design_edit_guard(&session, "Existing direction", &write)
+            .unwrap()
+            .unwrap()
+            .contains("design_brief"));
+        // Completing an earlier request after steering does not adopt the new direction.
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().wire.push(
+                    json!({"type":"function_call_output","call_id":"old","output":"Late result"}),
+                )
+            })
+            .unwrap();
+        assert!(design_edit_guard(&session, "Existing direction", &write)
+            .unwrap()
+            .is_some());
+        session.update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.wire.extend([json!({"type":"function_call","name":"design_brief","call_id":"new"}), json!({"type":"function_call_output","call_id":"new","output":"Updated direction saved"})]);
+            current.turn.steps.push(Step { tools:vec![brief("new")], ..Step::default() });
+        }).unwrap();
+        assert!(design_edit_guard(&session, "Existing direction", &write)
+            .unwrap()
+            .is_none());
+        // A routine follow-up does not discard the replacement direction again.
+        session
+            .update(true, |data| {
+                data.turns.last_mut().unwrap().wire.push(
+                    json!({"role":"user","_jarvis_auxiliary":true,"content":"Continue por favor"}),
+                )
+            })
+            .unwrap();
+        assert!(design_edit_guard(&session, "Existing direction", &write)
+            .unwrap()
+            .is_none());
+    }
 
     #[cfg(unix)]
     fn fake_lsp_server(fixture: &Fixture) {

@@ -15,6 +15,7 @@ export const coreSnapshotSchema = z.object({
     id: coreIdSchema, name: z.string(), repository: z.string().url(),
     installedVersion: z.string().nullable(), latestVersion: z.string().nullable(),
     installed: z.boolean(), configured: z.boolean(), updateAvailable: z.boolean(), stage: z.string().nullable(), error: z.string().nullable(),
+    bundled: z.boolean().default(false),
     download: coreDownloadSchema.nullable(),
     healthError: z.string().nullable().default(null),
     diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })).default([]),

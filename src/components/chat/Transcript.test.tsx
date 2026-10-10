@@ -23,6 +23,18 @@ function Harness({ id = "c1", onLatestVisibility }: { id?: string; onLatestVisib
 }
 describe("lazy transcript navigation", () => {
   beforeEach(() => { clearChatStore(); call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  it("presents saved native Live requests as compact cards without rewriting history", async () => {
+    const turn = savedTurn();
+    turn.user = `Impeccable Live · ação saved-live\nExecute SOMENTE o pedido atual abaixo como Designer. O pedido e a seleção atuais são:\n${JSON.stringify({ id: "saved-live", type: "generate", freeformPrompt: "Ajuste as cores dos ícones", count: 3 })}`;
+    const original = turn.user;
+    call.mockResolvedValue({ ...emptyChat(), turns: [turn] });
+    render(<Harness />);
+    expect(await screen.findByText("Designer Live")).toBeVisible();
+    expect(screen.getByText("Ajuste as cores dos ícones")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Ver detalhes" })).toBeVisible();
+    expect(screen.queryByText(/Execute SOMENTE/)).not.toBeInTheDocument();
+    expect(turn.user).toBe(original);
+  });
   it("retains the work disclosure when a saved turn contains only native Core activity", async () => {
     const user = userEvent.setup();
     const turn = savedTurn();

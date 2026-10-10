@@ -10,7 +10,7 @@ import { ProjectKnowledgeSettings } from "./ProjectKnowledgeSettings";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(() => {}) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-vi.mock("@/components/chat/ExecutorModelPicker", () => ({ ExecutorModelPicker: ({ onSelect }: { onSelect: (choice: ExecutionSelection) => void }) => <><button onClick={() => onSelect({ model: "account/model", reasoning: null })}>Modelo de teste</button><button onClick={() => onSelect({ executor: "claude", model: "sonnet", reasoning: null })}>Claude de teste</button></> }));
+vi.mock("@/components/chat/ExecutorModelPicker", () => ({ ExecutorModelPicker: ({ onSelect }: { onSelect: (choice: ExecutionSelection) => void }) => <><button onClick={() => onSelect({ model: "account/model", reasoning: null })}>Modelo de teste</button><button onClick={() => onSelect({ executor: "claude", model: "sonnet", reasoning: null })}>Claude de teste</button><button onClick={() => onSelect({ model: "new-account/gpt-6.1-sol", reasoning: "high", serviceTier: "priority" })}>Modelo atual de teste</button></> }));
 
 const call = vi.mocked(invoke);
 const initial = (): KnowledgeDocument[] => [".", "frontend"].flatMap(scope => Object.keys(KNOWLEDGE_KINDS).map(kind => ({
@@ -78,6 +78,37 @@ it("generates a reviewable draft without overwriting edits or saving automatical
   expect(editor).toHaveValue("# Produto gerado revisado");
   await user.click(screen.getByRole("button", { name: "Salvar conhecimento" }));
   await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_knowledge", expect.objectContaining({ document: expect.objectContaining({ content: "# Produto gerado revisado", sources: [{ path: "README.md", fingerprint: "hash" }] }) })));
+});
+
+it("reviews a Design draft with the current provider choice and saves only the linked knowledge document", async () => {
+  documents = documents.map(document => document.kind === "design" && document.scope === "." ? { ...document, path: "docs/identity.md" } : document);
+  const content = "---\nname: Identidade existente\ncolors:\n  primary: 'oklch(60% 0.2 30)'\n---\n\n# Identidade\n\n## Overview\nDireção visual existente.\n\n## Colors\nA cor principal marca as ações.";
+  const sources = [{ path: "src/app/globals.css", fingerprint: "css-hash" }];
+  generate = async () => ({ content, revision: "original", sources });
+  const user = userEvent.setup();
+  render(<ProjectKnowledgeSettings projectId="p1" />);
+  await user.click(await screen.findByRole("tab", { name: "Design" }));
+  const editor = await markdownSource(user, "Design · Markdown");
+  await user.type(editor, " alteração manual");
+  await user.click(screen.getByRole("button", { name: "Claude de teste" }));
+  await user.click(screen.getByRole("button", { name: "Modelo atual de teste" }));
+  await user.click(screen.getByRole("button", { name: "Analisar e gerar design" }));
+  expect(call).toHaveBeenCalledWith("generate_project_knowledge", { request: {
+    id: expect.any(String), projectId: "p1", scope: ".", kind: "design",
+    choice: { executor: "jarvis", account: "new-account", model: "gpt-6.1-sol", reasoning: "high", serviceTier: "priority" },
+  } });
+  expect(await screen.findByRole("dialog", { name: "Rascunho gerado" })).toBeVisible();
+  expect(await markdownSource(user, "Prévia do rascunho")).toHaveValue(content);
+  expect(editor).toHaveValue("# . design alteração manual");
+  expect(call).not.toHaveBeenCalledWith("save_project_knowledge", expect.anything());
+  await user.click(screen.getByRole("button", { name: "Usar no editor" }));
+  expect(editor).toHaveValue(content);
+  expect(screen.getByText("docs/identity.md")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Salvar conhecimento" }));
+  await waitFor(() => expect(call).toHaveBeenCalledWith("save_project_knowledge", { projectId: "p1", document: {
+    kind: "design", scope: ".", content, essential: "", revision: "original", sources,
+  } }));
+  expect(screen.getByText("docs/identity.md")).toBeVisible();
 });
 
 it("cancels Claude generation and ignores its late result", async () => {

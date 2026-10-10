@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn completion_idle_timeout_keeps_the_response_stage_and_safe_request_identifier() {
+    let server = super::super::tests::controlled_sse_server_with_client(
+        super::super::http_client_with_timeout(Duration::from_secs(1)).unwrap(),
+    );
+    let (_cancel, signal) = watch::channel(false);
+    let task = tokio::spawn(async move {
+        receive(
+            server.request,
+            Protocol::OpenaiCompletions,
+            &json!({}),
+            signal,
+            |_| Ok(()),
+        )
+        .await
+    });
+    server.connected.await.unwrap();
+    server.chunks.send("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Request-ID: req-safe-123\r\nConnection: close\r\n\r\n".into()).unwrap();
+    let error = task.await.unwrap().unwrap_err();
+    assert_eq!(error.code, "provider_timeout");
+    assert!(super::super::retry::retryable(&error));
+    assert!(error.message.contains("novos dados"));
+    let metadata = error.provider_metadata.unwrap();
+    assert_eq!(
+        metadata.transport_stage,
+        Some(crate::diagnostics::ProviderTransportStage::ResponseStream)
+    );
+    assert_eq!(metadata.request_id.as_deref(), Some("req-safe-123"));
+    assert_eq!(
+        metadata.http_status, None,
+        "A timeout must not be reported as a provider refusal"
+    );
+    drop(server.chunks);
+    server.task.await.unwrap();
+}
+
 #[test]
 fn messages_and_completions_keep_terminal_response_validation() {
     let mut messages = messages::Stream::default();
