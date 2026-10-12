@@ -784,6 +784,7 @@ pub(super) fn session_with_id(fixture: &Fixture, id: &str) -> Arc<Session> {
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
         writer,
+        transports: Default::default(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             turns: vec![],
@@ -2574,6 +2575,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
         journal_maintenance: Default::default(),
         writer: session_writer::SessionWriter::start(journal.clone(), "conversation".into(), None)
             .unwrap(),
+        transports: Default::default(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(SessionData {
             revision: 3,

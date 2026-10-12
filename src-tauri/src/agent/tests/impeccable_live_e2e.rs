@@ -377,6 +377,7 @@ async fn run_provider(
         &model,
         session.id.clone(),
         telemetry::TraceContext::new(&session.id, "live-e2e"),
+        &session.transports,
     )
     .unwrap();
     let mut definitions = tools::definitions(Mode::Build)

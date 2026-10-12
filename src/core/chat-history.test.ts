@@ -80,4 +80,37 @@ describe("bounded conversation windows", () => {
     older.compactions = [{ id: "c", turnId: "turn-1", createdAt: 1, afterTurn: true, automatic: true, tokensBefore: 9000, tokensAfter: 1000 }];
     expect(mergeHistory(current, older, 1).compactions).toEqual(older.compactions);
   });
+
+  it("keeps completed results and metadata when a delayed page jumps to their turn", () => {
+    const current = { ...snapshot(490, 500), revision: 20 };
+    const confirmed = current.turns[9];
+    confirmed.steps[0] = { ...confirmed.steps[0], text: "Entrega confirmada [fonte](https://example.com).", tools: [{ ...confirmed.steps[0].tools[0], output: "Resultado persistido", status: "completed" }] };
+    const stale = page(495, 500);
+    stale.turns[4] = { ...stale.turns[4], status: "running", steps: [] };
+    const restored = mergeHistory(current, stale, 499);
+    expect(restored.turns.find(turn => turn.id === confirmed.id)).toEqual(confirmed);
+    expect(restored.turns.filter(turn => turn.id === confirmed.id)).toHaveLength(1);
+  });
+
+  it("does not downgrade a terminal turn or pending user intent at the same revision", () => {
+    const current = { ...snapshot(499, 500), revision: 20, activeTurnId: null, queuedMessages: [{ id: "steering", content: "Preserve a entrega", options: savedTurn().options }] };
+    const stale = { ...snapshot(490, 500), revision: 20, activeTurnId: "turn-499", queuedMessages: [] };
+    stale.turns[9] = { ...stale.turns[9], status: "running", steps: [] };
+    const restored = mergeChat(current, stale);
+    expect(restored.turns).toHaveLength(10);
+    expect(restored.turns[9]).toEqual(current.turns[0]);
+    expect(restored.activeTurnId).toBeNull();
+    expect(restored.queuedMessages).toEqual(current.queuedMessages);
+    expect(restored.navigation?.find(entry => entry.id === "turn-499")?.assistant).toBe("O projeto usa **Tauri**.");
+  });
+
+  it("accepts an explicit retry and content replacement with a newer revision", () => {
+    const current = { ...snapshot(499, 500), revision: 20 };
+    current.turns[0] = { ...current.turns[0], status: "error", error: { code: "provider_network", message: "Falhou" } };
+    const retried = { ...snapshot(499, 500), revision: 21, activeTurnId: "turn-499" };
+    retried.turns[0] = { ...retried.turns[0], status: "running", error: null, steps: [] };
+    const result = mergeChat(current, retried);
+    expect(result.turns[0]).toEqual(retried.turns[0]);
+    expect(result.activeTurnId).toBe("turn-499");
+  });
 });

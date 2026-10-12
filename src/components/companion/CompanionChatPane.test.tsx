@@ -155,6 +155,60 @@ describe("Jarvito chat", () => {
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+  it("buffers global streaming answers and flushes confirmed text on cancellation", async () => {
+    globalChat.chat.turns = [turn("Pedido", "Resposta base", "running")];
+    globalChat.chat.activeTurnId = "turn-1";
+    const view = render(<CompanionChatPane />);
+    await screen.findByText("Resposta base");
+    vi.useFakeTimers();
+    vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    globalChat.chat.turns = [turn("Pedido", "Resposta base recebendo mais texto", "running")];
+    globalChat.chat.revision = 2;
+    act(() => { events.get("companion:chat_changed")?.({ conversationId: globalChat.conversationId }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByText("Resposta base")).toBeVisible();
+    expect(screen.queryByText("Resposta base recebendo mais texto")).not.toBeInTheDocument();
+
+    globalChat.chat.turns[0].status = "cancelled";
+    globalChat.chat.activeTurnId = null;
+    globalChat.chat.revision = 3;
+    act(() => { events.get("companion:chat_changed")?.({ conversationId: globalChat.conversationId }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByText("Resposta base recebendo mais texto")).toBeVisible();
+    expect(globalChat.chat.turns[0].steps[0].text).toBe("Resposta base recebendo mais texto");
+    view.unmount();
+  });
+
+  it("follows buffered layout growth until the user scrolls away", async () => {
+    let resize: (() => void) | undefined;
+    const original = window.ResizeObserver;
+    window.ResizeObserver = class implements ResizeObserver {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element) { if (target.getAttribute("role") === "log") resize = () => this.callback([], this); }
+      unobserve() {}
+      disconnect() {}
+    };
+    globalChat.chat.turns = [turn("Pedido", "Resposta base", "running")];
+    const view = render(<CompanionChatPane />);
+    try {
+      await screen.findByText("Resposta base");
+      const viewport = view.container.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
+      if (!viewport) throw new Error("Missing chat scroll viewport");
+      Object.defineProperties(viewport, { scrollHeight: { configurable: true, value: 400 }, clientHeight: { configurable: true, value: 100 } });
+      expect(resize).toBeDefined();
+      act(() => { resize?.(); });
+      expect(viewport.scrollTop).toBe(400);
+      fireEvent.scroll(viewport, { target: { scrollTop: 50 } });
+      Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 600 });
+      act(() => { resize?.(); });
+      expect(viewport.scrollTop).toBe(50);
+    } finally {
+      view.unmount();
+      window.ResizeObserver = original;
+    }
+  });
+
   it.each([false, true])("approves a global MCP directly in Jarvito with externalQuestions=%s without opening a project conversation", async externalQuestions => {
     const user = userEvent.setup(); const onQuestionChange = vi.fn();
     const original = call.getMockImplementation()!;

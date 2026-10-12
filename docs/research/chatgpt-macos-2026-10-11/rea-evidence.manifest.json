@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "bundle": {
+    "file": "rea-evidence.json",
+    "storage": "local-only",
+    "bytes": 118480291,
+    "sha256": "cf1a09596625a27b030f68340b83b449a7510364db2bf954a84389fd746c0e7b"
+  },
+  "counts": {
+    "artifacts": 4,
+    "providers": 6,
+    "records": 20,
+    "unknowns": 3
+  },
+  "evidenceIds": [
+    "ev_1a132e939b6b0203ae33a2fbab2ef691595acd86fc38dd19b78c5c62eb2b510b",
+    "ev_240bf8fb4705c6b5d77cb578dc0ee5b68ddf9ee719b050000c437b91602afba2",
+    "ev_3d3c73d1cf96810171a4548eadecaf161a54026810b8388a245c6098d848a986",
+    "ev_415ca4bf92a9a353fccc041b8d017f500bd038cd7df100c06d365148b7ae8ed2",
+    "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+    "ev_7f6b556fa07391d8c6510e678eddd4c01fb7e9cad1f6112d5e647faaa08bf3bd",
+    "ev_83e75a8dcf06b212620b62886abefdbcc5387d2726f43d7c16ae4af5dfe2d7a6",
+    "ev_86c886855dc51e185f2fbe9789ebbf6798f04404181ec92207859ee63239cef8",
+    "ev_9475f4d4cc858b66945b3e26d5801a21c8833f21f830c7b2ff54c73fb2d27b8c",
+    "ev_95a6cb3345541e2e1ec314c87751f40bd035ed49975bfc444028408893f54a1b",
+    "ev_961b2167d283adcf93d94afb39427e4f314fc7b28d91ff1c2f04c699e2d30379",
+    "ev_a4bf5396b84d3fc56467d177b46e2c34b1a0b21922eb7ffcafab2c01bfd934df",
+    "ev_b966b28d3dc4062055434e09620f875567dbb27c10e06db5d4edb2fe9ae19af6",
+    "ev_bb6e095aa440be97ef81f62516ea4b989a01f3843ef2acb109ab57046cd6df2f",
+    "ev_cdc0982d0431df6af646c81a54d4ce4194f7be270e352c16d307fae80b34a3ee",
+    "ev_dcb7919ebcb5cbbe936e176c23cb3cd1248cff487fbeb8cc390be1ed75cb47b1",
+    "ev_e369b8b3b03e966250b88a6f3cc8488c982140b5c27eaadd33c1c2a449256c01",
+    "ev_f39166a73ce427b4022d5d9de2e32161a8ef42ff625913b67abf4c4426a734a4",
+    "ev_f63aa33e160596f7ea537667bb67977c4938a44fb83b1f8692b4d28b4220c9bb",
+    "ev_f8c6c6ec61530a2c23e4fea4a375a1a785839a6750f2e2d595bbba91a1617e88"
+  ],
+  "unknowns": [
+    {
+      "id": "unk_1ca6b5efbc78fa10893fcda5f747c5ce2d190c9209c71e0b02ae8cea245d9771",
+      "revision": 1,
+      "digest": "ecfd49d658926393612c9632dcbf428799c1ee53e87c336a4da4133972be79de"
+    },
+    {
+      "id": "unk_9b28372270f512df433cf6c65e6d3c7bd2664de8950ee8675e62129bc212c098",
+      "revision": 1,
+      "digest": "b656b06466de8d7559a9a41463f8c2a7871c094b4f986f28972e7ca9282b94a8"
+    },
+    {
+      "id": "unk_e90b59d630ff8d79d6e272d9dc7456ccfc8bce6d30622d7e6717d8e93ad2f65c",
+      "revision": 1,
+      "digest": "71dc450cdae22e1abd86bf9cc100c979831cba59162c4d8e72babca358fc9665"
+    }
+  ]
+}

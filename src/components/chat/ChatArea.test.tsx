@@ -51,7 +51,10 @@ async function update(snapshot: ChatSnapshot) {
       },
     ],
   };
-  await act(async () => { for (const handler of listeners.get("agent:event") ?? []) handler({ event: "agent:event", id: 1, payload }); });
+  await act(async () => {
+    for (const handler of listeners.get("agent:event") ?? []) handler({ event: "agent:event", id: 1, payload });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 describe("Persistent live conversation", () => {
   beforeEach(() => {
@@ -272,7 +275,10 @@ describe("Persistent live conversation", () => {
         conversationId: "c1", baseRevision: snapshot.revision - 1, revision: snapshot.revision,
         events: [...events, { type: "stateChanged", state: { ...readChat(snapshot, "c1"), pendingAuthoring: null } }],
       };
-      await act(async () => { listeners.get("agent:event")?.forEach(handler => handler({ event: "agent:event", id: 1, payload })); });
+      await act(async () => {
+        listeners.get("agent:event")?.forEach(handler => handler({ event: "agent:event", id: 1, payload }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
     };
     const checkTranscript = () => {
       const transcript = screen.getByLabelText("Histórico de mensagens");
@@ -497,7 +503,7 @@ describe("Persistent live conversation", () => {
         events: [{ type: "turnTimingUpdated", turnId: turn.id, durationMs: 1_000, activeSince: Date.now() - 10_000 }],
       } });
     });
-    expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/);
+    await waitFor(() => expect(within(status).getByLabelText("Tempo total da execução")).toHaveTextContent(/1[1-3]s/));
 
     await update({ ...emptyChat(), revision: 3, activeTurnId: null, turns: [{ ...turn, status: "completed", durationMs: 12_000 }] });
     await waitFor(() => expect(screen.queryByTestId("active-execution-status")).not.toBeInTheDocument());

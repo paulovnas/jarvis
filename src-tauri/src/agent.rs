@@ -657,6 +657,7 @@ struct Session {
     root: PathBuf,
     journal_maintenance: Arc<AtomicBool>,
     writer: session_writer::SessionWriter,
+    transports: provider::TransportPool,
     data: Mutex<SessionData>,
     emit: Arc<dyn Fn(ChatSnapshot) + Send + Sync>,
 }
@@ -1317,6 +1318,7 @@ pub struct AgentState {
     pub(crate) terminals: terminals::TerminalState,
     grants: execution_grants::GrantStore,
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
+    transports: provider::TransportPool,
     event_streams: Arc<Mutex<HashMap<String, Weak<events::ProtocolEmitter>>>>,
     session_gates: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     loading_sessions: Arc<Mutex<HashSet<String>>>,
@@ -1336,6 +1338,7 @@ impl Default for AgentState {
             terminals,
             grants: Default::default(),
             sessions: Default::default(),
+            transports: Default::default(),
             event_streams: Default::default(),
             session_gates: Default::default(),
             loading_sessions: Default::default(),
@@ -1587,6 +1590,7 @@ impl AgentState {
                         locked[index].storage_failed = true;
                     }
                     sessions.remove(&id);
+                    self.transports.invalidate(&id);
                 }
             }
             // Filesystem cleanup can fail after the database commit. Runtime
@@ -1731,6 +1735,7 @@ impl AgentState {
             root,
             journal_maintenance: self.journal_maintenance.clone(),
             writer,
+            transports: self.transports.clone(),
             data: Mutex::new(SessionData {
                 turns,
                 turn_base,
@@ -3413,6 +3418,7 @@ fn run_turn_once<'a>(
             &model,
             session.id.clone(),
             telemetry.clone(),
+            &session.transports,
         )?;
         provider_session.set_authentication(
             state.clone(),
@@ -5309,6 +5315,9 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
         Ok(()) => result,
         Err(error) => Err(error),
     };
+    if result.is_err() {
+        session.transports.invalidate(&session.id);
+    }
     let update = session
         .update(true, |data| {
             if let Some(active) = data.active.as_mut() {
@@ -5348,6 +5357,7 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
         })
         .and_then(|()| session.flush());
     if update.is_err() {
+        session.transports.invalidate(&session.id);
         // Surface journal failure even if the final checkpoint could not be written.
         let _ = session.update(false, |data| {
             if let Some(active) = data.active.as_mut() {

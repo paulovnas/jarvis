@@ -4,8 +4,12 @@ use crate::openai_codex::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, HashSet},
-    time::Duration,
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, Weak,
+    },
+    time::{Duration, Instant},
 };
 use tokio::sync::watch;
 
@@ -18,6 +22,8 @@ mod custom;
 mod events;
 mod incremental;
 pub(super) mod retry;
+#[cfg(test)]
+mod transport_tests;
 
 pub(super) use antigravity::grounded_search;
 pub(super) use capabilities::ModelCapabilities;
@@ -66,9 +72,67 @@ impl Response {
     }
 }
 
-/// One transport session is retained for the complete Jarvis turn. Connection
-/// pools, TLS state and provider retry identity are therefore reused across
-/// model steps without leaking settings from a later turn.
+const MAX_IDLE_TRANSPORTS: usize = 16;
+const MAX_IDLE_TRANSPORT_BYTES: u64 = 32 * 1024 * 1024;
+// shortcut: idle expiry runs on pool access, add a sweeper if timed socket disposal is required.
+const TRANSPORT_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+
+struct CachedTransport {
+    credential: CodexCredential,
+    client: reqwest::Client,
+    incremental: incremental::Transport,
+    idle_since: Instant,
+    bytes: u64,
+}
+
+struct TransportSlot {
+    owner: Arc<()>,
+    cached: Option<CachedTransport>,
+}
+
+/// Retained separately from loaded journals, which are evicted between turns.
+#[derive(Clone, Default)]
+pub(super) struct TransportPool(Arc<Mutex<HashMap<String, TransportSlot>>>);
+
+impl TransportPool {
+    pub(super) fn invalidate(&self, session_id: &str) {
+        if let Ok(mut slots) = self.0.lock() {
+            slots.remove(session_id);
+        }
+    }
+
+    fn prune(slots: &mut HashMap<String, TransportSlot>) {
+        slots.retain(|_, slot| {
+            slot.cached
+                .as_ref()
+                .is_none_or(|cached| cached.idle_since.elapsed() < TRANSPORT_IDLE_TTL)
+        });
+        loop {
+            let idle = slots.values().filter_map(|slot| slot.cached.as_ref());
+            let (count, bytes) = idle.fold((0, 0u64), |(count, bytes), cached| {
+                (count + 1, bytes.saturating_add(cached.bytes))
+            });
+            if count <= MAX_IDLE_TRANSPORTS && bytes <= MAX_IDLE_TRANSPORT_BYTES {
+                break;
+            }
+            let oldest = slots
+                .iter()
+                .filter_map(|(id, slot)| {
+                    slot.cached
+                        .as_ref()
+                        .map(|cached| (id.clone(), cached.idle_since))
+                })
+                .min_by_key(|(_, time)| *time)
+                .map(|(id, _)| id);
+            if let Some(id) = oldest {
+                slots.remove(&id);
+            }
+        }
+    }
+}
+
+/// Credentials, capabilities, telemetry and request routing are fresh per turn;
+/// only a matching completed transport may be borrowed from the conversation.
 pub(super) struct TurnSession {
     credential: CodexCredential,
     authentication: Option<auth::Authentication>,
@@ -77,6 +141,9 @@ pub(super) struct TurnSession {
     client: reqwest::Client,
     telemetry: super::telemetry::TraceContext,
     incremental: tokio::sync::Mutex<incremental::Transport>,
+    pool: TransportPool,
+    owner: Weak<()>,
+    completed: AtomicBool,
 }
 
 impl TurnSession {
@@ -85,14 +152,49 @@ impl TurnSession {
         model: &ProviderModel,
         session_id: String,
         telemetry: super::telemetry::TraceContext,
+        pool: &TransportPool,
     ) -> Result<Self, AgentError> {
         credential.inference_model = Some(model.clone());
         let capabilities = std::sync::Arc::new(ModelCapabilities::resolve(&credential, model));
-        let incremental = incremental::Transport::traced(
+        let (cached, owner) = {
+            let mut slots = pool.0.lock().map_err(|_| AgentError::internal())?;
+            TransportPool::prune(&mut slots);
+            let slot = slots
+                .entry(session_id.clone())
+                .or_insert_with(|| TransportSlot {
+                    owner: Arc::new(()),
+                    cached: None,
+                });
+            // A later lease or disposal must prevent an older Drop from restoring state.
+            slot.owner = Arc::new(());
+            let owner = Arc::downgrade(&slot.owner);
+            (
+                slot.cached
+                    .take()
+                    .filter(|cached| cached.credential == credential),
+                owner,
+            )
+        };
+        let (client, mut incremental) = match cached {
+            Some(cached) => (cached.client, cached.incremental),
+            None => (
+                http_client_for(&credential).inspect_err(|_| {
+                    if let Ok(mut slots) = pool.0.lock() {
+                        if slots
+                            .get(&session_id)
+                            .is_some_and(|slot| Weak::ptr_eq(&Arc::downgrade(&slot.owner), &owner))
+                        {
+                            slots.remove(&session_id);
+                        }
+                    }
+                })?,
+                incremental::Transport::default(),
+            ),
+        };
+        incremental.set_trace(
             telemetry.clone(),
             super::telemetry::provider_kind(&credential),
         );
-        let client = http_client_for(&credential)?;
         Ok(Self {
             credential,
             authentication: None,
@@ -101,6 +203,9 @@ impl TurnSession {
             client,
             telemetry,
             incremental: tokio::sync::Mutex::new(incremental),
+            pool: pool.clone(),
+            owner,
+            completed: AtomicBool::new(false),
         })
     }
 
@@ -142,6 +247,8 @@ impl TurnSession {
         signal: watch::Receiver<bool>,
         mut on_delta: impl FnMut(Delta) -> Result<(), AgentError>,
     ) -> Result<Response, AgentError> {
+        // A dropped future or any failed projection cannot return a live stream to the pool.
+        self.completed.store(false, Ordering::Relaxed);
         debug_assert!(!step.authorization().values.is_empty());
         validate_requested_service_tier(&self.credential, step.options())?;
         if step.capabilities() != self.capabilities.as_ref() {
@@ -233,6 +340,7 @@ impl TurnSession {
                     if let Some(config) = &self.credential.custom {
                         custom::scope_responses_output(config, step.options(), &mut response);
                     }
+                    self.completed.store(!*signal.borrow(), Ordering::Relaxed);
                     return Ok(response);
                 }
                 Ok(None) => {}
@@ -270,12 +378,42 @@ impl TurnSession {
             tools,
             telemetry: self.telemetry.clone(),
         }
-        .run(signal, &mut forward, Duration::from_secs(2))
+        .run(signal.clone(), &mut forward, Duration::from_secs(2))
         .await;
         if fallback {
             forward(Delta::Retry(None))?;
         }
+        self.completed
+            .store(result.is_ok() && !*signal.borrow(), Ordering::Relaxed);
         result
+    }
+}
+
+impl Drop for TurnSession {
+    fn drop(&mut self) {
+        let Ok(mut slots) = self.pool.0.lock() else {
+            return;
+        };
+        let Some(slot) = slots
+            .get_mut(&self.session_id)
+            .filter(|slot| Weak::ptr_eq(&Arc::downgrade(&slot.owner), &self.owner))
+        else {
+            return;
+        };
+        if self.completed.load(Ordering::Relaxed) {
+            let incremental = std::mem::take(self.incremental.get_mut());
+            slot.cached = Some(CachedTransport {
+                bytes: incremental.retained_bytes()
+                    + super::telemetry::serialized_bytes(&self.credential),
+                credential: self.credential.clone(),
+                client: self.client.clone(),
+                incremental,
+                idle_since: Instant::now(),
+            });
+        } else {
+            slots.remove(&self.session_id);
+        }
+        TransportPool::prune(&mut slots);
     }
 }
 
@@ -2207,6 +2345,7 @@ mod tests {
             &model,
             "parent".into(),
             super::super::telemetry::trace("fixture", "turn"),
+            &TransportPool::default(),
         )
         .unwrap();
         let standalone = ModelCapabilities::resolve_for_options(&credential, &options);

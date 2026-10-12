@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantMessageTurn } from "./AssistantMessageTurn";
@@ -46,4 +46,31 @@ describe("ações da resposta final", () => {
 
     expect(screen.queryByRole("group", { name: "Ações da resposta" })).not.toBeInTheDocument();
   });
+});
+
+it("buffers live answer updates and immediately flushes an error or a new message identity", async () => {
+  await import("./ChatMarkdown");
+  vi.useFakeTimers();
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++id, callback); return id; });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(frame => { frames.delete(frame); });
+  const view = render(<AssistantMessageTurn message={{ ...message, content: "Texto **base**", streaming: true }} />);
+  try {
+    await act(async () => {});
+    expect(view.container.querySelector("strong")).toHaveTextContent("base");
+    view.rerender(<AssistantMessageTurn message={{ ...message, content: "Texto **base** recebendo mais conteúdo", streaming: true }} />);
+    expect(view.container.querySelector(".assistant-prose")).toHaveTextContent(/^Texto base$/);
+    expect(frames.size).toBe(1);
+
+    view.rerender(<AssistantMessageTurn message={{ ...message, content: "Texto **base** recebendo mais conteúdo", streaming: true, error: { title: "Interrompido", message: "Falha" } }} />);
+    expect(view.container.querySelector(".assistant-prose")).toHaveTextContent("Texto base recebendo mais conteúdo");
+    expect(frames.size).toBe(0);
+    view.rerender(<AssistantMessageTurn message={{ ...message, id: "turn-2", content: "Texto **base** de outra execução", streaming: true }} />);
+    expect(view.container.querySelector(".assistant-prose")).toHaveTextContent("Texto base de outra execução");
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });

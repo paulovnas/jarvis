@@ -451,6 +451,7 @@ fn worker_session(
         root: hub.root.root.clone(),
         journal_maintenance: hub.root.journal_maintenance.clone(),
         writer,
+        transports: Default::default(),
         data: Mutex::new(SessionData {
             turns,
             turn_base: 0,

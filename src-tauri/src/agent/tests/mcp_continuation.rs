@@ -117,6 +117,7 @@ async fn custom_completions_mcp_recovery_finishes_without_another_user_message()
         &model,
         session.id.clone(),
         telemetry::TraceContext::new(&session.id, "mcp-continuation"),
+        &session.transports,
     )
     .unwrap();
     let mut clients = crate::mcp::runtime::TurnClients::discover_for_intent(

@@ -177,6 +177,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
         &model,
         "fixture".into(),
         super::super::telemetry::TraceContext::new("fixture", "turn"),
+        &super::TransportPool::default(),
     )
     .unwrap();
     let fixture = tests::Fixture::new();
@@ -240,6 +241,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
         writer,
+        transports: Default::default(),
         emit: Arc::new(|_| {}),
         data: Mutex::new(super::super::SessionData {
             turns: replay.turns,

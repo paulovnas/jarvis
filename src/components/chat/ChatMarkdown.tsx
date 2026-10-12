@@ -4,8 +4,10 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { File } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Children, isValidElement } from "react";
+import { Children, isValidElement, useMemo, useState } from "react";
 import { CodeBlock } from "./CodeBlock";
+import { MarkdownPrefixCache } from "./markdown-prefix";
+import { useStreamedText } from "./use-streamed-text";
 
 function localFilePath(href: string): string | null {
   try {
@@ -41,6 +43,13 @@ const markdownComponents: Components = {
   img: ({ alt }) => <span className="text-muted-foreground">[Imagem: {alt || "sem descrição"}]</span>,
 };
 
-export default function ChatMarkdown({ content }: { content: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url, key) => key === "href" && localFilePath(url) ? url : defaultUrlTransform(url)} components={markdownComponents}>{content}</ReactMarkdown>;
+export type ChatMarkdownProps = { content: string; isStreaming?: boolean; streamId?: string };
+
+export default function ChatMarkdown({ content, isStreaming = false, streamId = "" }: ChatMarkdownProps) {
+  const [cache] = useState(() => new MarkdownPrefixCache());
+  const displayed = useStreamedText(content, isStreaming, streamId);
+  return useMemo(() => {
+    const projection = cache.prepare(displayed, isStreaming, streamId);
+    return <ReactMarkdown remarkPlugins={[remarkGfm, projection.plugin]} urlTransform={(url, key) => key === "href" && localFilePath(url) ? url : defaultUrlTransform(url)} components={markdownComponents}>{projection.content}</ReactMarkdown>;
+  }, [cache, displayed, isStreaming, streamId]);
 }

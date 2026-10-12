@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DocumentSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Textarea } from "@/components/ui/textarea";
 import { Hint } from "@/components/ui/hint";
-import { LazyChatMarkdown } from "@/components/chat/LazyChatMarkdown";
+import { CompanionAnswer, CompanionReasoning } from "./CompanionAnswer";
 import { CompanionQuestion, type CompanionQuestionContext } from "./CompanionQuestion";
 import { ModelPicker, type ModelSelection, type ProviderModelGroup } from "@/components/chat/ModelPicker";
 import { executionChoice, executionSelection, executorOf, selectModelChoice, supportsFastMode } from "@/core/executors";
@@ -134,7 +134,14 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
 
   useEffect(() => {
     const viewport = scroll.current?.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]");
-    if (viewport && stickToBottom.current) viewport.scrollTop = viewport.scrollHeight;
+    if (!viewport) return;
+    const follow = () => { if (stickToBottom.current) viewport.scrollTop = viewport.scrollHeight; };
+    follow();
+    const transcript = viewport.querySelector<HTMLElement>('[role="log"]');
+    if (!transcript) return;
+    const observer = new window.ResizeObserver(follow);
+    observer.observe(transcript);
+    return () => observer.disconnect();
   }, [chat]);
 
   const send = async (): Promise<boolean> => {
@@ -302,9 +309,9 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
         {chat?.chat.turns.map(turn => <section key={turn.id} aria-label="Troca de mensagens" className="space-y-2">
           <p className="ml-7 whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-secondary/55 px-3 py-2 text-[11px] leading-5">{turn.user}</p>
           {turn.auxiliaryMessages?.map(message => <p key={message.id} className="ml-7 whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-border bg-secondary/55 px-3 py-2 text-[11px] leading-5">{message.content}</p>)}
-          {turn.steps.some(step => step.text) && <div className="companion-chat-answer mr-3 text-[11px] leading-5">{chat.global ? <p className="whitespace-pre-wrap break-words">{turn.steps.map(step => step.text).filter(Boolean).join("\n\n")}</p> : <LazyChatMarkdown content={turn.steps.map(step => step.text).filter(Boolean).join("\n\n")} />}</div>}
+          {turn.steps.some(step => step.text) && <div className="companion-chat-answer mr-3 text-[11px] leading-5"><CompanionAnswer content={turn.steps.map(step => step.text).filter(Boolean).join("\n\n")} global={chat.global} isStreaming={active && turn.status === "running" && !turn.error && !turn.steps[turn.steps.length - 1]?.retry} streamId={`${chat.conversationId}:${turn.id}`} /></div>}
           {turn.error && <p role="alert" className="text-[11px] leading-5 text-onedark-red">{turn.error.message}</p>}
-          {turn.status === "running" && <p role="status" className="flex items-center gap-2 text-[10px] text-onedark-cyan"><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{chat.global ? "Jarvito está pensando…" : turn.steps[turn.steps.length - 1]?.summary || "Jarvito está pensando…"}</p>}
+          {turn.status === "running" && <p role="status" className="flex items-center gap-2 text-[10px] text-onedark-cyan"><span aria-hidden="true" className="size-1.5 rounded-full bg-current" />{chat.global ? "Jarvito está pensando…" : <CompanionReasoning content={turn.steps[turn.steps.length - 1]?.summary || "Jarvito está pensando…"} isStreaming={active && !turn.steps[turn.steps.length - 1]?.retry} streamId={`${chat.conversationId}:${turn.id}:summary:${turn.steps.length - 1}`} />}</p>}
         </section>)}
         {chat?.chat.queuedMessages?.map(message => <div key={message.id} className="ml-7 space-y-1 rounded-xl border border-border bg-secondary/40 px-3 py-2"><p className="whitespace-pre-wrap break-words text-[11px] leading-5">{message.content}</p><Badge variant="outline" className="font-mono text-[9px]">Aguardando envio</Badge></div>)}
         {chat?.proposal && <section aria-label="Continuar em um projeto" className="space-y-2 rounded-xl border border-onedark-cyan/30 bg-onedark-cyan/5 p-3">

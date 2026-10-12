@@ -1330,6 +1330,7 @@ impl AgentState {
             root,
             journal_maintenance: Default::default(),
             writer,
+            transports: Default::default(),
             emit: Arc::new(|_| {}),
             data: Mutex::new(SessionData {
                 turns: vec![],

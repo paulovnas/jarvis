@@ -165,6 +165,7 @@ async fn github_agents_receive_mcp_schemas_on_the_next_provider_request() {
             &model,
             hub.root.id.clone(),
             super::super::super::telemetry::TraceContext::new(&hub.root.id, "mcp-test"),
+            &hub.root.transports,
         )
         .unwrap();
         let mut clients = crate::mcp::runtime::TurnClients::discover_for_intent(

@@ -1,16 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type EventCallback } from "@tauri-apps/api/event";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { populatedLibrary } from "@/test/library-fixtures";
 import { useChat } from "@/hooks/use-chat";
 import { ChatArea } from "./ChatArea";
-import type { HistoryPage } from "@/core/chat";
+import type { AgentTurn, HistoryPage } from "@/core/chat";
 import type { LearningSnapshot } from "@/core/project-learning";
 import { clearChatStore, updateChatSnapshot } from "@/core/chat-store";
-import { TurnBody, type LatestVisibility } from "./Transcript";
+import { Transcript, TurnBody, type LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
@@ -21,6 +21,236 @@ function Harness({ id = "c1", onLatestVisibility }: { id?: string; onLatestVisib
   const library = populatedLibrary(); library.conversations[0].id = id; library.selection.conversationId = id;
   return <ChatArea onLatestVisibility={onLatestVisibility} library={library} chat={useChat(id)} modelGroups={[{ provider: "Codex", models: [{ value: "openai-codex-pessoal/model", label: "Modelo", reasoningLevels: ["medium"], defaultReasoningLevel: "medium" }] }]} />;
 }
+
+function measuredViewport() {
+  const descriptors = ["clientHeight", "scrollHeight", "scrollTop", "getBoundingClientRect"].map(key => [key, Object.getOwnPropertyDescriptor(Element.prototype, key)] as const);
+  const heights = new Map<string, number>();
+  const offsets = new WeakMap<Element, number>();
+  const observers = new Set<ResizeObserver>();
+  const observed = new Map<ResizeObserver, Set<Element>>();
+  const callbacks = new Map<ResizeObserver, ResizeObserverCallback>();
+  class MeasuredResizeObserver implements ResizeObserver {
+    constructor(callback: ResizeObserverCallback) { observers.add(this); observed.set(this, new Set()); callbacks.set(this, callback); }
+    observe(element: Element) { observed.get(this)?.add(element); }
+    unobserve(element: Element) { observed.get(this)?.delete(element); }
+    disconnect() { observers.delete(this); observed.delete(this); callbacks.delete(this); }
+  }
+  const originalObserver = window.ResizeObserver;
+  window.ResizeObserver = MeasuredResizeObserver;
+  const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight")?.get;
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.dataset.slot === "scroll-area-viewport" ? 600 : 0;
+  });
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    if (this.dataset.slot !== "scroll-area-viewport") return originalHeight?.call(this) as number ?? 0;
+    const list = this.querySelector<HTMLElement>("[data-virtual-turns]");
+    return Number.parseFloat(list?.style.height ?? "0") + (this.querySelector('[data-history-older]') ? 48 : 0) + (this.querySelector('[data-history-newer]') ? 48 : 0);
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) { return offsets.get(this) ?? 0; });
+  vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (this: Element, value: number) { offsets.set(this, Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight))); });
+  const originalRect = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const viewport = this.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (this.dataset.slot === "scroll-area-viewport") return new DOMRect(0, 0, 800, 600);
+    if (viewport && (this.dataset.turnId || this.hasAttribute("data-virtual-turns"))) {
+      const prefix = viewport.querySelector('[data-history-older]') ? 48 : 0;
+      const top = prefix - viewport.scrollTop + (this.dataset.turnId ? Number.parseFloat(this.style.top || "0") : 0);
+      const height = this.dataset.turnId ? heights.get(this.dataset.turnId) ?? 280 : Number.parseFloat(this.style.height || "0");
+      return new DOMRect(0, top, 800, height);
+    }
+    return originalRect.call(this);
+  });
+  return {
+    heights,
+    restore() { window.ResizeObserver = originalObserver; vi.restoreAllMocks(); for (const [key, descriptor] of descriptors) if (descriptor) Object.defineProperty(Element.prototype, key, descriptor); },
+    resize(element: HTMLElement, height: number) {
+      if (element.dataset.turnId) heights.set(element.dataset.turnId, height);
+      const box = { blockSize: height, inlineSize: 800 };
+      const entry: ResizeObserverEntry = { target: element, contentRect: new DOMRect(0, 0, 800, height), borderBoxSize: [box], contentBoxSize: [box], devicePixelContentBoxSize: [box] };
+      act(() => { for (const observer of observers) if (observed.get(observer)?.has(element)) callbacks.get(observer)?.([entry], observer); });
+    },
+  };
+}
+
+function longConversation() {
+  return { ...emptyChat(), history: { start: 0, total: 100 }, navigation: page(0).navigation, turns: Array.from({ length: 100 }, (_, index) => ({ ...savedTurn(), id: `t${index}`, user: `Pedido ${index}`, steps: [{ ...savedTurn().steps[0], text: `Resposta ${index}`, summary: `Observação ${index}`, tools: [] }] })) };
+}
+
+function PendingHarness({ pending }: { pending: AgentTurn }) {
+  const chat = useChat("c1");
+  return chat.snapshot && <Transcript snapshot={chat.snapshot} chat={{ ...chat, pending: true, pendingTurn: pending }} />;
+}
+
+describe("measured transcript window", () => {
+  beforeEach(() => { clearChatStore(); call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
+  it("bounds mounted turns to the measured viewport with overscan while scrolling", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockResolvedValue(longConversation());
+    const { container } = render(<Harness />);
+    await screen.findByText("Resposta 99");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+    expect(screen.queryByText("Resposta 0")).not.toBeInTheDocument();
+    viewport.scrollTop = 11_240; fireEvent.scroll(viewport);
+    expect(await screen.findByText("Resposta 40")).toBeVisible();
+    expect(container.querySelector('[data-turn-id="t38"]')).not.toBeNull();
+    expect(container.querySelector('[data-turn-id="t44"]')).not.toBeNull();
+    expect(container.querySelector('[data-turn-id="t37"]')).toBeNull();
+    expect(container.querySelector('[data-turn-id="t45"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Ir para interação 41: Pedido 40" })).toHaveAttribute("aria-current", "location");
+  });
+  it("keeps the reading turn at the same offset when a measured turn above it grows", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockResolvedValue(longConversation());
+    const { container } = render(<Harness />);
+    await screen.findByText("Resposta 99");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 11_240; fireEvent.scroll(viewport);
+    const reading = container.querySelector<HTMLElement>('[data-turn-id="t40"]')!;
+    expect(reading.getBoundingClientRect().top).toBe(-40);
+    geometry.resize(container.querySelector<HTMLElement>('[data-turn-id="t38"]')!, 560);
+    await waitFor(() => expect(viewport.scrollTop).toBe(11_520));
+    expect(reading.getBoundingClientRect().top).toBe(-40);
+    expect(container.querySelector('[data-turn-id="t40"]')).toBe(reading);
+    geometry.resize(container.querySelector<HTMLElement>('[data-turn-id="t38"]')!, 560);
+    expect(viewport.scrollTop).toBe(11_520);
+  });
+  it("retains focused, expanded and selected turns outside the viewport until interaction ends", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => { document.getSelection()?.removeAllRanges(); geometry.restore(); });
+    call.mockResolvedValue(longConversation());
+    const { container } = render(<Harness />);
+    await screen.findByText("Resposta 99");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 11_240; fireEvent.scroll(viewport);
+    const selected = container.querySelector<HTMLElement>('[data-turn-id="t40"]')!;
+    const focused = container.querySelector<HTMLElement>('[data-turn-id="t41"]')!;
+    const expanded = container.querySelector<HTMLElement>('[data-turn-id="t42"]')!;
+    const disclosure = within(expanded).getByRole("button", { name: /Trabalhou por/ });
+    await userEvent.setup().click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const selection = document.getSelection()!;
+    const selectedText = document.createRange();
+    selectedText.selectNodeContents(within(selected).getByText("Pedido 40"));
+    const copy = within(focused).getByRole("button", { name: "Copiar resposta" });
+    act(() => copy.focus());
+    act(() => { selection.removeAllRanges(); selection.addRange(selectedText); document.dispatchEvent(new Event("selectionchange")); });
+    expect(selection.toString()).toBe("Pedido 40");
+    viewport.scrollTop = 1_440; fireEvent.scroll(viewport);
+    expect(container.querySelector('[data-turn-id="t40"]')).toBe(selected);
+    expect(container.querySelector('[data-turn-id="t41"]')).toBe(focused);
+    expect(container.querySelector('[data-turn-id="t42"]')).toBe(expanded);
+    expect(document.activeElement).toBe(copy);
+    expect(selection.toString()).toBe("Pedido 40");
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    act(() => { copy.blur(); selection.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); });
+    fireEvent.click(disclosure);
+    await waitFor(() => expect(container.querySelector('[data-turn-id="t42"]')).toBeNull());
+    expect(container.querySelector('[data-turn-id="t40"]')).toBeNull();
+    expect(container.querySelector('[data-turn-id="t41"]')).toBeNull();
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+  });
+  it("retains the streaming turn and follows its growth only while reading the latest messages", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    const snapshot = longConversation();
+    snapshot.turns[99] = { ...snapshot.turns[99], status: "running" };
+    call.mockResolvedValue({ ...snapshot, activeTurnId: "t99" });
+    const onLatestVisibility = vi.fn<LatestVisibility>();
+    const { container } = render(<Harness onLatestVisibility={onLatestVisibility} />);
+    await screen.findByText("Resposta 99");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 11_240; fireEvent.scroll(viewport);
+    const live = container.querySelector<HTMLElement>('[data-turn-id="t99"]')!;
+    const reading = container.querySelector<HTMLElement>('[data-turn-id="t40"]')!;
+    geometry.resize(live, 1_000);
+    await waitFor(() => expect(container.querySelector<HTMLElement>("[data-virtual-turns]")!.style.height).toBe("28720px"));
+    expect(viewport.scrollTop).toBe(11_240);
+    expect(reading.getBoundingClientRect().top).toBe(-40);
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", false);
+    act(() => updateChatSnapshot("c1", current => current && { ...current, turns: current.turns.map(turn => turn.id === "t99" ? { ...turn, steps: [{ ...turn.steps[0], text: "Texto que chegou durante a leitura." }] } : turn) }));
+    await screen.findByText("Texto que chegou durante a leitura.");
+    expect(container.querySelector('[data-turn-id="t99"]')).toBe(live);
+    viewport.scrollTop = viewport.scrollHeight; fireEvent.scroll(viewport);
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", true);
+    geometry.resize(live, 1_800);
+    await waitFor(() => expect(viewport.scrollTop).toBe(28_920));
+    expect(onLatestVisibility).toHaveBeenLastCalledWith("c1", true);
+  });
+  it("retains the pending turn without remounting it as its text changes", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockResolvedValue(longConversation());
+    const pending = { ...savedTurn(), id: "pending", user: "Pedido em envio", status: "running" as const };
+    const { container, rerender } = render(<PendingHarness pending={pending} />);
+    await screen.findByText("Pedido em envio");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 11_240; fireEvent.scroll(viewport);
+    const row = container.querySelector('[data-turn-id="pending"]');
+    expect(row).not.toBeNull();
+    expect(row).toHaveAttribute("aria-posinset", "101");
+    expect(row).toHaveAttribute("aria-setsize", "101");
+    rerender(<PendingHarness pending={{ ...pending, steps: [{ ...pending.steps[0], text: "Aguardando confirmação." }] }} />);
+    await screen.findByText("Aguardando confirmação.");
+    expect(container.querySelector('[data-turn-id="pending"]')).toBe(row);
+    expect(viewport.scrollTop).toBe(11_240);
+  });
+  it("keeps a keyed reading row in place when an older page is prepended", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockImplementation(async command => command === "get_chat_history" ? page(60) : { ...emptyChat(), ...page(80) });
+    const { container } = render(<Harness />);
+    await screen.findByText("Resposta 99");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 628; fireEvent.scroll(viewport);
+    const reading = container.querySelector<HTMLElement>('[data-turn-id="t82"]')!;
+    expect(reading.getBoundingClientRect().top).toBe(-20);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Mensagens anteriores" }));
+    await waitFor(() => expect(viewport.scrollTop).toBe(6_228));
+    expect(container.querySelector('[data-turn-id="t82"]')).toBe(reading);
+    expect(reading.getBoundingClientRect().top).toBe(-20);
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+    expect(call).toHaveBeenCalledWith("get_chat_history", { conversationId: "c1", before: 80 });
+  });
+  it("jumps to an unloaded rail entry and returns to a bounded latest window", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockImplementation(async (command, args) => command === "get_chat_history" ? page(args && "around" in args ? 0 : 80) : { ...emptyChat(), ...page(80) });
+    const user = userEvent.setup();
+    const { container } = render(<Harness />);
+    await screen.findByText("Resposta 99");
+    await user.click(screen.getByRole("button", { name: "Ir para interação 1: Pedido 0" }));
+    expect(await screen.findByText("Resposta 0")).toBeVisible();
+    expect(screen.queryByText("Resposta 99")).not.toBeInTheDocument();
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+    await user.click(screen.getByRole("button", { name: "Voltar ao presente" }));
+    expect(await screen.findByText("Resposta 99")).toBeVisible();
+    expect(screen.queryByText("Resposta 0")).not.toBeInTheDocument();
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+  });
+  it("keeps the reading anchor when newer messages are appended to an older page", async ({ onTestFinished }) => {
+    const geometry = measuredViewport();
+    onTestFinished(() => geometry.restore());
+    call.mockImplementation(async command => command === "get_chat_history" ? page(20) : { ...emptyChat(), ...page(0) });
+    const onLatestVisibility = vi.fn<LatestVisibility>();
+    const { container } = render(<Harness onLatestVisibility={onLatestVisibility} />);
+    await screen.findByText("Resposta 0");
+    const viewport = container.querySelector<HTMLElement>('.transcript-scroll [data-slot="scroll-area-viewport"]')!;
+    viewport.scrollTop = 4_492; fireEvent.scroll(viewport);
+    const reading = container.querySelector<HTMLElement>('[data-turn-id="t16"]')!;
+    expect(reading.getBoundingClientRect().top).toBe(-12);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Mensagens seguintes" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("get_chat_history", { conversationId: "c1", after: 20 }));
+    expect(container.querySelector('[data-turn-id="t16"]')).toBe(reading);
+    expect(viewport.scrollTop).toBe(4_492);
+    expect(reading.getBoundingClientRect().top).toBe(-12);
+    expect(container.querySelectorAll("[data-turn-id]").length).toBeLessThanOrEqual(10);
+    expect(onLatestVisibility).not.toHaveBeenCalledWith("c1", true);
+  });
+});
+
 describe("lazy transcript navigation", () => {
   beforeEach(() => { clearChatStore(); call.mockReset(); vi.mocked(listen).mockResolvedValue(() => {}); });
   it("presents saved native Live requests as compact cards without rewriting history", async () => {

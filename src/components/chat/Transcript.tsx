@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,6 +14,7 @@ import { executionDuration, useRunningClock } from "@/hooks/use-running-clock";
 import { executionLabel, type ExecutionChoice } from "@/core/executors";
 import type { ProjectLesson } from "@/core/project-learning";
 import { useChatLearning } from "@/hooks/use-chat-learning";
+import { useTranscriptVirtualization } from "./use-transcript-virtualization";
 
 function retryableTurn(turn: AgentTurn): boolean {
   if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
@@ -100,6 +101,11 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
     onLatestVisibility?.(snapshot.conversationId, Boolean(view && view.clientHeight > 0 && !hasNewer && !chat.historyLoading && !anchor.current
       && view.scrollHeight - view.scrollTop - view.clientHeight < 80));
   }, [onLatestVisibility, snapshot.conversationId, hasNewer, chat.historyLoading]);
+  const adjusted = useCallback((top: number) => { lastScroll.current = top; reportLatest(); }, [reportLatest]);
+  const turns = useMemo(() => chat.pendingTurn && !snapshot.turns.some(turn => turn.id === chat.pendingTurn?.id) ? [...snapshot.turns, chat.pendingTurn] : snapshot.turns, [snapshot.turns, chat.pendingTurn]);
+  const ids = useMemo(() => turns.map(turn => turn.id), [turns]);
+  const retained = turns.filter(turn => turn.status === "running" || turn.id === snapshot.activeTurnId || turn.id === chat.pendingTurn?.id).map(turn => turn.id);
+  const { list, height, rows: virtualRows, update: updateWindow, jump } = useTranscriptVirtualization(root, ids, retained, follow, !hasNewer, adjusted);
   useLayoutEffect(() => () => onLatestVisibility?.(snapshot.conversationId, false), [onLatestVisibility, snapshot.conversationId]);
   const rows = () => Array.from(root.current?.querySelectorAll<HTMLElement>('[data-turn-id]') ?? []);
   const navigate = async (direction: HistoryDirection) => {
@@ -120,9 +126,9 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
     const saved = anchor.current;
     if (saved?.ready) {
       restoring.current = true;
-      const row = rows().find(row => saved.target !== undefined ? Number(row.dataset.turnIndex) === saved.target : row.dataset.turnId === saved.id);
-      if (saved.latest) { view.scrollTop = view.scrollHeight; follow.current = true; }
-      else if (row) view.scrollTop += row.getBoundingClientRect().top - view.getBoundingClientRect().top - (saved.target !== undefined ? 12 : saved.offset);
+      const id = saved.target !== undefined ? snapshot.turns[saved.target - window.start]?.id : saved.id;
+      if (saved.latest) { view.scrollTop = view.scrollHeight; follow.current = true; updateWindow(); }
+      else if (id) jump(id, saved.target !== undefined ? 12 : saved.offset);
       lastScroll.current = view.scrollTop;
       anchor.current = null;
       requestAnimationFrame(() => {
@@ -133,18 +139,7 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
       });
     } else if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
     reportLatest();
-  }, [snapshot.turns, chat.pendingTurn, hasNewer, restoreVersion, window.total, reportLatest]);
-  useLayoutEffect(() => {
-    const view = viewport();
-    const content = root.current?.querySelector<HTMLElement>('[aria-label="Histórico de mensagens"]');
-    if (!view || !content) return;
-    const observer = new ResizeObserver(() => {
-      if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
-      reportLatest();
-    });
-    observer.observe(view); observer.observe(content);
-    return () => observer.disconnect();
-  }, [hasNewer, reportLatest]);
+  }, [snapshot.turns, chat.pendingTurn, hasNewer, restoreVersion, window.start, window.total, reportLatest, jump, updateWindow]);
 
   return <div ref={root} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
     <HistoryRail entries={snapshot.navigation ?? []} total={window.total} active={visible ?? window.total - 1} disabled={chat.historyLoading} jump={index => { void navigate(index); }} />
@@ -157,29 +152,29 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
       const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
       if (!hasNewer && remaining < 80) follow.current = true;
       else if (target.scrollTop < previous) follow.current = false;
-      const top = target.getBoundingClientRect().top;
-      const row = rows().find(row => row.getBoundingClientRect().bottom > top + 20);
-      if (row) setVisible(Number(row.dataset.turnIndex));
+      const index = updateWindow();
+      if (index !== undefined) setVisible(index < snapshot.turns.length ? window.start + index : window.total);
       reportLatest();
       if (chat.historyLoading || chat.historyError) return;
       if (hasOlder && target.scrollTop < 160 && target.scrollTop < previous) void navigate("older");
       else if (hasNewer && remaining < 160 && target.scrollTop > previous) void navigate("newer");
     }}>
       <div className="mx-auto w-full max-w-4xl min-w-0 px-5" aria-label="Histórico de mensagens">
-        {hasOlder && <div className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("older"); }}>Mensagens anteriores</Button></div>}
+        {hasOlder && <div data-history-older className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("older"); }}>Mensagens anteriores</Button></div>}
         {chat.historyLoading && <div role="status" aria-label="Carregando trecho" className="space-y-2 py-3 pl-4"><Skeleton className="h-3 w-1/3" /><Skeleton className="h-3 w-2/3" /></div>}
         {chat.historyError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{chat.historyError}</p>}
-        {snapshot.turns.map((turn, index) => <div key={turn.id} data-turn-id={turn.id} data-turn-index={window.start + index} className="[overflow-anchor:none]">
+        <div ref={list} data-virtual-turns role="list" aria-label="Interações" className="relative [overflow-anchor:none]" style={{ height }}>
+        {virtualRows.map(row => {
+          const turn = turns[row.index];
+          const absoluteIndex = row.index < snapshot.turns.length ? window.start + row.index : window.total;
+          return <div key={turn.id} role="listitem" aria-posinset={absoluteIndex + 1} aria-setsize={window.total + turns.length - snapshot.turns.length} data-turn-id={turn.id} data-turn-index={absoluteIndex} className="absolute inset-x-0 flow-root [overflow-anchor:none]" style={{ top: row.top }}>
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={retryChoice && !hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && window.start + index === window.total - 1 ? id => { void chat.retryTurn(id, retryChoice); } : undefined} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={retryChoice && !hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && absoluteIndex === window.total - 1 ? id => { void chat.retryTurn(id, retryChoice); } : undefined} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-        </div>)}
-        {chat.pendingTurn && <div data-turn-id={chat.pendingTurn.id} data-turn-index={window.total} className="[overflow-anchor:none]">
-          <UserMessageBubble message={{ id: chat.pendingTurn.id, role: "user", content: chat.pendingTurn.user, parts: chat.pendingTurn.parts, timestamp: new Date(chat.pendingTurn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
-          <TurnBody turn={chat.pendingTurn} conversationId={snapshot.conversationId} />
-        </div>}
-        {hasNewer && <div className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("newer"); }}>Mensagens seguintes</Button></div>}
+        </div>; })}
+        </div>
+        {hasNewer && <div data-history-newer className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("newer"); }}>Mensagens seguintes</Button></div>}
       </div>
     </ScrollArea>
     {hasNewer && <Button variant="outline" size="sm" disabled={chat.historyLoading} className="absolute bottom-3 left-1/2 -translate-x-1/2 cursor-pointer gap-2 bg-card shadow-lg" onClick={() => { void navigate("latest"); }}><ArrowDown className="size-3.5" />Voltar ao presente</Button>}

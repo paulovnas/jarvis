@@ -36,10 +36,9 @@ function markers(turns: AgentTurn[], events: CompactionEvent[]) {
   return [...new Map(events.filter(event => ids.has(event.turnId)).map(event => [event.id, event])).values()];
 }
 function navigation(current: HistoryExcerpt[] | undefined, next: ChatSnapshot) {
-  if (next.navigation) return next.navigation;
-  const result = [...(current ?? [])];
+  const result = [...(next.navigation ?? current ?? [])];
   const last = next.turns[next.turns.length - 1];
-  if (last) {
+  if (last && historyWindow(next).start + next.turns.length === historyWindow(next).total) {
     const item = { id: last.id, index: historyWindow(next).total - 1, createdAt: last.createdAt, user: last.user.slice(0, 160), assistant: finalTurnResponse(last).text.slice(0, 160) };
     const index = result.findIndex(entry => entry.id === last.id);
     if (index >= 0) result[index] = item;
@@ -51,9 +50,13 @@ function navigation(current: HistoryExcerpt[] | undefined, next: ChatSnapshot) {
 
 export function mergeChat(current: ChatSnapshot | null, next: ChatSnapshot): ChatSnapshot {
   if (!current || current.conversationId !== next.conversationId || !hasValidHistoryWindow(current)) return { ...next, latestOptions: next.turns[next.turns.length - 1]?.options };
-  if (!next.history) return current.revision > next.revision ? current : next;
-  const newer = next.revision >= current.revision;
-  if (!newer && !next.navigation) return current;
+  const newer = next.revision > current.revision || (next.revision === current.revision && current.turns.length === 0);
+  if (!next.history) return !newer ? current : next;
+  if (next.revision < current.revision && !next.navigation) return current;
+  // Only a new revision may replace known state. Reopened pages can add history
+  // at the same revision, but cannot undo a completion or current user intent.
+  const known = new Map(current.turns.map(turn => [turn.id, turn]));
+  if (!newer) next = { ...next, turns: next.turns.map(turn => known.get(turn.id) ?? turn), navigation: current.navigation ?? next.navigation };
   const window = historyWindow(current); const incoming = historyWindow(next);
   let turns = current.turns; let start = window.start;
   const end = start + turns.length;
@@ -68,7 +71,7 @@ export function mergeChat(current: ChatSnapshot | null, next: ChatSnapshot): Cha
   }
   return { ...(newer ? next : current), turns, history: { start, total: Math.max(window.total, incoming.total) },
     latestOptions: newer ? next.turns[next.turns.length - 1]?.options ?? current.latestOptions : current.latestOptions,
-    compactions: markers(turns, [...(current.compactions ?? []), ...(next.compactions ?? [])]),
+    compactions: markers(turns, newer ? [...(current.compactions ?? []), ...(next.compactions ?? [])] : [...(next.compactions ?? []), ...(current.compactions ?? [])]),
     navigation: navigation(current.navigation, next),
   };
 }
@@ -76,17 +79,15 @@ export function mergeChat(current: ChatSnapshot | null, next: ChatSnapshot): Cha
 export function mergeHistory(current: ChatSnapshot, page: HistoryPage, direction: HistoryDirection): ChatSnapshot {
   if (current.conversationId !== page.conversationId) return current;
   const window = historyWindow(current);
-  let start = page.history.start; let turns = page.turns;
+  const known = new Map(current.turns.filter(turn => turn.status !== "running" || turn.id === current.activeTurnId).map(turn => [turn.id, turn]));
+  let start = page.history.start; let turns = page.turns.map(turn => known.get(turn.id) ?? turn);
   const end = start + turns.length;
   if ((direction === "older" || direction === "newer") && start <= window.start + current.turns.length && end >= window.start) {
     const indexed = new Map<number, AgentTurn>();
-    page.turns.forEach((turn, index) => indexed.set(start + index, turn));
+    turns.forEach((turn, index) => indexed.set(start + index, turn));
     current.turns.forEach((turn, index) => indexed.set(window.start + index, turn));
     const ordered = [...indexed].sort(([a], [b]) => a - b);
     start = ordered[0]?.[0] ?? 0; turns = ordered.map(([, turn]) => turn);
-  } else {
-    const live = current.turns.find(turn => turn.id === current.activeTurnId);
-    if (live) turns = turns.map(turn => turn.id === live.id ? live : turn);
   }
   const bounded = bound(turns, start, direction === "older" ? "start" : "end");
   return { ...current, turns: bounded.turns, history: { start: bounded.start, total: Math.max(window.total, page.history.total) }, navigation: page.navigation,

@@ -40,6 +40,7 @@ impl Previous {
 pub(super) struct Transport {
     socket: Option<Socket>,
     previous: Option<Previous>,
+    identity: Option<(reqwest::Url, reqwest::header::HeaderMap)>,
     disabled: bool,
     telemetry: Option<(telemetry::TraceContext, telemetry::ProviderKind)>,
 }
@@ -62,19 +63,25 @@ fn interrupted(phase: &str, cause: &str, close_code: Option<u16>) -> AgentError 
 }
 
 impl Transport {
-    pub(super) fn traced(
+    pub(super) fn set_trace(
+        &mut self,
         trace: telemetry::TraceContext,
         provider: telemetry::ProviderKind,
-    ) -> Self {
-        Self {
-            telemetry: Some((trace, provider)),
-            ..Self::default()
-        }
+    ) {
+        self.telemetry = Some((trace, provider));
+    }
+
+    pub(super) fn retained_bytes(&self) -> u64 {
+        self.previous.as_ref().map_or(0, |previous| {
+            telemetry::serialized_bytes(&previous.request)
+                + telemetry::serialized_bytes(&previous.expected_input)
+        })
     }
 
     fn reset(&mut self) {
         self.socket = None;
         self.previous = None;
+        self.identity = None;
     }
 
     /// None means no inference was accepted: the caller can safely use HTTP.
@@ -86,6 +93,14 @@ impl Transport {
     ) -> Result<Option<Response>, AgentError> {
         if self.disabled {
             return Ok(None);
+        }
+        let identity = (request.url().clone(), request.headers().clone());
+        if self
+            .identity
+            .as_ref()
+            .is_some_and(|previous| previous != &identity)
+        {
+            self.reset();
         }
         let body: Value = serde_json::from_slice(
             request
@@ -136,7 +151,10 @@ impl Transport {
                 result = tokio::time::timeout(Duration::from_secs(8), connect_async_with_config(upgrade, Some(config), true)) => result,
             };
             match connected {
-                Ok(Ok((socket, _))) => self.socket = Some(socket),
+                Ok(Ok((socket, _))) => {
+                    self.socket = Some(socket);
+                    self.identity = Some(identity);
+                }
                 _ => {
                     self.disabled = true;
                     self.reset();
@@ -491,6 +509,62 @@ mod tests {
         assert!(previous.delta(&fast).is_none());
     }
 
+    #[tokio::test]
+    async fn changed_authentication_headers_reset_an_open_socket_and_response_chain() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let mut sockets = Vec::new();
+            let mut requests = Vec::new();
+            for id in ["first", "second"] {
+                let mut socket = accept_async(listener.accept().await.unwrap().0)
+                    .await
+                    .unwrap();
+                requests.push(
+                    serde_json::from_str::<Value>(
+                        &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+                    )
+                    .unwrap(),
+                );
+                socket
+                    .send(Message::Text(done(id).to_string().into()))
+                    .await
+                    .unwrap();
+                sockets.push(socket);
+            }
+            requests
+        });
+        let (_cancel, signal) = watch::channel(false);
+        let mut transport = Transport::default();
+        let mut next = body();
+        let first = transport
+            .attempt(request(port, &next), signal.clone(), &mut |_| Ok(()))
+            .await
+            .unwrap()
+            .unwrap();
+        next["input"].as_array_mut().unwrap().extend(first.output);
+        next["input"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role":"user","content":"next"}));
+        let mut request = request(port, &next);
+        request.headers_mut().insert(
+            reqwest::header::AUTHORIZATION,
+            "Bearer rotated-fixture".parse().unwrap(),
+        );
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            transport.attempt(request, signal, &mut |_| Ok(())),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let requests = server.await.unwrap();
+        assert!(requests[1].get("previous_response_id").is_none());
+        assert_eq!(requests[1]["input"].as_array().unwrap().len(), 3);
+    }
+
     #[test]
     fn compaction_model_and_catalog_changes_invalidate_incremental_state() {
         let original = body();
@@ -705,6 +779,7 @@ mod tests {
             &model,
             "session".into(),
             telemetry::TraceContext::new("fixture", "turn"),
+            &super::super::TransportPool::default(),
         )
         .unwrap();
         let fixture = tests::Fixture::new();

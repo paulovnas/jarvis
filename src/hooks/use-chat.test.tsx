@@ -33,7 +33,10 @@ beforeEach(() => {
   });
 });
 async function emit(name: string, payload: unknown = null) {
-  await act(async () => { listeners.get(name)?.forEach(handler => handler({ event: name, id: 1, payload })); });
+  await act(async () => {
+    listeners.get(name)?.forEach(handler => handler({ event: name, id: 1, payload }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
 }
 
 it("acknowledges a paused question and keeps its snapshot reactive", async () => {
@@ -194,6 +197,22 @@ it("does not let a delayed initial load replace a newer streaming update", async
   await waitFor(() => expect(result.current.snapshot?.turns[0].status).toBe("completed"));
 });
 
+it("does not acknowledge a lost event with a subscription that started before the loss", async () => {
+  updateChatSnapshot("c1", () => running());
+  let resolve!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  call.mockImplementation(async (_command, args) => args && "cursor" in args
+    ? { protocolVersion: 3, reset: false, snapshot: null, batches: [] }
+    : { protocolVersion: 3, reset: true, snapshot: completed(), batches: [] });
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(call).toHaveBeenCalledOnce());
+  await emit("agent:event", { conversationId: "c1", revision: 12, events: [{ type: "futureEvent" }] });
+  await act(async () => resolve({ protocolVersion: 3, reset: false, snapshot: null, batches: [] }));
+  await waitFor(() => expect(result.current.snapshot?.activeTurnId).toBeNull());
+  expect(result.current.snapshot?.turns[0].status).toBe("completed");
+  expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c1" });
+});
+
 it("resyncs a matching conversation when an event batch is not understood", async () => {
   const { result } = renderHook(() => useChat("c1"));
   await waitFor(() => expect(result.current.snapshot?.revision).toBe(10));
@@ -297,6 +316,27 @@ it("catches up from the cached cursor without replacing the transcript", async (
   await waitFor(() => expect(result.current.snapshot?.revision).toBe(11));
   expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora.");
   expect(call).toHaveBeenLastCalledWith("subscribe_chat", { conversationId: "c1", cursor: 10 });
+});
+
+it("recovers the exact final text after an ordered burst of live revisions", async () => {
+  call.mockResolvedValueOnce(observed());
+  const { result } = renderHook(() => useChat("c1"));
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(11));
+  await act(async () => {
+    for (let revision = 12; revision <= 261; revision++) {
+      listeners.get("agent:event")?.forEach(handler => handler({ event: "agent:event", id: revision, payload: {
+        conversationId: "c1", baseRevision: revision - 1, revision,
+        events: [{ type: "itemDelta", stepIndex: 0, textAppend: "x", summaryAppend: "", durationMs: 50, retry: null, usage: null }],
+      } }));
+    }
+  });
+  await waitFor(() => expect(result.current.snapshot?.revision).toBe(261));
+  expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Vou conferir a configuração agora." + "x".repeat(250));
+  const finished = { ...completed(), revision: 262, turns: [{ ...savedTurn(), steps: [{ ...savedTurn().steps[0], text: "Resposta concluída." }] }] };
+  await emit("agent:event", update(261, finished));
+  expect(result.current.snapshot?.activeTurnId).toBeNull();
+  expect(result.current.snapshot?.turns[0].steps[0].text).toBe("Resposta concluída.");
+  expect(result.current.error).toBeNull();
 });
 
 it("recovers an inconsistent cached page from a full subscription on reopen", async () => {

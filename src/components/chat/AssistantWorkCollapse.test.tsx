@@ -1,9 +1,84 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { reasoningPreview } from "./reasoning-preview";
 import { savedTurn } from "@/test/chat-fixtures";
+
+it.each(["Inicial", "Primeiro\n\nSegundo\n\nTerceiro\n\nInicial"])("buffers the active reasoning preview and expanded text, including groups: %s", thinking => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+  const step = { thinking, commentary: "", tools: [] };
+  const view = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 1, steps: [step] }} />);
+  try {
+    fireEvent.click(screen.getByRole("button", { name: /Analisou o contexto/ }));
+    const preview = screen.getByRole("button", { name: /Raciocínio\s*Inicial/ });
+    fireEvent.click(preview);
+    if (thinking.includes("Primeiro")) fireEvent.click(within(preview.parentElement!).getAllByRole("button", { name: /Raciocínio\s*Inicial/ })[1]);
+    expect(screen.getByText("Inicial", { selector: "p" })).toBeVisible();
+    const growing = { ...step, thinking: `${thinking} recebendo mais texto` };
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 2, steps: [growing] }} />);
+    expect(preview).toHaveAccessibleName(/Raciocínio\s*Inicial(?:\s*\d+ etapas)?$/);
+    expect(screen.queryByText("Inicial recebendo mais texto", { selector: "p" })).not.toBeInTheDocument();
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [growing], retry: { attempt: 1, maxAttempts: 5, retryAt: 100, message: "Reconectando" } }} />);
+    expect(preview).toHaveAccessibleName(/Raciocínio\s*Inicial recebendo mais texto/);
+    expect(screen.getByText("Inicial recebendo mais texto", { selector: "p" })).toBeVisible();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+it("buffers only the current observation and flushes it when the next phase begins", async () => {
+  await import("./ChatMarkdown");
+  vi.useFakeTimers();
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++id, callback); return id; });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(frame => { frames.delete(frame); });
+  const step = { thinking: "", commentary: "Vou **conferir**.", tools: [] };
+  const view = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 1, steps: [step] }} />);
+  try {
+    await act(async () => {});
+    const growing = { ...step, commentary: "Vou **conferir**. Texto recebido em rajada." };
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 2, steps: [growing] }} />);
+    expect(view.container.querySelector("[data-execution-observation]")).toHaveTextContent(/^Vou conferir\.$/);
+    expect(frames.size).toBe(1);
+
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [growing, { ...step, commentary: "Agora vou validar." }] }} />);
+    expect(view.container.querySelector("[data-execution-observation]")).toHaveTextContent("Texto recebido em rajada.");
+    expect(screen.getByText("Agora vou validar.")).toBeVisible();
+    expect(frames.size).toBe(0);
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+it("flushes pending observation text when reconnection begins", async () => {
+  await import("./ChatMarkdown");
+  vi.useFakeTimers();
+  const request = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+  const step = { thinking: "", commentary: "Vou conferir.", tools: [] };
+  const view = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 1, steps: [step] }} />);
+  try {
+    await act(async () => {});
+    const growing = { ...step, commentary: "Vou conferir. Conteúdo confirmado." };
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 2, steps: [growing] }} />);
+    expect(view.container.querySelector("[data-execution-observation]")).toHaveTextContent(/^Vou conferir\.$/);
+    expect(request).toHaveBeenCalled();
+    view.rerender(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 3, steps: [growing], retry: { attempt: 1, maxAttempts: 5, retryAt: 100, message: "Reconectando" } }} />);
+    expect(view.container.querySelector("[data-execution-observation]")).toHaveTextContent("Conteúdo confirmado.");
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
 
 it("places auxiliary messages between work steps and keeps them visible when work is collapsed", async () => {
   const user = userEvent.setup();

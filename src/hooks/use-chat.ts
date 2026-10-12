@@ -9,6 +9,7 @@ import type { PendingQuestion, QuestionResponse } from "@/core/questions";
 import { onDesktopResume } from "@/core/desktop-resume";
 import type { McpAuthoringValues, PendingAuthoring } from "@/core/authoring";
 import { agentEventBatchSchema, applyAgentEventBatch, chatSubscriptionSchema, type AgentEventBatch } from "@/core/agent-events";
+import { createAgentEventQueue } from "@/core/agent-event-queue";
 import { getChatSnapshot, subscribeChatSnapshot, updateChatSnapshot } from "@/core/chat-store";
 import { IPC_PROTOCOL_VERSION } from "@/generated/ipc";
 import { executorOf, type ExecutionChoice } from "@/core/executors";
@@ -83,10 +84,12 @@ export function useChat(conversationId: string | null) {
     let refreshing = false;
     let refreshAgain = false;
     let needsSnapshot = false;
+    let recoveryGeneration = 0;
     let resyncTimer: ReturnType<typeof setTimeout> | undefined;
-    const earlyBatches: AgentEventBatch[] = [];
     const applyBatch = (batch: AgentEventBatch) => {
       let needsResync = false;
+      const streaming = batch.events.every(event => event.type === "turnTimingUpdated" || (event.type === "itemDelta"
+        && event.textReplace === undefined && event.summaryReplace === undefined && event.retry === null));
       updateChatSnapshot(conversationId, current => {
         const applied = applyAgentEventBatch(current, batch);
         needsResync = applied.needsResync;
@@ -95,32 +98,49 @@ export function useChat(conversationId: string | null) {
           reportModelError(applied.snapshot);
         }
         return applied.snapshot;
-      });
+      }, streaming ? "frame" : "immediate");
+      if (!needsResync) {
+        const started = batch.events.find(item => item.type === "turnStarted");
+        if (started?.type === "turnStarted") setPendingTurn(current => current?.conversationId === conversationId && matchesPendingTurn(started.turn, current.turn) ? null : current);
+      }
       return !needsResync;
     };
+    const queue = createAgentEventQueue(applyBatch, fresh => {
+      if (fresh) { needsSnapshot = true; recoveryGeneration += 1; }
+      scheduleResync();
+    }, !hasSnapshot);
     const acceptSubscription = (value: unknown) => {
       const subscription = chatSubscriptionSchema.safeParse(value);
       if (!subscription.success) {
         if (eventConversationId(value) === null) throw new Error("Não foi possível interpretar as atualizações da conversa.");
         accept(value, conversationId);
         hasSnapshot = true;
+        queue.resume();
         return;
       }
       if (subscription.data.protocolVersion > IPC_PROTOCOL_VERSION) {
         throw new Error("A conversa usa uma versão de protocolo mais recente.");
       }
       if (subscription.data.snapshot !== null) accept(subscription.data.snapshot, conversationId);
-      const batches = [...subscription.data.batches, ...earlyBatches.splice(0).sort((left, right) => left.revision - right.revision)];
-      for (const batch of batches) {
-        if (!applyBatch(batch)) throw new Error("Não foi possível recuperar a sequência de atualizações desta conversa.");
+      // Validate the cheap revision chain before scheduling replay so a broken
+      // subscription still gets exactly one full-snapshot recovery attempt.
+      let revision = getChatSnapshot(conversationId)?.revision;
+      for (const batch of subscription.data.batches) {
+        if (batch.conversationId !== conversationId || batch.protocolVersion > IPC_PROTOCOL_VERSION
+          || revision === undefined || (batch.revision > revision && batch.baseRevision !== revision)) {
+          throw new Error("Não foi possível recuperar a sequência de atualizações desta conversa.");
+        }
+        revision = Math.max(revision, batch.revision);
       }
       hasSnapshot = getChatSnapshot(conversationId) !== null;
+      queue.resume(subscription.data.batches);
     };
     const refresh = async () => {
       if (!active) return;
       if (refreshing) { refreshAgain = true; return; }
       refreshing = true;
       try {
+        let recovering = recoveryGeneration;
         const cached = getChatSnapshot(conversationId);
         // Replaying an already-current cursor cannot repair an invalid page.
         const cursor = !needsSnapshot && cached && hasValidHistoryWindow(cached) ? cached.revision : undefined;
@@ -132,11 +152,13 @@ export function useChat(conversationId: string | null) {
           // Replaying an unreadable batch again cannot recover the stream.
           needsSnapshot = true;
           if (cursor === undefined) throw cause;
+          recovering = recoveryGeneration;
           const fresh = await invoke<unknown>("subscribe_chat", { conversationId });
           if (!active) return;
           acceptSubscription(fresh);
         }
-        needsSnapshot = false;
+        needsSnapshot = recovering !== recoveryGeneration;
+        if (needsSnapshot) refreshAgain = true;
         setError(current => current?.id === conversationId ? null : current);
       } catch (cause) {
         if (active && (!hasSnapshot || needsSnapshot)) setError({ id: conversationId, message: libraryError(cause, "Não foi possível sincronizar esta conversa.") });
@@ -158,15 +180,9 @@ export function useChat(conversationId: string | null) {
       const eventConversation = eventConversationId(event.payload);
       if (eventConversation !== conversationId) return;
       const parsed = agentEventBatchSchema.safeParse(event.payload);
-      if (!parsed.success) { needsSnapshot = true; scheduleResync(); return; }
-      const started = parsed.data.events.find(item => item.type === "turnStarted");
-      if (started?.type === "turnStarted") {
-        setPendingTurn(current => current?.conversationId === conversationId && matchesPendingTurn(started.turn, current.turn) ? null : current);
-      }
-      if (!getChatSnapshot(conversationId)) {
-        earlyBatches.push(parsed.data);
-        scheduleResync();
-      } else if (!applyBatch(parsed.data)) scheduleResync();
+      if (!parsed.success) { needsSnapshot = true; recoveryGeneration += 1; scheduleResync(); return; }
+      queue.enqueue(parsed.data);
+      if (!getChatSnapshot(conversationId)) scheduleResync();
     });
     const workflowEvents = listen<unknown>("workflow:changed", event => {
       if (active && eventConversationId(event.payload) === conversationId) scheduleResync();
@@ -187,7 +203,7 @@ export function useChat(conversationId: string | null) {
     }).catch((cause: unknown) => {
       if (active) setError({ id: conversationId, message: libraryError(cause, "Não foi possível abrir o histórico desta conversa.") });
     });
-    return () => { active = false; if (resyncTimer) clearTimeout(resyncTimer); dispose.forEach(unlisten => unlisten()); stopResume?.(); if (generation.current === request) generation.current += 1; };
+    return () => { active = false; queue.dispose(); if (resyncTimer) clearTimeout(resyncTimer); dispose.forEach(unlisten => unlisten()); stopResume?.(); if (generation.current === request) generation.current += 1; };
   }, [conversationId, attempt, accept, reportModelError]);
 
   const loadHistory = async (direction: HistoryDirection): Promise<boolean> => {

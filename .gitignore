@@ -46,3 +46,6 @@ updater.key
 # Prepared native engine; immutable sources and SHA pins remain versioned.
 /src-tauri/resources/impeccable/bin/
 /src-tauri/resources/impeccable/jarvis-design.json
+
+# Large local REA ledger; reports and its integrity manifest are versioned.
+/docs/research/chatgpt-macos-2026-10-11/rea-evidence.json

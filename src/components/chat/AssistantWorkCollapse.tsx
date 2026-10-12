@@ -11,17 +11,19 @@ import { reasoningPreview, reasoningSections } from "./reasoning-preview";
 import { describeExecution } from "./execution-status";
 import { CoreActivitySummary } from "./CoreActivitySummary";
 import { UserMessageBubble } from "./UserMessageBubble";
+import { useStreamedText } from "./use-streamed-text";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
-export function AssistantWorkCollapse({ work, isStreaming = false }: { work: AssistantWorkData; isStreaming?: boolean }) {
+export function AssistantWorkCollapse({ work, isStreaming = false, streamId }: { work: AssistantWorkData; isStreaming?: boolean; streamId?: string }) {
   const [expanded, setExpanded] = useState(false);
+  const identity = streamId ?? (work.detailContext ? `${work.detailContext.conversationId}:${work.detailContext.turnId}` : "");
   const phases = useMemo(() => buildExecutionPhases(work.steps, work.auxiliaryMessages), [work.steps, work.auxiliaryMessages]);
   const { failures, heading, retry, tools, warnings } = useMemo(() => describeExecution(work, isStreaming), [work, isStreaming]);
 
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
     {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
-    <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming />
+    <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming streamId={identity} retrying={Boolean(work.retry)} />
     <CoreActivitySummary steps={work.steps} />
     {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
   </section>;
@@ -37,11 +39,11 @@ export function AssistantWorkCollapse({ work, isStreaming = false }: { work: Ass
         <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
       </CollapsibleTrigger>
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
-        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} />
+        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} streamId={identity} />
         <CoreActivitySummary steps={work.steps} />
         {work.steps.length === 0 && <p className="py-1 text-xs">Nenhuma atividade registrada.</p>}
       </CollapsibleContent>
-      {!expanded && <ExecutionPhases phases={phases.filter(phase => phase.message)} isStreaming={false} />}
+      {!expanded && <ExecutionPhases phases={phases.filter(phase => phase.message)} isStreaming={false} streamId={identity} />}
     </Collapsible>
   );
 }
@@ -113,7 +115,7 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"], messages: Assis
   return phases.filter(phase => phase.message || phase.observation || phase.activity.length > 0);
 }
 
-function ExecutionPhases({ phases, detailContext, isStreaming }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean }) {
+function ExecutionPhases({ phases, detailContext, isStreaming, streamId, retrying = false }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; streamId: string; retrying?: boolean }) {
   if (phases.length === 0) return null;
   return <div role="list" aria-label="Etapas da execução" className="flex min-w-0 flex-col gap-5">
     {phases.map((phase, phaseIndex) => {
@@ -122,10 +124,10 @@ function ExecutionPhases({ phases, detailContext, isStreaming }: { phases: Execu
         {phase.message && <UserMessageBubble message={{ id: phase.message.id, role: "user", content: phase.message.content, parts: phase.message.parts, timestamp: phase.message.sentAt === undefined ? "" : new Date(phase.message.sentAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />}
         {phase.observation && <div data-execution-observation className={`min-w-0 px-1 py-2 text-sm leading-7 text-foreground ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200" : ""}`}>
           <div className="assistant-prose min-w-0 break-words [&_code]:font-mono [&_p]:my-0">
-            <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} /></Suspense>
+            <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} isStreaming={current && !retrying} streamId={`${streamId}:${phase.id}`} /></Suspense>
           </div>
         </div>}
-        {phase.activity.length > 0 && <PhaseActivityGroup phase={phase} phaseIndex={phaseIndex} current={current} detailContext={detailContext} isStreaming={isStreaming} />}
+        {phase.activity.length > 0 && <PhaseActivityGroup phase={phase} phaseIndex={phaseIndex} current={current} detailContext={detailContext} isStreaming={isStreaming} streamId={`${streamId}:${phase.id}`} retrying={retrying} />}
       </section>;
     })}
   </div>;
@@ -135,7 +137,7 @@ function phaseTools(activity: ActivityItem[]): ToolCallItem[] {
   return activity.flatMap(item => item.kind === "tool-group" ? item.group.tools : item.kind === "tool" ? [item.tool] : []);
 }
 
-function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStreaming }: { phase: ExecutionPhase; phaseIndex: number; current: boolean; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean }) {
+function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStreaming, streamId, retrying }: { phase: ExecutionPhase; phaseIndex: number; current: boolean; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; streamId: string; retrying: boolean }) {
   const tools = phaseTools(phase.activity);
   const reasoningCount = phase.activity.reduce((total, item) => total + (item.kind === "reasoning" ? item.thoughts.length : 0), 0);
   const actionCount = tools.length + reasoningCount;
@@ -158,8 +160,8 @@ function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStrea
           const latest = current && itemIndex === phase.activity.length - 1;
           return <li key={item.id} data-activity-kind={item.kind} aria-current={latest ? "step" : undefined} className={`min-w-0 ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-150" : ""}`}>
             {item.kind === "reasoning" ? item.thoughts.length > 1
-              ? <ReasoningGroup thoughts={item.thoughts} />
-              : <ReasoningItem content={item.thoughts[0].content} />
+              ? <ReasoningGroup thoughts={item.thoughts} isStreaming={latest && isStreaming && !retrying} streamId={`${streamId}:${item.id}`} />
+              : <ReasoningItem content={item.thoughts[0].content} isStreaming={latest && isStreaming && !retrying} streamId={`${streamId}:${item.id}`} />
             : item.kind === "tool-group" ? <ToolActivityGroup group={item.group} detailContext={detailContext} />
             : <ToolCallCard tool={item.tool} detailContext={detailContext} />}
           </li>;
@@ -169,17 +171,19 @@ function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStrea
   </Collapsible>;
 }
 
-function ReasoningGroup({ thoughts }: { thoughts: { id: string; content: string }[] }) {
+function ReasoningGroup({ thoughts, isStreaming, streamId }: { thoughts: { id: string; content: string }[]; isStreaming: boolean; streamId: string }) {
+  const last = thoughts.length - 1;
+  const displayed = useStreamedText(thoughts[last]?.content ?? "", isStreaming, `${streamId}:${thoughts[last]?.id ?? ""}`);
   return <Collapsible>
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-9 w-full max-w-full cursor-pointer justify-start gap-2 rounded-md px-2.5 text-left text-[11px] hover:bg-card/45">
       <BrainCircuit aria-hidden="true" data-icon="inline-start" className="size-3.5 text-onedark-purple" />
       <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-onedark-purple">Raciocínio</span>
-      <span className="min-w-0 flex-1 truncate italic text-muted-foreground">{reasoningPreview(thoughts[thoughts.length - 1]?.content ?? "")}</span>
+      <span className="min-w-0 flex-1 truncate italic text-muted-foreground">{reasoningPreview(displayed)}</span>
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{thoughts.length} etapas</span>
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>
     <CollapsibleContent className="ml-4 flex min-w-0 flex-col border-l border-onedark-purple/20 pl-2">
-      {thoughts.map(thought => <ReasoningItem key={thought.id} content={thought.content} />)}
+      {thoughts.map((thought, index) => <ReasoningItem key={thought.id} content={index === last ? displayed : thought.content} isStreaming={false} streamId={`${streamId}:${thought.id}`} />)}
     </CollapsibleContent>
   </Collapsible>;
 }
@@ -199,14 +203,15 @@ function ToolActivityGroup({ group, detailContext }: { group: ReturnType<typeof 
   </Collapsible>;
 }
 
-function ReasoningItem({ content }: { content: string }) {
+function ReasoningItem({ content, isStreaming, streamId }: { content: string; isStreaming: boolean; streamId: string }) {
+  const displayed = useStreamedText(content, isStreaming, streamId);
   return <Collapsible>
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 w-full max-w-full cursor-pointer justify-start gap-2 rounded-md px-2.5 text-left hover:bg-card/35">
       <BrainCircuit aria-hidden="true" data-icon="inline-start" className="text-onedark-purple" />
       <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-onedark-purple">Raciocínio</span>
-      <span className="min-w-0 truncate text-[11px] italic text-muted-foreground">{reasoningPreview(content) || "Em andamento"}</span>
+      <span className="min-w-0 truncate text-[11px] italic text-muted-foreground">{reasoningPreview(displayed) || "Em andamento"}</span>
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>
-    <CollapsibleContent className="py-2 pl-6 text-sm leading-relaxed"><p className="whitespace-pre-wrap break-words">{content}</p></CollapsibleContent>
+    <CollapsibleContent className="py-2 pl-6 text-sm leading-relaxed"><p className="whitespace-pre-wrap break-words">{displayed}</p></CollapsibleContent>
   </Collapsible>;
 }
