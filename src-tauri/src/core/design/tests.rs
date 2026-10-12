@@ -329,6 +329,53 @@ fn managed_context_detect_and_live_receive_the_canonical_knowledge_design() {
 }
 #[cfg(unix)]
 #[test]
+fn managed_product_binding_is_scoped_and_cannot_inherit_another_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    prepare_fixture(directory.path(), &[]).unwrap();
+    fs::create_dir_all(project.path().join("app")).unwrap();
+    fs::create_dir_all(project.path().join(".jarvis/knowledge")).unwrap();
+    fs::write(project.path().join(".jarvis/knowledge/prd.md"), "# Shared").unwrap();
+    fs::write(project.path().join(".jarvis/knowledge/app-prd.md"), "# App").unwrap();
+    fs::write(project.path().join("PRODUCT.md"), "# Competing").unwrap();
+    fs::write(
+        project.path().join(".jarvis/knowledge/index.json"),
+        json!({"entries":[
+            {"kind":"product","scope":".","path":".jarvis/knowledge/prd.md"},
+            {"kind":"product","scope":"app","path":".jarvis/knowledge/app-prd.md"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let mut command = command_at_for(directory.path(), project.path(), Some("app")).unwrap();
+    let root = fs::canonicalize(project.path()).unwrap();
+    let env = |command: &tokio::process::Command, key: &str| {
+        command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == key)
+            .and_then(|(_, value)| value)
+            .map(PathBuf::from)
+    };
+    assert_eq!(env(&command, "IMPECCABLE_PRODUCT_ROOT"), Some(root.clone()));
+    assert_eq!(
+        env(&command, "IMPECCABLE_PRODUCT_PATH"),
+        Some(root.join(".jarvis/knowledge/app-prd.md"))
+    );
+    let other = tempfile::tempdir().unwrap();
+    set_product_path(&mut command, &fs::canonicalize(other.path()).unwrap(), None).unwrap();
+    assert!(env(&command, "IMPECCABLE_PRODUCT_PATH").is_none());
+    assert!(env(&command, "IMPECCABLE_PRODUCT_ROOT").is_none());
+    fs::remove_file(root.join(".jarvis/knowledge/prd.md")).unwrap();
+    assert!(command_at(directory.path(), project.path()).is_err());
+    assert_eq!(
+        fs::read_to_string(root.join("PRODUCT.md")).unwrap(),
+        "# Competing"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn rejects_pack_and_executable_symlinks_outside_managed_generation() {
     let directory = tempfile::tempdir().unwrap();
     let external = tempfile::NamedTempFile::new().unwrap();

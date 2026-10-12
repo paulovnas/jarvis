@@ -85,6 +85,15 @@ describe("diagnostic evidence", () => {
     });
   });
 
+  it("accepts redacted protocol evidence and explains an interrupted successful transport", async () => {
+    invokeMock.mockResolvedValue({ ...summary, recentEvents: [{ ...summary.recentEvents[0], event: "provider_failure", httpStatus: 200, protocolReason: "missing_completion" }] });
+    render(<DiagnosticEvidence />);
+    expect(await screen.findByText("Falha de comunicação com o provedor")).toBeVisible();
+    expect(screen.getByText("A conexão terminou antes da confirmação de conclusão.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Exportar pacote" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("checks SQLite integrity only when the user requests it", async () => {
     const user = userEvent.setup();
     render(<DiagnosticEvidence />);

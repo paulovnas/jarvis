@@ -1,17 +1,30 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   engines, enginePlatform, IMPECCABLE_CLI_VERSION, IMPECCABLE_ENGINE_VERSION,
-  IMPECCABLE_RESOURCE_DIRECTORY, IMPECCABLE_SKILL_VERSION, IMPECCABLE_SOURCE_COMMIT,
+  IMPECCABLE_RESOURCE_DIRECTORY, IMPECCABLE_SKILL_VERSION, IMPECCABLE_SOURCE_COMMIT, IMPECCABLE_UPSTREAM_ENGINE_VERSION,
   localizeLive, nativeEnginePatches, prepareImpeccable, sha256, SKILL_DIRECTORY, verifyEngineBytes, verifyImpeccableAssets,
   verifyNativeEngineReceipt,
+  type EnginePlatform,
   type NativeEngineReceipt,
 } from "./prepare-impeccable";
 
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const execute = vi.fn();
+  return { ...actual, execFileSync: execute, default: { ...actual, execFileSync: execute } };
+});
+
 const temporary: string[] = [];
+beforeEach(() => {
+  vi.mocked(execFileSync).mockReset();
+  vi.mocked(execFileSync).mockImplementation((_file, args) => args?.[0] === "engine-probe"
+    ? `impeccable-engine ${IMPECCABLE_ENGINE_VERSION}\n` : `${IMPECCABLE_CLI_VERSION}\n`);
+});
 afterEach(async () => { await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 async function fixture(): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "jarvis-impeccable-assets-"));
@@ -21,7 +34,9 @@ async function fixture(): Promise<string> {
   for (const file of files) {
     const relative = `${SKILL_DIRECTORY}/${file}`;
     await mkdir(path.dirname(path.join(directory, relative)), { recursive: true });
-    const text = `fixture ${file}`;
+    const text = file === "scripts/VERSION"
+      ? await readFile(path.join(IMPECCABLE_RESOURCE_DIRECTORY, relative), "utf8")
+      : `fixture ${file}`;
     await writeFile(path.join(directory, relative), text);
     hashes.push({ path: relative, sha256: sha256(text) });
   }
@@ -30,6 +45,20 @@ async function fixture(): Promise<string> {
     cliVersion: IMPECCABLE_CLI_VERSION, source: { commit: IMPECCABLE_SOURCE_COMMIT }, engines, files: hashes,
   }));
   return directory;
+}
+
+async function nativeFixture(platform: EnginePlatform = enginePlatform()): Promise<{ directory: string; enginePath: string; receipt: NativeEngineReceipt }> {
+  const directory = await fixture();
+  const bytes = new TextEncoder().encode("fixture engine with native CAS");
+  const receipt: NativeEngineReceipt = {
+    schemaVersion: 1, engineVersion: IMPECCABLE_ENGINE_VERSION, cliVersion: IMPECCABLE_CLI_VERSION,
+    sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: platform, patches: await nativeEnginePatches(), engineSha256: sha256(bytes),
+  };
+  await mkdir(path.join(directory, "bin"));
+  const enginePath = path.join(directory, "bin", platform.startsWith("windows-") ? "impeccable.exe" : "impeccable");
+  await writeFile(enginePath, bytes);
+  await writeFile(path.join(directory, "bin/jarvis-engine.json"), JSON.stringify(receipt));
+  return { directory, enginePath, receipt };
 }
 
 describe("app-owned Impeccable preparation", () => {
@@ -68,6 +97,8 @@ describe("app-owned Impeccable preparation", () => {
   it("ships a complete immutable snapshot with Portuguese UI and valid JavaScript", async () => {
     const manifest = await verifyImpeccableAssets(IMPECCABLE_RESOURCE_DIRECTORY);
     expect(manifest.source.commit).toBe(IMPECCABLE_SOURCE_COMMIT);
+    expect(manifest.engineVersion).toBe(IMPECCABLE_ENGINE_VERSION);
+    expect((await readFile(path.join(IMPECCABLE_RESOURCE_DIRECTORY, SKILL_DIRECTORY, "scripts/VERSION"), "utf8")).trim()).toBe(IMPECCABLE_UPSTREAM_ENGINE_VERSION);
     expect(manifest.files.some((file) => file.path.endsWith("reference/new-work.md"))).toBe(true);
     expect(manifest.files.some((file) => file.path.endsWith("reference/live.md"))).toBe(true);
     expect(manifest.files.some((file) => file.path.endsWith("LICENSE"))).toBe(true);
@@ -121,7 +152,7 @@ describe("app-owned Impeccable preparation", () => {
       sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: "darwin-arm64", patches, engineSha256: sha256(bytes),
     };
     expect(verifyNativeEngineReceipt("darwin-arm64", bytes, receipt, patches)).toEqual(receipt);
-    expect(patches.map((patch) => patch.path)).toEqual(["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/accept-write.patch"]);
+    expect(patches.map((patch) => patch.path)).toEqual(["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch"]);
     expect(() => verifyNativeEngineReceipt("darwin-arm64", bytes, { ...receipt, patches: patches.slice(0, 1) }, patches)).toThrow("patches");
     expect(() => verifyNativeEngineReceipt("linux-x64", bytes, receipt, patches)).toThrow("plataforma");
     expect(() => verifyNativeEngineReceipt("darwin-arm64", bytes, { ...receipt, sourceCommit: "0".repeat(40) }, patches)).toThrow("commit");
@@ -133,25 +164,54 @@ describe("app-owned Impeccable preparation", () => {
     expect(() => verifyNativeEngineReceipt("darwin-arm64", bytes, null, patches)).toThrow("Receita");
   });
 
-  it("prepares a verified native engine offline and records its provenance separately from official release pins", async () => {
-    const directory = await fixture();
-    const bytes = new TextEncoder().encode("fixture engine with native CAS");
-    const platform = "darwin-arm64";
-    const receipt: NativeEngineReceipt = {
-      schemaVersion: 1, engineVersion: IMPECCABLE_ENGINE_VERSION, cliVersion: IMPECCABLE_CLI_VERSION,
-      sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: platform, patches: await nativeEnginePatches(), engineSha256: sha256(bytes),
-    };
-    await mkdir(path.join(directory, "bin"));
-    await writeFile(path.join(directory, "bin/impeccable"), bytes);
-    await writeFile(path.join(directory, "bin/jarvis-engine.json"), JSON.stringify(receipt));
+  it("prepares a patched engine while preserving the script pack version required by native startup", async () => {
+    const platform = enginePlatform();
+    const { directory, enginePath, receipt } = await nativeFixture(platform);
     const result = await prepareImpeccable({ destination: directory, target: platform, offline: true });
     expect(result.platform).toBe(platform);
-    const index = JSON.parse(await readFile(path.join(directory, "jarvis-design.json"), "utf8")) as { engine_sha256: string; native_engine: NativeEngineReceipt };
+    const index = JSON.parse(await readFile(path.join(directory, "jarvis-design.json"), "utf8")) as {
+      bundle_engine_version: string; engine_version: string; engine_sha256: string; native_engine: NativeEngineReceipt;
+    };
+    const scriptVersion = (await readFile(path.join(directory, SKILL_DIRECTORY, "scripts/VERSION"), "utf8")).trim();
+    expect(index.bundle_engine_version).toBe(scriptVersion);
+    expect(index.bundle_engine_version).toBe(IMPECCABLE_UPSTREAM_ENGINE_VERSION);
+    expect(index.engine_version).toBe(IMPECCABLE_ENGINE_VERSION);
+    expect(index.engine_version).toBe(receipt.engineVersion);
     expect(index.engine_sha256).toBe(receipt.engineSha256);
     expect(index.native_engine).toEqual(receipt);
     expect(index.engine_sha256).not.toBe(engines[platform].sha256);
-    await writeFile(path.join(directory, "bin/impeccable"), "corrupt engine");
+    expect(execFileSync).toHaveBeenNthCalledWith(1, enginePath, ["engine-probe"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+    expect(execFileSync).toHaveBeenNthCalledWith(2, enginePath, ["--version"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+    await writeFile(enginePath, "corrupt engine");
     await expect(prepareImpeccable({ destination: directory, target: platform, offline: true })).rejects.toThrow("offline");
+    expect(execFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["engine-probe", "--version"])("refuses a hash-valid native engine reporting the wrong %s contract before writing the index", async (argument) => {
+    const { directory, enginePath, receipt } = await nativeFixture();
+    vi.mocked(execFileSync).mockImplementation((_file, args) => args?.[0] === argument
+      ? "wrong version\n" : `impeccable-engine ${IMPECCABLE_ENGINE_VERSION}\n`);
+    await expect(prepareImpeccable({ destination: directory, target: receipt.target, offline: true })).rejects.toThrow(`contrato ${argument}`);
+    expect(execFileSync).toHaveBeenLastCalledWith(enginePath, [argument], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+    await expect(readFile(path.join(directory, "jarvis-design.json"))).rejects.toThrow();
+  });
+
+  it("refuses a native engine that times out before writing the index", async () => {
+    const { directory, receipt } = await nativeFixture();
+    vi.mocked(execFileSync).mockImplementation(() => { throw new Error("spawnSync ETIMEDOUT"); });
+    await expect(prepareImpeccable({ destination: directory, target: receipt.target, offline: true })).rejects.toThrow("ETIMEDOUT");
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+    await expect(readFile(path.join(directory, "jarvis-design.json"))).rejects.toThrow();
+  });
+
+  it("preserves cross-target packaging without executing the foreign binary", async () => {
+    const platform: EnginePlatform = enginePlatform() === "linux-x64" ? "darwin-arm64" : "linux-x64";
+    const { directory, receipt } = await nativeFixture(platform);
+    const result = await prepareImpeccable({ destination: directory, target: platform, offline: true });
+    expect(result.platform).toBe(platform);
+    expect(execFileSync).not.toHaveBeenCalled();
+    const index = JSON.parse(await readFile(path.join(directory, "jarvis-design.json"), "utf8")) as { native_engine: NativeEngineReceipt };
+    expect(index.native_engine).toEqual(receipt);
   });
 
   it("refuses to use an unreceipted engine instead of silently losing native queue admission", async () => {

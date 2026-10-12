@@ -914,6 +914,41 @@ fn interaction_focus(
     }
 }
 
+#[cfg(all(feature = "browser-probe", target_os = "macos"))]
+pub(crate) mod probe {
+    use super::*;
+
+    pub(crate) fn show(window: &tauri::WebviewWindow) -> Result<(), String> {
+        macos::create(window)?;
+        dispatch2::run_on_main(|mtm| {
+            let size = macos::probe_content_view(window.app_handle(), mtm)?
+                .bounds()
+                .size;
+            *window
+                .app_handle()
+                .state::<CompanionState>()
+                .hit_rect
+                .lock()
+                .map_err(|_| "Área de interação do assistente indisponível.")? =
+                Some([0., 0., size.width, size.height]);
+            Ok::<_, String>(())
+        })?;
+        macos::show(window.app_handle())
+    }
+
+    pub(crate) fn content_view(
+        app: &tauri::AppHandle,
+        mtm: objc2::MainThreadMarker,
+    ) -> Result<objc2::rc::Retained<objc2_app_kit::NSView>, String> {
+        macos::probe_content_view(app, mtm)
+    }
+
+    pub(crate) fn close(window: &tauri::WebviewWindow) -> Result<(), String> {
+        macos::close(window.app_handle(), false);
+        window.close().map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -985,6 +1020,16 @@ mod macos {
             .ok_or_else(|| "Janela do assistente indisponível.".into())
     }
 
+    #[cfg(feature = "browser-probe")]
+    pub(super) fn probe_content_view(
+        app: &tauri::AppHandle,
+        mtm: MainThreadMarker,
+    ) -> Result<Retained<NSView>, String> {
+        panel(app, mtm)?
+            .contentView()
+            .ok_or_else(|| "Conteúdo do assistente indisponível.".into())
+    }
+
     pub(super) fn create(window: &tauri::WebviewWindow) -> Result<(), String> {
         run_on_main(|mtm| {
             if window
@@ -1003,9 +1048,8 @@ mod macos {
             let content = owner
                 .contentView()
                 .ok_or("Conteúdo do assistente indisponível.")?;
-            // Use a real panel rather than changing Tao's ObjC class: Tao relies on its own ivars.
-            // The renderer calls this after WKWebView creation: keep Tao's contentView
-            // intact and move only its children into the panel, preserving raw handles.
+            // Keep the runtime's contentView intact and move only the rendered children;
+            // replacing the window's ObjC class would invalidate its native state.
             let children = content.subviews();
             if children.count() == 0 {
                 return Err("O conteúdo do assistente ainda não está disponível.".into());

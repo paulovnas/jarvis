@@ -119,6 +119,7 @@
     if (value.actionId && value.actionId !== current?.actionId) completed = false;
     if (current && value.revision > current.revision && !value.error && value.phase !== 'blocked' && value.state !== 'setup') feedback = null;
     current = value;
+    window.__JARVIS_IMPECCABLE_SESSION__?.(value);
     if (value.feedback?.requestId === pending) { pending = null; feedback = value.feedback.error || null; }
     render();
   }

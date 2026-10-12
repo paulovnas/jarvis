@@ -107,6 +107,16 @@ describe("macOS signing setup", () => {
     expect(result.stderr).toContain("bun run tauri dev");
   });
 
+  it.skipIf(process.platform === "win32")("refuses to rebuild a bare Chromium executable into a bundle without its helpers", () => {
+    const result = spawnSync("/bin/sh", [path.resolve("scripts/run-signed-macos.sh"), process.execPath, "argument with spaces"], {
+      env: { PATH: process.env.PATH, APPLE_SIGNING_IDENTITY: firstHash, JARVIS_SIGNING_IDENTIFIER: "com.foxtag.jarvis.dev", JARVIS_CEF_RUNTIME: "1", JARVIS_DEV_APP_BUNDLE: "1" }, encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("bundle completo com framework e helpers");
+    expect(result.stderr).toContain("CLI fixado do Jarvis");
+    expect(result.stderr).not.toContain("codesign");
+  });
+
   it("uses the application's configured identifier", () => {
     expect(projectIdentifier(process.cwd())).toBe("com.foxtag.jarvis");
     expect(projectIdentifier(process.cwd(), true)).toBe("com.foxtag.jarvis.dev");
@@ -118,10 +128,11 @@ describe("macOS signing setup", () => {
     expect(minimum).toBeDefined();
     const result = spawnSync("/usr/bin/clang++", ["-std=c++17", "-x", "c++", "-fsyntax-only", "-"], {
       env: { ...process.env, MACOSX_DEPLOYMENT_TARGET: minimum }, encoding: "utf8",
+      timeout: 15_000,
       input: '#include <filesystem>\nint main() { return std::filesystem::exists(std::filesystem::u8path(".")) ? 0 : 1; }\n',
     });
     expect(result.status, result.stderr).toBe(0);
-  });
+  }, 20_000);
 
   it.skipIf(process.platform !== "darwin" || process.env.JARVIS_TEST_MACOS_BUNDLE !== "1")("runs signed development inside a native notification-capable bundle", () => {
     const temporary = mkdtempSync(path.join(tmpdir(), "Jarvis bundle probe "));

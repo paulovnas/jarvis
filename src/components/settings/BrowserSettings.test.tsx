@@ -24,18 +24,22 @@ beforeEach(() => {
   });
 });
 
-it("defaults old preferences to embedded and changes browser mode without losing other preferences", async () => {
-  const user = userEvent.setup();
+it.each(["embedded", "extension"])("shows integrated navigation and optional extension setup with legacy %s preferences", async mode => {
+  const original = call.getMockImplementation();
+  call.mockImplementation(async (command, args, options) => command === "get_system_preferences"
+    ? { ...initial, preferences: { ...initial.preferences, browser: { mode, application: "chrome" } } }
+    : original?.(command, args, options));
   render(<BrowserSettings />);
-  const mode = await screen.findByRole("combobox", { name: "Modo de navegação" });
-  expect(mode).toHaveTextContent("Embutido no Jarvis");
-  expect(call).not.toHaveBeenCalledWith("get_browser_extension_status");
-  mode.focus();
-  await user.keyboard("{Enter}");
-  await user.click(await screen.findByRole("option", { name: "Extensão do navegador" }));
-  await waitFor(() => expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, browser: { mode: "extension", application: "chrome" } } }));
+  expect(await screen.findByText("Navegação integrada")).toBeVisible();
+  expect(screen.queryByRole("combobox", { name: "Modo de navegação" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Os agentes abrem novas páginas dentro do Jarvis/)).toBeVisible();
+  expect(screen.getByText(/A conexão não altera a navegação integrada/)).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Navegador da extensão" })).toHaveTextContent("Google Chrome");
+  expect(screen.getAllByRole("combobox")).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Preparar extensão" })).toBeEnabled();
   expect(await screen.findByText("Aguardando extensão")).toBeVisible();
-  expect(screen.getByRole("combobox", { name: "Navegador instalado" })).toHaveTextContent("Google Chrome");
+  await waitFor(() => expect(call).toHaveBeenCalledWith("get_browser_extension_status"));
+  expect(call.mock.calls.filter(([command]) => command === "save_system_preferences")).toHaveLength(0);
 });
 
 it("offers Firefox with its own temporary installation and launch instructions", async () => {
@@ -47,7 +51,7 @@ it("offers Firefox with its own temporary installation and launch instructions",
       ? { path: "/app/browser-extension-firefox", connectionCode: "private-firefox-code" }
       : original?.(command, args, options));
   render(<BrowserSettings />);
-  expect(await screen.findByRole("combobox", { name: "Navegador instalado" })).toHaveTextContent("Mozilla Firefox");
+  expect(await screen.findByRole("combobox", { name: "Navegador da extensão" })).toHaveTextContent("Mozilla Firefox");
   expect(screen.getByText("Carregar extensão temporária")).toBeVisible();
   expect(screen.getByText("manifest.json")).toBeVisible();
   expect(screen.getByText(/precisa ser carregada novamente ao reiniciar/)).toBeVisible();
@@ -60,7 +64,7 @@ it("offers Firefox with its own temporary installation and launch instructions",
   expect(call).toHaveBeenCalledWith("open_browser_application", { application: "firefox" });
 });
 
-it("saves Firefox preference and clears the prepared Chromium directory when switching", async () => {
+it("saves the extension application without changing agent navigation or other preferences and clears the old prepared package", async () => {
   const user = userEvent.setup();
   let browser = { mode: "extension", application: "chrome" };
   const original = call.getMockImplementation();
@@ -75,11 +79,12 @@ it("saves Firefox preference and clears the prepared Chromium directory when swi
   render(<BrowserSettings />);
   await user.click(await screen.findByRole("button", { name: "Preparar extensão" }));
   expect(await screen.findByText("/app/browser-extension")).toBeVisible();
-  screen.getByRole("combobox", { name: "Navegador instalado" }).focus();
+  screen.getByRole("combobox", { name: "Navegador da extensão" }).focus();
   await user.keyboard("{Enter}");
   await user.click(await screen.findByRole("option", { name: "Mozilla Firefox" }));
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Navegador instalado" })).toHaveTextContent("Mozilla Firefox"));
-  expect(browser).toEqual({ mode: "extension", application: "firefox" });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Navegador da extensão" })).toHaveTextContent("Mozilla Firefox"));
+  expect(browser).toEqual({ mode: "embedded", application: "firefox" });
+  expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, browser: { mode: "embedded", application: "firefox" } } });
   expect(screen.queryByText("/app/browser-extension")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copiar código de conexão" })).toBeDisabled();
 });

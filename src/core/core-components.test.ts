@@ -2,6 +2,16 @@ import { expect, it } from "vitest";
 import { coreFixture } from "@/test/core-fixtures";
 import { ACTIVE_CORE_IDS, activeCore, coreDownloadEventSchema, coreSnapshotSchema } from "./core-components";
 
+it("preserves browser bundle diagnostics without adding it to separately installed Core packages", () => {
+  const snapshot = coreFixture();
+  expect(coreSnapshotSchema.parse(snapshot).browserRuntime).toBeUndefined();
+  const browserRuntime = { version: "151.8.1", state: "included", diagnostics: [{ label: "Motor Chromium", passed: true, message: "Incluído no aplicativo" }] };
+  const parsed = coreSnapshotSchema.parse({ ...snapshot, browserRuntime });
+  expect(parsed.browserRuntime).toEqual(browserRuntime);
+  expect(parsed.items).toHaveLength(snapshot.items.length);
+  expect(coreSnapshotSchema.safeParse({ ...snapshot, browserRuntime: { ...browserRuntime, state: "installable" } }).success).toBe(false);
+});
+
 it("defaults older Core snapshots to installable components and preserves native bundled metadata", () => {
   const snapshot = coreFixture();
   const legacy = { ...snapshot, items: snapshot.items.map(item => ({ ...item, bundled: undefined })) };

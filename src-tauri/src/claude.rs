@@ -1,5 +1,6 @@
 //! Claude owns authentication and inference; Jarvis owns the scoped process and tool bridge.
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 mod metadata;
 mod transport;
@@ -20,12 +21,14 @@ pub(crate) async fn get_claude_runtime(
 
 #[tauri::command]
 pub(crate) async fn refresh_claude_runtime(
+    app: tauri::AppHandle,
     state: tauri::State<'_, ClaudeState>,
     system: tauri::State<'_, crate::system::SystemState>,
 ) -> Result<RuntimeStatus, String> {
     *state.usage.lock().await = usage::Cache::default();
     let mut status = metadata::cached(&state, true).await;
     status.preferences = system.claude_preferences()?;
+    let _ = app.emit("claude-runtime:changed", &status);
     Ok(status)
 }
 

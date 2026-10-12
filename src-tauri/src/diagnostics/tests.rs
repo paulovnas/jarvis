@@ -138,6 +138,60 @@ fn provider_transport_stages_survive_sanitized_summary_and_export() {
 }
 
 #[test]
+fn protocol_failure_reasons_survive_summary_export_and_do_not_mislabel_http_200_as_a_refusal() {
+    use std::io::Read as _;
+    let directory = tempfile::tempdir().unwrap();
+    let state = state(directory.path(), 'a');
+    for (status, expected) in [
+        (200, EventKind::ProviderFailure),
+        (400, EventKind::ProviderRefusal),
+    ] {
+        let mut metadata = ProviderMetadata::new(Some(status), None, Some("req_safe"));
+        metadata.protocol_reason = Some(ProviderProtocolReason::MissingCompletion);
+        metadata.transport_stage = Some(ProviderTransportStage::ResponseStream);
+        let record = provider_failure_record(
+            &state,
+            "antigravity",
+            "test-private-session",
+            "provider_protocol",
+            Some(&metadata),
+        )
+        .unwrap();
+        assert_eq!(record.event, expected);
+        state.record(record);
+    }
+    let summary = state.summary().unwrap();
+    for event in &summary.recent_events {
+        assert_eq!(
+            event.protocol_reason,
+            Some(ProviderProtocolReason::MissingCompletion)
+        );
+        assert_eq!(event.operation.as_deref(), Some("provider_response_stream"));
+        assert_eq!(event.request_id.as_deref(), Some("req_safe"));
+    }
+    let destination = directory.path().join("protocol-failures.zip");
+    state.export(&destination).unwrap();
+    let mut archive = zip::ZipArchive::new(File::open(destination).unwrap()).unwrap();
+    let mut log = String::new();
+    archive
+        .by_name("logs/events.jsonl")
+        .unwrap()
+        .read_to_string(&mut log)
+        .unwrap();
+    assert!(log.contains("\"protocolReason\":\"missing_completion\""));
+    assert!(!log.contains("test-private-session"));
+    assert!(log
+        .lines()
+        .all(|line| serde_json::from_str::<Record>(line).is_ok()));
+    let invalid = log
+        .lines()
+        .next()
+        .unwrap()
+        .replace("missing_completion", "test-private-data");
+    assert!(serde_json::from_str::<Record>(&invalid).is_err());
+}
+
+#[test]
 fn summary_distinguishes_required_failure_categories_without_private_content() {
     let directory = tempfile::tempdir().unwrap();
     let state = state(directory.path(), 'a');

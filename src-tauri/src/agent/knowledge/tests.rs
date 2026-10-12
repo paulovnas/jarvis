@@ -112,6 +112,76 @@ fn canonical_design_discovers_existing_documents_without_creating_knowledge() {
 }
 
 #[test]
+fn canonical_product_reuses_prd_scope_and_link_without_touching_competing_product() {
+    let (_temp, root) = fixture();
+    fs::create_dir_all(root.join("app/src")).unwrap();
+    fs::write(root.join("app/src/page.tsx"), "page").unwrap();
+    let shared = edit(&root, ".", Kind::Product, "Shared PRD", "");
+    let scoped = edit(&root, "app", Kind::Product, "App PRD", "");
+    fs::write(root.join("PRODUCT.md"), "Legacy product").unwrap();
+    fs::write(root.join("app/PRODUCT.md"), "Legacy app product").unwrap();
+    assert_eq!(
+        product_path(&root, None).unwrap().unwrap(),
+        Path::new(&shared.path)
+    );
+    assert_eq!(
+        product_path(&root, Some("app/src/page.tsx"))
+            .unwrap()
+            .unwrap(),
+        Path::new(&scoped.path)
+    );
+    assert_eq!(
+        product_paths(&root, &["app".into(), "app/src".into()]),
+        vec![Path::new(&scoped.path).to_owned()]
+    );
+    fs::write(root.join("custom-prd.md"), "# Linked product").unwrap();
+    link(
+        &root,
+        "app",
+        Kind::Product,
+        "custom-prd.md",
+        &scoped.revision,
+    )
+    .unwrap();
+    assert_eq!(
+        product_path(&root, Some("app")).unwrap().unwrap(),
+        Path::new("custom-prd.md")
+    );
+    fs::remove_file(root.join("custom-prd.md")).unwrap();
+    assert!(product_path(&root, Some("app")).is_err());
+    assert_eq!(
+        fs::read_to_string(root.join("PRODUCT.md")).unwrap(),
+        "Legacy product"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("app/PRODUCT.md")).unwrap(),
+        "Legacy app product"
+    );
+}
+
+#[test]
+fn product_discovery_prefers_existing_prd_without_creating_a_copy() {
+    let (_temp, root) = fixture();
+    fs::create_dir_all(root.join("app/docs")).unwrap();
+    fs::write(root.join("app/docs/PRD.md"), "# App PRD").unwrap();
+    fs::write(root.join("prd.md"), "# Shared PRD").unwrap();
+    fs::write(root.join("app/PRODUCT.md"), "# Legacy").unwrap();
+    assert_eq!(
+        product_path(&root, Some("app")).unwrap().unwrap(),
+        Path::new("app/docs/PRD.md")
+    );
+    assert_eq!(
+        product_path(&root, None).unwrap().unwrap(),
+        Path::new("prd.md")
+    );
+    assert!(!root.join(".jarvis").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("app/PRODUCT.md")).unwrap(),
+        "# Legacy"
+    );
+}
+
+#[test]
 fn scoped_search_includes_shared_facts_and_excludes_other_repositories() {
     let (_temp, root) = fixture();
     fs::create_dir(root.join("front")).unwrap();

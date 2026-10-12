@@ -545,6 +545,7 @@ pub async fn remove_queued_message(
         .await?;
     let message = session.remove_queued(&message_id)?;
     let snapshot = session.snapshot()?;
+    super::impeccable::removed_setup(&app, &snapshot, &message);
     (session.emit)(snapshot.clone());
     agent.release_idle(&session);
     Ok(RemovedMessage { message, snapshot })
@@ -561,8 +562,9 @@ pub async fn delete_queued_message(
     let session = agent
         .runtime_session(&app, &persistence, &conversation_id)
         .await?;
-    session.remove_queued(&message_id)?;
+    let message = session.remove_queued(&message_id)?;
     let snapshot = session.snapshot()?;
+    super::impeccable::removed_setup(&app, &snapshot, &message);
     (session.emit)(snapshot.clone());
     agent.release_idle(&session);
     Ok(snapshot)

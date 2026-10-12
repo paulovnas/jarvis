@@ -31,6 +31,18 @@ beforeEach(() => {
   vi.mocked(listen).mockImplementation(async (name, callback) => { events.set(name, callback); return () => { events.delete(name); }; });
 });
 
+it("shows the app-owned Chromium runtime in Tools without a separate install or update button", async () => {
+  const state = coreFixture();
+  state.browserRuntime = { version: "151.8.1", state: "included", diagnostics: [{ label: "Motor Chromium", passed: true, message: "Incluído no aplicativo" }] };
+  invokeMock.mockResolvedValue(state);
+  render(<CoreSettings />);
+  expect(await screen.findByRole("heading", { name: "Navegador Chromium" })).toBeVisible();
+  expect(screen.getByText("CEF 151.8.1")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /(?:Instalar|Atualizar|Reinstalar).*Chromium/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Verificações do navegador Chromium" }));
+  expect(screen.getByRole("list", { name: "Verificações do Chromium" })).toHaveTextContent("Motor Chromium: Incluído no aplicativo");
+});
+
 it("describes native bundled Impeccable without independent installation or update actions", async () => {
   const state = coreFixture(); const item = state.items[3];
   item.bundled = true; item.updateAvailable = true; item.error = "Recurso nativo indisponível";

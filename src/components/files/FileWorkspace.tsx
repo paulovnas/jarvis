@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useId, useRef, type ReactNode } from "react";
 import { FileSearch, Globe, LockKeyhole, MessageSquare, Plus, RefreshCw, Send, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,8 +37,9 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
   render() { return this.state.failed ? <p role="alert" className="p-5 text-sm text-destructive">Não foi possível carregar o visualizador. Reabra o Jarvis para tentar novamente.</p> : this.props.children; }
 }
 
-export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLauncher, browserBanner, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; browserBanner?: ReactNode; children: ReactNode }) {
+export function FileWorkspace({ files, browser, http, liveTabId, onAnalyzeHttp, terminalLauncher, browserBanner, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; liveTabId?: string | null; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; browserBanner?: ReactNode; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
+  const liveDescriptionId = useId();
   const sorting = useRef(false);
   const orderKey = `tabs:${browser?.conversationId ?? http?.conversationId ?? files?.projectId ?? ""}`;
   const tabs = orderedItems([...(files?.tabs.paths.map(path => `file:${path}`) ?? []), ...(browser?.snapshot.tabs.map(tab => `browser:${tab.id}`) ?? []), ...(http?.tabs.map(tab => `http:${tab.draft.id}`) ?? [])], layout.itemOrder[orderKey], id => id);
@@ -60,6 +61,7 @@ export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLau
   };
   const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files?.close(path); };
   return <Tabs value={activeHttp ? `http:${activeHttp.draft.id}` : activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
+    {liveTabId && <span id={liveDescriptionId} className="sr-only">Impeccable Live ativo. Desligue o Live antes de fechar esta aba.</span>}
     <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
       <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos, navegador e HTTP" onKeyDown={event => {
         // Let the drag sensor receive arrows without the tab list moving focus
@@ -72,15 +74,17 @@ export function FileWorkspace({ files, browser, http, onAnalyzeHttp, terminalLau
           const tab = path === null ? browser?.snapshot.tabs.find(item => `browser:${item.id}` === id) : undefined;
           const httpTab = http?.tabs.find(item => `http:${item.draft.id}` === id);
           const title = path ? fileName(path) : httpTab?.request.name || tab?.title || "Navegador";
+          const live = !!tab && tab.id === liveTabId && !tab.id.startsWith("ext:") && tab.conversationId === browser?.conversationId;
           return <SortableItem key={id} id={id}>{sort => <div data-workspace-tab={id} ref={sort.setNodeRef} style={sort.style} className="group/workspace-tab relative shrink-0">
             <Hint content={path ?? httpTab?.request.url ?? tab?.url}><TabsTrigger ref={sort.setActivatorNodeRef} {...sort.listeners} onKeyDown={event => {
               sort.listeners?.onKeyDown?.(event);
               if (sorting.current) event.preventBaseUIHandler();
-            }} aria-describedby={sort.attributes["aria-describedby"]} value={id} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
+            }} aria-describedby={[sort.attributes["aria-describedby"], live ? liveDescriptionId : undefined].filter(Boolean).join(" ") || undefined} value={id} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
               {path ? <FileIcon path={path} /> : httpTab ? <Send className="size-3.5 shrink-0 text-onedark-green" /> : <Globe className="size-3.5 shrink-0 text-onedark-cyan" />}
               <span className={`truncate ${path ? "font-mono text-[11px]" : ""}`}>{httpTab && <span className="mr-1 font-mono text-[10px] text-onedark-green">{httpTab.request.method}</span>}{title}{httpTab?.dirty && <span aria-label="Edições não salvas"> *</span>}{path && files?.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span>
+              {live && <Badge aria-hidden="true" variant="outline" className="h-4 rounded-sm border-onedark-purple/30 bg-onedark-purple/10 px-1 font-mono text-[9px] text-onedark-purple">Live</Badge>}
             </TabsTrigger></Hint>
-            <Hint content={`Fechar ${path ?? title}`}><Button type="button" variant="ghost" size="icon" aria-label={path ? `Fechar arquivo ${path}` : httpTab ? `Fechar requisição ${title}` : `Fechar navegador ${title}`} data-path={path ?? undefined} onClick={event => { if (path) close(event); else if (httpTab) http?.requestClose(httpTab.draft.id); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
+            <Hint content={live ? "Desligue o Impeccable Live antes de fechar esta aba." : `Fechar ${path ?? title}`}><Button type="button" variant="ghost" size="icon" disabled={live} aria-label={path ? `Fechar arquivo ${path}` : httpTab ? `Fechar requisição ${title}` : `Fechar navegador ${title}`} data-path={path ?? undefined} onClick={event => { if (live) return; if (path) close(event); else if (httpTab) http?.requestClose(httpTab.draft.id); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
           </div>}</SortableItem>;
         })}</SortableList>
         {browser?.loaded && browser.snapshot.backend === "embedded" && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}

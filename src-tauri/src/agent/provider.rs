@@ -651,8 +651,13 @@ fn with_provider_metadata(
         .provider_metadata
         .as_ref()
         .and_then(|metadata| metadata.transport_stage);
+    let protocol_reason = error
+        .provider_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.protocol_reason);
     let mut metadata = crate::diagnostics::ProviderMetadata::new(status, upstream_code, request_id);
     metadata.transport_stage = transport_stage;
+    metadata.protocol_reason = protocol_reason;
     error.provider_metadata = Some(Box::new(metadata));
     error
 }
@@ -671,6 +676,7 @@ fn with_response_request_id(mut error: AgentError, response: &reqwest::Response)
             upstream_code: None,
             request_id,
             transport_stage: None,
+            protocol_reason: None,
         }));
     }
     error

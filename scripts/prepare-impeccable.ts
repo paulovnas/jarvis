@@ -7,6 +7,7 @@ import ts from "typescript";
 import { liveActionPortuguese, livePortuguese, liveTemplatePortuguese } from "./prepare-impeccable.locale";
 
 export const IMPECCABLE_ENGINE_VERSION = "0.1.14";
+export const IMPECCABLE_UPSTREAM_ENGINE_VERSION = "0.1.14";
 export const IMPECCABLE_SKILL_VERSION = "4.5.2";
 export const IMPECCABLE_CLI_VERSION = "4.0.0";
 export const IMPECCABLE_SOURCE_COMMIT = "d631a8827f99414d2b6daba4ef08b7f8701751d7";
@@ -21,7 +22,7 @@ export const engines = {
   "windows-x64": { asset: "impeccable-windows-x64.exe", sha256: "38e09451694973ba664a24e67e1502a6913e6d0e533a0a5ae1e04c5963a804b1" },
 } as const;
 export type EnginePlatform = keyof typeof engines;
-export const IMPECCABLE_NATIVE_PATCHES = ["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/accept-write.patch"] as const;
+export const IMPECCABLE_NATIVE_PATCHES = ["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch"] as const;
 export interface NativeEnginePatch { path: string; sha256: string }
 export interface NativeEngineReceipt {
   schemaVersion: 1;
@@ -88,6 +89,8 @@ export function localizeLive(source: string, vocabulary = false): string {
 
 /** Queue admission is not acceptance: retain the preview until canonical completion and HMR. */
 export function bindNativeAcceptLifecycle(source: string): string {
+  const browserGuard = "if (typeof window === 'undefined') return;";
+  if (source.split(browserGuard).length !== 2) throw new Error("O contrato de inicialização Live mudou; revise a integração nativa.");
   const file = ts.createSourceFile("live-browser.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const functions = new Map<string, ts.FunctionDeclaration[]>();
   const switches: ts.SwitchStatement[] = [];
@@ -188,7 +191,76 @@ export function bindNativeAcceptLifecycle(source: string): string {
   requireText(restoreSession, ["Array.isArray(activeSessions) && activeSessions.length > 0 && !serverSession"]);
   edits.push({ start: restoreBody.getStart(file), end: restoreBody.end, text: restoreBody.getText(file)
     .replace("{", "{\n    // A local checkpoint alone cannot resurrect a completed comparison.\n    if (!Array.isArray(activeSessions)) return false;")
+    .replace("const cached = cachedRaw?.id && !pageMatchesCurrent(cachedRaw.pageUrl) ? null : cachedRaw;", "const cached = cachedRaw?.id && (!pageMatchesCurrent(cachedRaw.pageUrl) || !jarvisOwnsSession(cachedRaw.id)) ? null : cachedRaw;")
     .replace("Array.isArray(activeSessions) && activeSessions.length > 0 && !serverSession", "!serverSession") });
+  const activeSession = requiredFunction("findActiveSessionSummary");
+  const adoptSession = requiredFunction("findAdoptableServerSession");
+  for (const [node, expression] of [[activeSession, "saved?.id"], [adoptSession, "session?.id"]] as const) {
+    const body = node.body!;
+    requireText(body, [expression]);
+    edits.push({ start: body.getStart(file), end: body.end, text: body.getText(file).replace(expression, `(${expression} && jarvisOwnsSession(${expression}))`) });
+  }
+  const resume = requiredFunction("resumeSession");
+  const resumeBody = resume.body!;
+  requireText(resumeBody, ["const sessionId = wrapper.dataset.impeccableVariants;"]);
+  edits.push({ start: resumeBody.getStart(file), end: resumeBody.end, text: resumeBody.getText(file)
+    .replace("{", "{\n    if (typeof window.__jarvisBrowser === 'function' && !jarvisLiveProjection) return false;")
+    .replace("const sessionId = wrapper.dataset.impeccableVariants;", "const sessionId = wrapper.dataset.impeccableVariants;\n    if (!jarvisOwnsSession(sessionId)) return false;\n    if (typeof window.__jarvisBrowser === 'function' && !jarvisLiveSessions?.some(session => session?.id === sessionId)) return false;") });
+  const restoreActive = requiredFunction("restoreFromActiveSessions");
+  edits.push({ start: restoreActive.body!.getStart(file) + 1, end: restoreActive.body!.getStart(file) + 1,
+    text: "\n    if (Array.isArray(activeSessions)) jarvisLiveSessions = activeSessions;" });
+  edits.push({ start: restoreActive.getStart(file), end: restoreActive.getStart(file), text: `// Only the native queue may revive historical work in a Jarvis-owned tab.
+  let jarvisLiveProjection = null;
+  let jarvisLiveSessions = null;
+  let jarvisLiveRoute = location.pathname;
+  let jarvisRestoreKey = null;
+  function jarvisOwnsSession(id) {
+    return typeof window.__jarvisBrowser !== 'function'
+      || jarvisLiveProjection?.sessionIds?.includes(id) === true;
+  }
+  function syncJarvisLiveSession(projection) {
+    jarvisLiveProjection = projection;
+    const key = location.pathname + ':' + JSON.stringify(projection.sessionIds || []);
+    if (key === jarvisRestoreKey) return;
+    jarvisRestoreKey = key;
+    if (jarvisLiveRoute !== location.pathname) {
+      jarvisLiveRoute = location.pathname;
+      liveInteractionRevision += 1;
+      // Navigation detaches chrome, never accepts/discards work or exposes all variants.
+      cleanupAcceptedSession(true);
+      hideShaderOverlay();
+      jarvisLiveSessions = null;
+      fetchAgentPollingStatus();
+      return;
+    }
+    resumeJarvisLiveRoute();
+  }
+  function resumeJarvisLiveRoute() {
+    if (!jarvisLiveProjection || !Array.isArray(jarvisLiveSessions)) return;
+    if (!currentSessionId && (state === 'IDLE' || state === 'PICKING')) {
+      if (findAnyVariantsWrapper()) resumeSession();
+      else restoreFromActiveSessions(jarvisLiveSessions, 'native_route_resume');
+      recoverMissedGenerationCompletion(jarvisLiveSessions);
+    }
+  }
+  window.__JARVIS_IMPECCABLE_SESSION__ = syncJarvisLiveSession;
+
+  ` });
+  const polling = requiredFunction("fetchAgentPollingStatus");
+  const pollingBody = polling.body!;
+  requireText(pollingBody, ["syncAgentPollingUi(data.agentPolling);"]);
+  edits.push({ start: pollingBody.getStart(file), end: pollingBody.end, text: pollingBody.getText(file)
+    .replace("syncAgentPollingUi(data.agentPolling);", `syncAgentPollingUi(data.agentPolling);
+          if (typeof window.__jarvisBrowser === 'function' && Array.isArray(data.activeSessions)) {
+            jarvisLiveSessions = data.activeSessions;
+            resumeJarvisLiveRoute();
+          }`) });
+  const cleanupAccepted = requiredFunction("cleanupAcceptedSession");
+  requireText(cleanupAccepted, ["removeVariantStateStylesheet();", "clearSession();"]);
+  edits.push({ start: cleanupAccepted.getStart(file), end: cleanupAccepted.end, text: cleanupAccepted.getText(file)
+    .replace("cleanupAcceptedSession()", "cleanupAcceptedSession(keepPreview = false)")
+    .replace("removeVariantStateStylesheet();", "if (!keepPreview) removeVariantStateStylesheet();")
+    .replace("clearSession();", "if (!keepPreview) clearSession();") });
   const cleanup = requiredFunction("scheduleAcceptCleanup");
   requireText(cleanup, ["queueMicrotask(function()", "cleanupAcceptedSession();", "watchForHandledRuntimeWrapper", "ensureAcceptedDomClean(accepted, recoveryRevision)", "}, 1200);"]);
   const cleanupBody = cleanup.body;
@@ -233,7 +305,8 @@ export function bindNativeAcceptLifecycle(source: string): string {
   }` });
   let result = source;
   for (const edit of edits.sort((a, b) => b.start - a.start)) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
-  return result;
+  // The project serves this script to every browser; only the native WebView owns Live.
+  return result.replace(browserGuard, `${browserGuard}\n  if (typeof window.__jarvisBrowser !== 'function') return;`);
 }
 
 async function filesBelow(directory: string, prefix = ""): Promise<string[]> {
@@ -254,7 +327,7 @@ export async function refreshImpeccableAssets(source = path.join(ROOT, "docs/imp
   if (commit !== IMPECCABLE_SOURCE_COMMIT) throw new Error("O snapshot Impeccable não corresponde ao commit validado.");
   const base = path.join(source, ".agents/skills/impeccable");
   const metadata = await readFile(path.join(base, "SKILL.md"), "utf8");
-  if (!metadata.includes(`version: ${IMPECCABLE_SKILL_VERSION}`) || (await readFile(path.join(base, "scripts/VERSION"), "utf8")).trim() !== IMPECCABLE_ENGINE_VERSION) {
+  if (!metadata.includes(`version: ${IMPECCABLE_SKILL_VERSION}`) || (await readFile(path.join(base, "scripts/VERSION"), "utf8")).trim() !== IMPECCABLE_UPSTREAM_ENGINE_VERSION) {
     throw new Error("As versões de skill e engine do snapshot Impeccable divergem.");
   }
   await mkdir(destination, { recursive: true });
@@ -270,7 +343,7 @@ export async function refreshImpeccableAssets(source = path.join(ROOT, "docs/imp
   await writeFile(detector, localizeLive(await readFile(path.join(source, "crates/live/assets/detect-antipatterns-browser.js"), "utf8")));
   await copyFile(path.join(source, "LICENSE"), path.join(destination, "LICENSE"));
   await copyFile(path.join(source, "NOTICE.md"), path.join(destination, "UPSTREAM-NOTICE.md"));
-  await writeFile(path.join(destination, "NOTICE.md"), `# Impeccable native resources\n\nUpstream: https://github.com/pbakaus/impeccable\nCommit: ${IMPECCABLE_SOURCE_COMMIT}\nSkill: ${IMPECCABLE_SKILL_VERSION}; engine: ${IMPECCABLE_ENGINE_VERSION}; CLI contract: ${IMPECCABLE_CLI_VERSION}.\n\nCopyright Paul Bakaus and Impeccable contributors. Licensed under Apache-2.0 (see LICENSE).\nUpstream third-party notices are preserved in UPSTREAM-NOTICE.md. The unchanged vendored modern-screenshot library is licensed under MIT; see modern-screenshot.LICENSE (source: https://github.com/qq15725/modern-screenshot).\n\nJarvis modifications: Portuguese Live presentation strings and labels, app-owned packaging, a separate native host status adapter, an atomic queue admission/cancellation patch, scoped canonical project design-path binding, and completion-driven accept timing that preserves the chosen preview until canonical acknowledgement and DOM reconciliation. Upstream interaction and variant algorithms are reused. Native resources update together with the Jarvis application, not through independent Core updates. Native engine receipts pin the upstream source commit, the tracked patch SHA-256, the target platform and the resulting binary SHA-256. Original official release checksums remain recorded separately.\n`);
+  await writeFile(path.join(destination, "NOTICE.md"), `# Impeccable native resources\n\nUpstream: https://github.com/pbakaus/impeccable\nCommit: ${IMPECCABLE_SOURCE_COMMIT}\nSkill: ${IMPECCABLE_SKILL_VERSION}; engine: ${IMPECCABLE_ENGINE_VERSION}; CLI contract: ${IMPECCABLE_CLI_VERSION}.\n\nCopyright Paul Bakaus and Impeccable contributors. Licensed under Apache-2.0 (see LICENSE).\nUpstream third-party notices are preserved in UPSTREAM-NOTICE.md. The unchanged vendored modern-screenshot library is licensed under MIT; see modern-screenshot.LICENSE (source: https://github.com/qq15725/modern-screenshot).\n\nJarvis modifications: Portuguese Live presentation strings and labels, app-owned packaging, a separate native host status adapter, an atomic queue admission/cancellation patch, scoped canonical project design/product-path binding, and completion-driven accept timing that preserves the chosen preview until canonical acknowledgement and DOM reconciliation. Upstream interaction and variant algorithms are reused. Native resources update together with the Jarvis application, not through independent Core updates. Native engine receipts pin the upstream source commit, the tracked patch SHA-256, the target platform and the resulting binary SHA-256. Original official release checksums remain recorded separately.\n`);
   await writeNativeManifest(destination);
 }
 
@@ -337,6 +410,12 @@ async function preparedNativeEngine(platform: EnginePlatform, destination: strin
   if (receiptMetadata.size > 16_000) throw new Error("Receita do engine Impeccable nativo muito grande.");
   const receipt = verifyNativeEngineReceipt(platform, await readFile(enginePath), JSON.parse(await readFile(receiptPath, "utf8")) as unknown, await nativeEnginePatches());
   if (!platform.startsWith("windows-")) await chmod(enginePath, 0o755);
+  if (platform === enginePlatform()) {
+    for (const [argument, expected] of [["engine-probe", `impeccable-engine ${IMPECCABLE_ENGINE_VERSION}`], ["--version", IMPECCABLE_CLI_VERSION]]) {
+      const actual = execFileSync(enginePath, [argument], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+      if (actual !== expected) throw new Error(`O engine Impeccable nativo não corresponde ao contrato ${argument} validado.`);
+    }
+  }
   return { enginePath, receipt };
 }
 
@@ -372,7 +451,7 @@ async function writeDesignIndex(destination: string, manifest: NativeManifest, n
   }
   const index = {
     version: IMPECCABLE_SKILL_VERSION, engine_version: IMPECCABLE_ENGINE_VERSION, cli_version: IMPECCABLE_CLI_VERSION,
-    bundle_engine_version: IMPECCABLE_ENGINE_VERSION, engine_sha256: nativeEngine.engineSha256, native_engine: nativeEngine,
+    bundle_engine_version: IMPECCABLE_UPSTREAM_ENGINE_VERSION, engine_sha256: nativeEngine.engineSha256, native_engine: nativeEngine,
     archive_sha256: digest.digest("hex"), resources: resources.sort((a, b) => a.id.localeCompare(b.id, "en")),
   };
   await writeFile(path.join(destination, "jarvis-design.json"), JSON.stringify(index, null, 2) + "\n");

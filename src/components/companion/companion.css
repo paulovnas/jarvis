@@ -47,7 +47,7 @@
 .companion-compact-open { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; background: transparent !important; z-index: 1; }
 .companion-compact-badge { position: absolute; right: 17px; top: 50%; transform: translateY(-50%); z-index: 3; pointer-events: none; width: 10px; min-width: 10px; height: 10px; padding: 0; border: 0; border-radius: 50%; background: currentColor; box-shadow: 0 0 5px currentColor, 0 0 12px color-mix(in oklab, currentColor 65%, transparent); }
 .companion-compact-badge[data-working="true"] { background: conic-gradient(from var(--chat-glow-angle, 0deg), var(--color-onedark-blue), var(--color-onedark-cyan), var(--color-onedark-green), var(--color-onedark-yellow), var(--color-onedark-red), var(--color-onedark-purple), var(--color-onedark-blue)); animation: chat-glow-turn 8s linear infinite; }
-.companion-robot-placement { position: absolute; left: 20px; top: 2px; width: 28px; height: 28px; z-index: 3; }
+.companion-robot-placement { position: absolute; left: 0; top: 0; width: 80px; height: 80px; transform-origin: top left; transform: translate3d(20px, 2px, 0) scale(.35); z-index: 3; }
 .companion-notification-stack { position: relative; flex: 1 1 0; min-width: 0; }
 .companion .companion-toaster[data-sonner-toaster] { position: absolute; left: 0; top: 0; width: 100%; transform: none; font-family: inherit; z-index: 2; }
 .companion-notification-toast { width: 100%; }

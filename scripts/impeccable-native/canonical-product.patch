@@ -1,0 +1,301 @@
+diff --git a/crates/cli/src/main.rs b/crates/cli/src/main.rs
+index 69eba33..86e5be0 100644
+--- a/crates/cli/src/main.rs
++++ b/crates/cli/src/main.rs
+@@ -29,6 +29,10 @@ fn run(args: &[String], io: &mut Io) -> i32 {
+         io.err(&format!("Impeccable: {message}\n"));
+         return 1;
+     }
++    if let Err(message) = impeccable_common::product::resolve(&io.cwd.to_string_lossy(), &io.env) {
++        io.err(&format!("Impeccable: {message}\n"));
++        return 1;
++    }
+     // cli/bin/cli.js dispatch: help / version / detect / ignores / skills verbs
+     let Some(verb) = args.first().map(String::as_str) else {
+         io.out(impeccable_detect::ROOT_USAGE);
+diff --git a/crates/common/src/design.rs b/crates/common/src/design.rs
+index 01eb49d..df3cd96 100644
+--- a/crates/common/src/design.rs
++++ b/crates/common/src/design.rs
+@@ -7,7 +7,17 @@ pub const ROOT_ENV: &str = "IMPECCABLE_DESIGN_ROOT";
+ /// Both paths are host-owned. A configured but unusable document is an error,
+ /// never authorization to rediscover a different root DESIGN.md.
+ pub fn resolve(cwd: &str, env: &HashMap<String, String>) -> Result<Option<String>, String> {
+-    let Some(value) = env.get(PATH_ENV) else {
++    resolve_document(cwd, env, PATH_ENV, ROOT_ENV, "design")
++}
++
++pub(crate) fn resolve_document(
++    cwd: &str,
++    env: &HashMap<String, String>,
++    path_env: &str,
++    root_env: &str,
++    kind: &str,
++) -> Result<Option<String>, String> {
++    let Some(value) = env.get(path_env) else {
+         return Ok(None);
+     };
+     let path = Path::new(value);
+@@ -19,33 +29,31 @@ pub fn resolve(cwd: &str, env: &HashMap<String, String>) -> Result<Option<String
+             .and_then(|ext| ext.to_str())
+             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+     {
+-        return Err(
+-            "IMPECCABLE_DESIGN_PATH deve apontar para um arquivo Markdown absoluto.".into(),
+-        );
++        return Err(format!("{path_env} deve apontar para um arquivo Markdown absoluto."));
+     }
+     let root_value = env
+-        .get(ROOT_ENV)
++        .get(root_env)
+         .filter(|root| !root.is_empty() && !root.contains('\0'))
+-        .ok_or("IMPECCABLE_DESIGN_ROOT não foi definido para o documento canônico.")?;
++        .ok_or_else(|| format!("{root_env} não foi definido para o documento canônico."))?;
+     let root_path = Path::new(root_value);
+     if !root_path.is_absolute() {
+-        return Err("IMPECCABLE_DESIGN_ROOT deve ser uma pasta absoluta.".into());
++        return Err(format!("{root_env} deve ser uma pasta absoluta."));
+     }
+     let root = fs::canonicalize(root_path)
+-        .map_err(|_| "A raiz do documento de design não está disponível.")?;
++        .map_err(|_| format!("A raiz do documento de {kind} não está disponível."))?;
+     let cwd = fs::canonicalize(cwd)
+         .map_err(|_| "A pasta de execução do Impeccable não está disponível.")?;
+     if !root.is_dir() || !cwd.is_dir() || !cwd.starts_with(&root) {
+-        return Err("A execução do Impeccable está fora da raiz de design configurada.".into());
++        return Err(format!("A execução do Impeccable está fora da raiz de {kind} configurada."));
+     }
+     let file = fs::canonicalize(path)
+-        .map_err(|_| "O documento de design configurado não existe ou não pode ser acessado.")?;
++        .map_err(|_| format!("O documento de {kind} configurado não existe ou não pode ser acessado."))?;
+     if !file.is_file() || !file.starts_with(&root) {
+-        return Err("O documento de design deve ser um arquivo dentro da raiz configurada.".into());
++        return Err(format!("O documento de {kind} deve ser um arquivo dentro da raiz configurada."));
+     }
+     let file = file
+         .to_str()
+-        .ok_or("O caminho do documento de design não é UTF-8.")?;
++        .ok_or_else(|| format!("O caminho do documento de {kind} não é UTF-8."))?;
+     // Node's Live assets need ordinary Win32 paths, not verbatim canonical paths.
+     let file = if let Some(unc) = file.strip_prefix(r"\\?\UNC\") {
+         format!(r"\\{unc}")
+diff --git a/crates/common/src/lib.rs b/crates/common/src/lib.rs
+index be22c13..c576c71 100644
+--- a/crates/common/src/lib.rs
++++ b/crates/common/src/lib.rs
+@@ -10,6 +10,7 @@ pub mod design;
+ pub mod git;
+ pub mod jsp;
+ pub mod proc;
++pub mod product;
+ 
+ use std::collections::HashMap;
+ use std::ffi::OsString;
+diff --git a/crates/common/src/product.rs b/crates/common/src/product.rs
+new file mode 100644
+index 0000000..f26ffa8
+--- /dev/null
++++ b/crates/common/src/product.rs
+@@ -0,0 +1,43 @@
++//! Optional execution-private product binding for native hosts. No project file is copied.
++use std::collections::HashMap;
++
++pub const PATH_ENV: &str = "IMPECCABLE_PRODUCT_PATH";
++pub const ROOT_ENV: &str = "IMPECCABLE_PRODUCT_ROOT";
++
++pub fn resolve(cwd: &str, env: &HashMap<String, String>) -> Result<Option<String>, String> {
++    crate::design::resolve_document(cwd, env, PATH_ENV, ROOT_ENV, "produto")
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::{fs, path::PathBuf};
++
++    #[test]
++    fn product_binding_uses_the_same_containment_validation_without_copying() {
++        let root: PathBuf = std::env::temp_dir().join(format!(
++            "impeccable-product-binding-{}-{:?}", std::process::id(), std::thread::current().id()
++        ));
++        fs::create_dir_all(root.join("app")).unwrap();
++        fs::create_dir_all(root.join(".jarvis/knowledge")).unwrap();
++        fs::write(root.join(".jarvis/knowledge/prd.md"), "# Canonical product").unwrap();
++        let root = fs::canonicalize(root).unwrap();
++        let canonical = root.join(".jarvis/knowledge/prd.md");
++        let mut env = HashMap::from([
++            (ROOT_ENV.into(), root.to_string_lossy().into_owned()),
++            (PATH_ENV.into(), canonical.to_string_lossy().into_owned()),
++        ]);
++        assert_eq!(resolve(&root.join("app").to_string_lossy(), &env).unwrap(), Some(canonical.to_string_lossy().into_owned()));
++        assert!(!root.join("PRODUCT.md").exists());
++        assert_eq!(resolve(&root.to_string_lossy(), &HashMap::new()).unwrap(), None);
++        env.insert(PATH_ENV.into(), "prd.md".into());
++        assert!(resolve(&root.to_string_lossy(), &env).unwrap_err().contains(PATH_ENV));
++        env.insert(PATH_ENV.into(), canonical.to_string_lossy().into_owned());
++        env.remove(ROOT_ENV);
++        assert!(resolve(&root.to_string_lossy(), &env).unwrap_err().contains(ROOT_ENV));
++        env.insert(ROOT_ENV.into(), root.to_string_lossy().into_owned());
++        fs::remove_file(canonical).unwrap();
++        assert!(resolve(&root.to_string_lossy(), &env).unwrap_err().contains("produto"));
++        fs::remove_dir_all(root).unwrap();
++    }
++}
+diff --git a/crates/context/src/context.rs b/crates/context/src/context.rs
+index f045bdd..3e7e780 100644
+--- a/crates/context/src/context.rs
++++ b/crates/context/src/context.rs
+@@ -12,6 +12,60 @@ use serde_json::Value;
+ use std::collections::BTreeMap;
+ 
+ pub const PRODUCT_NAMES: [&str; 3] = ["PRODUCT.md", "Product.md", "product.md"];
++
++#[cfg(test)]
++mod jarvis_canonical_product_tests {
++    use super::*;
++    use std::{fs, path::PathBuf};
++
++    struct Fixture(PathBuf);
++    impl Fixture {
++        fn new() -> Self {
++            let root = std::env::temp_dir().join(format!("impeccable-context-product-{}-{:?}", std::process::id(), std::thread::current().id()));
++            fs::create_dir_all(root.join(".git")).unwrap();
++            fs::create_dir_all(root.join("app")).unwrap();
++            fs::create_dir_all(root.join(".jarvis/knowledge")).unwrap();
++            fs::write(root.join("PRODUCT.md"), "# Competing root product").unwrap();
++            fs::write(root.join("app/PRODUCT.md"), "# Competing child product").unwrap();
++            fs::write(root.join("app/package.json"), "{}").unwrap();
++            fs::write(root.join(".jarvis/knowledge/prd.md"), "# Canonical product\n\n## Platform\n\nandroid\n").unwrap();
++            Self(fs::canonicalize(root).unwrap())
++        }
++        fn env(&self) -> Env {
++            Env::from([
++                (impeccable_common::product::ROOT_ENV.into(), self.0.to_string_lossy().into_owned()),
++                (impeccable_common::product::PATH_ENV.into(), self.0.join(".jarvis/knowledge/prd.md").to_string_lossy().into_owned()),
++            ])
++        }
++    }
++    impl Drop for Fixture { fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); } }
++
++    #[test]
++    fn knowledge_prd_overrides_child_and_root_product_for_context_and_platform() {
++        let fixture = Fixture::new();
++        let cwd = fixture.0.to_string_lossy();
++        let options = TargetOptions { target_path: Some("app".into()) };
++        let env = fixture.env();
++        let ctx = load_context(&cwd, &options, &env);
++        assert!(ctx.has_product);
++        assert_eq!(ctx.product.as_deref(), Some("# Canonical product\n\n## Platform\n\nandroid\n"));
++        assert_eq!(ctx.platform.as_deref(), Some("android"));
++        assert_eq!(fs::canonicalize(ctx.project_root).unwrap(), fixture.0.join("app"));
++        assert_eq!(fs::canonicalize(jsp::resolve(&cwd, &[ctx.product_path.as_deref().unwrap()])).unwrap(), fixture.0.join(".jarvis/knowledge/prd.md"));
++        assert_eq!(fs::read_to_string(fixture.0.join("PRODUCT.md")).unwrap(), "# Competing root product");
++        assert_eq!(load_context(&cwd, &options, &Env::new()).product.as_deref(), Some("# Competing child product"));
++    }
++
++    #[test]
++    fn missing_registered_prd_never_resurrects_a_competing_product() {
++        let fixture = Fixture::new();
++        fs::remove_file(fixture.0.join(".jarvis/knowledge/prd.md")).unwrap();
++        let ctx = load_context(&fixture.0.to_string_lossy(), &TargetOptions { target_path: Some("app".into()) }, &fixture.env());
++        assert!(!ctx.has_product);
++        assert_eq!(ctx.product_path, None);
++        assert_eq!(ctx.product, None);
++    }
++}
+ pub const DESIGN_NAMES: [&str; 3] = ["DESIGN.md", "Design.md", "design.md"];
+ pub const FALLBACK_DIRS: [&str; 2] = [".agents/context", "docs"];
+ pub const MONOREPO_MARKER_FILES: [&str; 4] = ["pnpm-workspace.yaml", "turbo.json", "nx.json", "lerna.json"];
+@@ -163,8 +217,12 @@ pub fn resolve_context(cwd: &str, options: &TargetOptions, env: &Env) -> Resolve
+     if canonical_design {
+         design_path = impeccable_common::design::resolve(&project.target_dir, env).ok().flatten();
+     }
++    let canonical_product = env.contains_key(impeccable_common::product::PATH_ENV);
++    if canonical_product {
++        product_path = impeccable_common::product::resolve(&project.target_dir, env).ok().flatten();
++    }
+     let mut env_context_dir: Option<String> = None;
+-    if product_path.is_none() && design_path.is_none() && !canonical_design {
++    if product_path.is_none() && design_path.is_none() && !canonical_design && !canonical_product {
+         env_context_dir = resolve_env_context_dir(&abs_cwd, env);
+         if let Some(d) = &env_context_dir {
+             product_path = first_existing(d, &PRODUCT_NAMES);
+diff --git a/crates/live/src/roots.rs b/crates/live/src/roots.rs
+index 53be576..26f9445 100644
+--- a/crates/live/src/roots.rs
++++ b/crates/live/src/roots.rs
+@@ -14,6 +14,41 @@ use impeccable_context::target_args::TargetOptions;
+ use impeccable_context::util::homedir;
+ 
+ pub const PRODUCT_NAMES: [&str; 3] = ["PRODUCT.md", "Product.md", "product.md"];
++
++#[cfg(test)]
++mod jarvis_canonical_product_tests {
++    use super::*;
++    use std::fs;
++
++    #[test]
++    fn live_boot_and_request_context_share_prd_without_stale_roots_fallback() {
++        let root = std::env::temp_dir().join(format!("impeccable-live-product-{}-{:?}", std::process::id(), std::thread::current().id()));
++        fs::create_dir_all(root.join(".git")).unwrap();
++        fs::create_dir_all(root.join("app")).unwrap();
++        fs::create_dir_all(root.join(".jarvis/knowledge")).unwrap();
++        fs::write(root.join("PRODUCT.md"), "# Competing root").unwrap();
++        fs::write(root.join("app/PRODUCT.md"), "# Competing child").unwrap();
++        fs::write(root.join("app/package.json"), "{}").unwrap();
++        fs::write(root.join("app/vite.config.ts"), "export default {}").unwrap();
++        fs::write(root.join(".jarvis/knowledge/prd.md"), "# Canonical product").unwrap();
++        let root = fs::canonicalize(root).unwrap();
++        let product = root.join(".jarvis/knowledge/prd.md");
++        let env = Env::from([
++            (impeccable_common::product::ROOT_ENV.into(), root.to_string_lossy().into_owned()),
++            (impeccable_common::product::PATH_ENV.into(), product.to_string_lossy().into_owned()),
++        ]);
++        let RootsResult::Manifest(mut roots) = resolve_roots(&root.to_string_lossy(), Some("app"), &env) else { panic!("expected configured app") };
++        assert_eq!(fs::canonicalize(roots.product_path.as_ref().unwrap()).unwrap(), product);
++        assert_eq!(fs::canonicalize(&roots.app_root).unwrap(), root.join("app"));
++        assert!(crate::server_state::resolve_project_context(&roots.app_root, &env, Some(&roots)).has_product);
++        fs::remove_file(&product).unwrap();
++        roots.product_path = Some(root.join("app/PRODUCT.md").to_string_lossy().into_owned());
++        assert!(!crate::server_state::resolve_project_context(&roots.app_root, &env, Some(&roots)).has_product);
++        let RootsResult::Manifest(resolved) = resolve_roots(&root.to_string_lossy(), Some("app"), &env) else { panic!("expected configured app") };
++        assert_eq!(resolved.product_path, None);
++        fs::remove_dir_all(root).unwrap();
++    }
++}
+ pub const DESIGN_NAMES: [&str; 3] = ["DESIGN.md", "Design.md", "design.md"];
+ const CONTEXT_FALLBACK_DIRS: [&str; 2] = [".agents/context", "docs"];
+ 
+@@ -291,9 +326,13 @@ pub fn resolve_roots(cwd: &str, target_path: Option<&str>, env: &Env) -> RootsRe
+         _ => app_root.clone(),
+     };
+ 
+-    let product_path = walk_up(&app_root, &effective_repo_root, env, |dir| {
+-        find_context_file(dir, &PRODUCT_NAMES)
+-    });
++    let product_path = if env.contains_key(impeccable_common::product::PATH_ENV) {
++        impeccable_common::product::resolve(&app_root, env).ok().flatten()
++    } else {
++        walk_up(&app_root, &effective_repo_root, env, |dir| {
++            find_context_file(dir, &PRODUCT_NAMES)
++        })
++    };
+     let design_path = if env.contains_key(impeccable_common::design::PATH_ENV) {
+         impeccable_common::design::resolve(&app_root, env).ok().flatten()
+     } else {
+diff --git a/crates/live/src/server_state.rs b/crates/live/src/server_state.rs
+index bbe9a97..69ac375 100644
+--- a/crates/live/src/server_state.rs
++++ b/crates/live/src/server_state.rs
+@@ -1701,10 +1701,10 @@ pub fn resolve_project_context(
+             .filter(|p| crate::util::exists(p)),
+     };
+     let has_product = ctx.has_product
+-        || roots
++        || (!env.contains_key(impeccable_common::product::PATH_ENV) && roots
+             .and_then(|r| r.product_path.as_deref())
+             .map(crate::util::exists)
+-            .unwrap_or(false);
++            .unwrap_or(false));
+     let context_dir = if !ctx.context_dir.is_empty() {
+         ctx.context_dir.clone()
+     } else {

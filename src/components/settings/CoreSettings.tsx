@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { useCore, type CoreController } from "@/hooks/use-core";
 import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
 import { CoreReinstallDialog } from "@/components/core/CoreReinstallDialog";
+import { BrowserRuntimeRow } from "@/components/core/BrowserRuntimeRow";
 import { Hint } from "@/components/ui/hint";
 import { OpenMontageConfiguration } from "./OpenMontageConfiguration";
 
@@ -41,7 +42,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
       <div className="flex items-center gap-1"><Button size="sm" variant="ghost" aria-label="Diagnóstico e Reparo" onClick={() => setDiagnostics(true)}><Wrench className="size-3.5" />Diagnóstico</Button>
 <Hint content="Verificar atualizações"><Button size="icon-sm" variant="ghost" aria-label="Verificar atualizações do Core" disabled={snapshot.checking || busy} onClick={() => void check()}><RefreshCw className={`size-3.5 ${snapshot.checking ? "animate-spin" : ""}`} /></Button></Hint></div>
     </div>
-    <Card className="instrument-panel gap-0 py-0"><CardContent className="divide-y divide-border p-0">{items.map(item => {
+    <Card className="instrument-panel gap-0 py-0"><CardContent className="divide-y divide-border p-0">{snapshot.browserRuntime && <BrowserRuntimeRow runtime={snapshot.browserRuntime} />}{items.map(item => {
       const { icon: Icon, summary, description, color } = CORE_DETAILS[item.id];
       const optional = optionalCore(item.id);
       const action = item.installed ? "Atualizar" : "Instalar";

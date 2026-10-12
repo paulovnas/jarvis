@@ -36,7 +36,7 @@ jobs:
             target: aarch64-apple-darwin
           - runner: windows-2022
             target: x86_64-pc-windows-msvc
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -70,7 +70,23 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config libasound2-dev libgtk-4-dev libx11-dev libxcomposite-dev libxdamage-dev libxrandr-dev libnss3-dev libgbm-dev libxdo-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64
+      - name: Preparar Ninja no macOS
+        if: runner.os == 'macOS'
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ninja
+          fi
+          ninja --version
+      - name: Verificar Ninja no Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            throw "Ninja não está disponível na imagem Windows."
+          }
+          ninja --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preparar Rust
         run: |
           rustup toolchain install stable --profile minimal
@@ -80,6 +96,18 @@ jobs:
         with:
           workspaces: src-tauri
           cache-on-failure: true
+      - name: Restaurar Chromium e CLI fixado
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cache/jarvis/cef/151.8.1
+            ~/.cache/jarvis/cef-exporter/151.8.1/bin
+            ~/.cache/jarvis/cef-exporter/151.8.1/.crates*.json
+            ~/.cache/jarvis/tauri-cli/9d1a5b176e337c8395362a4e7c99bac99b36a1d1/bin
+            ~/.cache/jarvis/tauri-cli/9d1a5b176e337c8395362a4e7c99bac99b36a1d1/.crates*.json
+          key: jarvis-cef-${{ runner.os }}-${{ runner.arch }}-151.8.1-tauri-9d1a5b176e337c8395362a4e7c99bac99b36a1d1-cli
+      - name: Preparar Chromium e CLI para empacotamento
+        run: bun scripts/prepare-cef-ci.ts --cli
       - name: Importar assinaturas no Keychain temporário
         if: runner.os == 'macOS'
         env:

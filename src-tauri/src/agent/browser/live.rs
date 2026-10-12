@@ -17,6 +17,10 @@ const ADAPTER: &str = include_str!("../../../resources/impeccable/jarvis-live-ad
 struct Projection {
     conversation_id: String,
     tab_id: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    session_ids: Vec<String>,
     state: String,
     phase: String,
     action_id: Option<String>,
@@ -62,6 +66,7 @@ struct Feedback {
     error: Option<String>,
 }
 struct Entry {
+    origin: String,
     data: Mutex<Projection>,
     pending: Mutex<Option<(String, Instant)>>,
     seen: Mutex<VecDeque<String>>,
@@ -97,6 +102,14 @@ fn local(value: &str) -> bool {
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,
     })
+}
+pub(crate) fn same_origin(initial: &str, current: &str) -> bool {
+    match (address(initial), address(current)) {
+        (Ok(initial), Ok(current)) => {
+            local(initial.as_str()) && initial.origin() == current.origin()
+        }
+        _ => false,
+    }
 }
 fn valid(intent: &Intent, current: &Projection) -> bool {
     !intent.request_id.is_empty()
@@ -150,12 +163,20 @@ pub(crate) fn project(app: &tauri::AppHandle, status: &Value) {
     let Some(tab) = projection.tab_id.clone().or(existing) else {
         return;
     };
-    let Ok(owned) = state.tab(app, &projection.conversation_id, &tab) else {
-        return;
-    };
-    if !local(&owned.url) {
+    if state.tab(app, &projection.conversation_id, &tab).is_err() {
         return;
     }
+    let Some(origin) = projection.url.as_deref().filter(|url| local(url)) else {
+        return;
+    };
+    let origin = origin.to_owned();
+    projection.session_ids = status["tasks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|task| !matches!(task["status"].as_str(), Some("cancelled" | "paused")))
+        .filter_map(|task| task["actionId"].as_str().map(str::to_owned))
+        .collect();
     projection.tab_id = Some(tab.clone());
     bounded(&mut projection.model, 160);
     bounded(&mut projection.provider, 80);
@@ -171,6 +192,7 @@ pub(crate) fn project(app: &tauri::AppHandle, status: &Value) {
     }
     projection.revision = 1;
     let entry = Arc::new(Entry {
+        origin,
         data: Mutex::new(projection),
         pending: Mutex::new(None),
         seen: Mutex::new(VecDeque::new()),
@@ -204,13 +226,31 @@ async fn pump(app: &tauri::AppHandle, tab: &str, entry: &Arc<Entry>) {
         let Some(mut data) = entry.data.lock().ok().map(|data| data.clone()) else {
             break;
         };
-        let allowed = app
+        let Ok(owned_tab) = app
             .state::<BrowserState>()
             .tab(app, &data.conversation_id, tab)
-            .is_ok_and(|tab| local(&tab.url));
-        if !allowed {
+        else {
             break;
+        };
+        let current_url = view.url().ok();
+        let Some(current_url) = current_url.filter(|url| same_origin(&entry.origin, url.as_str()))
+        else {
+            // OAuth may leave the site temporarily. Retain ownership, without projecting into it.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            continue;
+        };
+        if owned_tab.url != current_url.as_str() {
+            super::page_changed(app, &data.conversation_id, tab, |tab| {
+                tab.url = current_url.to_string();
+            });
         }
+        crate::core::impeccable_live::follow_page(
+            app,
+            &data.conversation_id,
+            tab,
+            current_url.as_str(),
+        );
+        data.url = Some(current_url.to_string());
         if let Ok(mut pending) = entry.pending.lock() {
             if pending
                 .as_ref()
@@ -226,7 +266,7 @@ async fn pump(app: &tauri::AppHandle, tab: &str, entry: &Arc<Entry>) {
                 }
             }
         }
-        let script = format!("(() => {{ if (!window.__JARVIS_IMPECCABLE_LIVE__) {{ {ADAPTER} }} const adapter = window.__JARVIS_IMPECCABLE_LIVE__; adapter.update({}); return adapter.drain(); }})()", json!(data));
+        let script = format!("(() => {{ if (location.origin !== {}) return []; if (!window.__JARVIS_IMPECCABLE_LIVE__) {{ {ADAPTER} }} const adapter = window.__JARVIS_IMPECCABLE_LIVE__; adapter.update({}); return adapter.drain(); }})()", json!(current_url.origin().ascii_serialization()), json!(data));
         if let Ok(value) = evaluate(&view, script).await {
             if let Some(request) = value
                 .as_array()
@@ -358,6 +398,7 @@ mod tests {
     #[test]
     fn toolbar_intents_are_admitted_once_without_overlapping_requests() {
         let entry = Entry {
+            origin: "http://localhost:3001/login".into(),
             data: Mutex::new(current()),
             pending: Mutex::new(None),
             seen: Mutex::new(VecDeque::new()),
@@ -367,5 +408,22 @@ mod tests {
         entry.pending.lock().unwrap().take();
         assert!(!entry.admit("request-1"));
         assert!(entry.admit("request-2"));
+    }
+    #[test]
+    fn navigation_keeps_the_site_scope_across_paths_queries_and_auth_return() {
+        let site = "http://localhost:3001/login";
+        assert!(same_origin(
+            site,
+            "http://localhost:3001/dashboard?from=today#chart"
+        ));
+        assert!(!same_origin(site, "https://accounts.google.com/login"));
+        assert!(same_origin(site, "http://localhost:3001/history"));
+        for other in [
+            "http://localhost:3002/dashboard",
+            "https://localhost:3001/dashboard",
+            "http://127.0.0.1:3001/dashboard",
+        ] {
+            assert!(!same_origin(site, other));
+        }
     }
 }

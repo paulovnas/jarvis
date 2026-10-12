@@ -33,6 +33,7 @@ const diagnosticEventSchema = z.object({
   category: z.string().optional(),
   httpStatus: z.number().int().optional(),
   upstreamCode: z.string().optional(),
+  protocolReason: z.enum(["request_projection", "invalid_sse", "stream_limit", "missing_completion", "empty_completion", "invalid_tool_call"]).optional(),
   requestId: z.string().optional(),
 }).strict();
 
@@ -77,6 +78,15 @@ const eventLabels: Record<DiagnosticEvent["event"], string> = {
   storage_failure: "Falha de armazenamento",
   provider_refusal: "Solicitação recusada pelo provedor",
   provider_failure: "Falha de comunicação com o provedor",
+};
+
+const protocolLabels: Record<NonNullable<DiagnosticEvent["protocolReason"]>, string> = {
+  request_projection: "O histórico não pôde ser convertido para o provedor.",
+  invalid_sse: "O provedor enviou um evento de resposta inválido.",
+  stream_limit: "A resposta excedeu o limite seguro de processamento.",
+  missing_completion: "A conexão terminou antes da confirmação de conclusão.",
+  empty_completion: "O provedor confirmou uma resposta vazia.",
+  invalid_tool_call: "O provedor enviou uma chamada de ferramenta inválida.",
 };
 
 function formatBytes(bytes: number): string {
@@ -192,7 +202,7 @@ export function DiagnosticEvidence() {
         </dl>
         <div className="flex items-start gap-2 rounded-md border border-border bg-sidebar p-3 text-xs">
           {incident ? <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /> : <ShieldCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-green" />}
-          <div><p className="font-medium">{incident ? eventLabels[incident.event] : "Nenhum incidente recente"}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{incident ? new Date(incident.timestamp).toLocaleString("pt-BR") : `Execução iniciada em ${new Date(summary.startedAt).toLocaleString("pt-BR")}`}</p></div>
+          <div><p className="font-medium">{incident ? eventLabels[incident.event] : "Nenhum incidente recente"}</p>{incident?.protocolReason && <p className="mt-1 text-[11px] text-muted-foreground">{protocolLabels[incident.protocolReason]}</p>}<p className="mt-1 font-mono text-[10px] text-muted-foreground">{incident ? new Date(incident.timestamp).toLocaleString("pt-BR") : `Execução iniciada em ${new Date(summary.startedAt).toLocaleString("pt-BR")}`}</p></div>
         </div>
       </>}
 

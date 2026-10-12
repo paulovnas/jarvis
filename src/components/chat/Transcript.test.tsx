@@ -290,6 +290,27 @@ describe("estado do turno", () => {
     expect(screen.getByText(/histórico foi preservado/i)).toBeInTheDocument();
   });
 
+  it("shows a superseded Live generation as a neutral choice receipt and retains the work history", async () => {
+    const turn = savedTurn();
+    turn.status = "cancelled";
+    turn.error = { code: "impeccable_live_superseded", message: "Escolha recebida no Live. A geração anterior foi encerrada." };
+    render(<TurnBody turn={turn} onRetry={vi.fn()} />);
+
+    expect(await screen.findByText(turn.error.message)).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Execução interrompida")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tentar novamente" })).not.toBeInTheDocument();
+    const work = screen.getByRole("button", { name: /Trabalhou por/ });
+    await userEvent.setup().click(work);
+    expect(work).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("list", { name: "Etapas da execução" })).toBeVisible();
+  });
+
+  it("retains the interrupted warning for ordinary user cancellation", () => {
+    render(<TurnBody turn={{ ...savedTurn(), status: "cancelled", error: { code: "cancelled", message: "Execução interrompida." } }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Execução interrompida");
+  });
+
   it("shows a blocking failure once when the final text repeats the turn error", () => {
     const message = "A observação da aprovação ainda precisa ser incorporada.";
     const turn = savedTurn();

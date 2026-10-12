@@ -92,7 +92,7 @@ export function DesignerPanel({ session }: { session?: DesignerSession }) {
         {(status.step || status.elapsedMs) ? <p className="font-mono text-[10px] text-muted-foreground">{[status.step ? `Etapa ${status.step}` : null, status.elapsedMs ? `${Math.floor(status.elapsedMs / 1000)}s` : null].filter(Boolean).join(" · ")}</p> : null}
         {status.activity && <p className="leading-relaxed text-muted-foreground">{status.activity}</p>}
         {status.error && <p className="leading-relaxed text-onedark-yellow">{status.error}</p>}
-        {(status.error || status.phase === "blocked" || status.state === "setup") && <Button type="button" variant="outline" size="sm" className="h-7 cursor-pointer text-xs" disabled={locked || !session.canResume} onClick={() => { void session.onResume(); }}>Retomar Live</Button>}
+        {(status.error || status.phase === "blocked" || status.state === "setup") && !["connecting", "waiting", "running"].includes(status.phase) && <Button type="button" variant="outline" size="sm" className="h-7 cursor-pointer text-xs" disabled={locked || !session.canResume} onClick={() => { void session.onResume(); }}>Retomar Live</Button>}
         {status.state === "off" && !status.error && <p className="text-muted-foreground">Ative o Live no botão ao lado do microfone.</p>}
       </div>}
       {session?.attention && <Alert className="mt-3 p-2" role="status" aria-label="Solicitação pendente do Designer"><AlertDescription className="space-y-2 text-xs"><p>Uma solicitação precisa da sua resposta para continuar.</p><Button type="button" variant="outline" size="sm" className="h-7 cursor-pointer text-xs" onClick={session.onShowChat}>Responder no chat</Button></AlertDescription></Alert>}

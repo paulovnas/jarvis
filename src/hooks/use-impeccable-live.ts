@@ -68,7 +68,9 @@ export function useImpeccableLive(conversationId: string, enabled = true, recove
       lastNative.current = next.data;
       setStatus(next.data);
       setLoaded(true);
-      if (next.data.error) toast.error("Modo Live", { id: `impeccable-live:${conversationId}`, description: next.data.error });
+      const setupError = next.data.setupNeeded?.error;
+      const recoverableSetup = next.data.state === "setup" && typeof setupError === "string" && ["config_missing", "context_missing", "target_selection_required", "page_unavailable", "dev_server_missing"].includes(setupError);
+      if (next.data.error && !recoverableSetup) toast.error("Modo Live", { id: `impeccable-live:${conversationId}`, description: next.data.error });
     });
     const actions = listen<unknown>("impeccable-live:action", event => { if (alive) void actionHandler.current(event.payload); });
     void invoke<unknown>("get_impeccable_live", { conversationId }).then(value => {
@@ -101,6 +103,7 @@ export function useImpeccableLive(conversationId: string, enabled = true, recove
   });
   async function change(start: boolean, options?: TurnOptions, url?: string) {
     if (!enabled || operation.current || (start && !options)) return "Aguarde a ação atual ou selecione um modelo disponível no chat.";
+    if (start && activeStatus.state === "setup" && ["waiting", "running"].includes(activeStatus.phase)) return "O Designer já está preparando o modo Live.";
     operation.current = true; setBusy(true);
     const epoch = generation.current;
     const request = ++epoch.version;
@@ -112,9 +115,9 @@ export function useImpeccableLive(conversationId: string, enabled = true, recove
       if (epoch.alive && epoch.version === request && epoch.conversationId === conversationId && next.conversationId === conversationId) setStatus(next);
     } catch (cause) {
       const error = libraryError(cause, start ? "Não foi possível iniciar o modo Live." : "Não foi possível desligar o modo Live.");
-      const successful = epoch.version !== request && lastNative.current?.conversationId === conversationId && !lastNative.current.error && (lastNative.current.state === "ready" || lastNative.current.state === "off");
+      const successful = epoch.version !== request && lastNative.current?.conversationId === conversationId && !lastNative.current.error && (lastNative.current.state === "ready" || lastNative.current.state === "off" || (start && lastNative.current.state === "setup" && ["waiting", "running"].includes(lastNative.current.phase)));
       if (epoch.alive && epoch.conversationId === conversationId) setStatus(current => {
-        if (epoch.version !== request && current.conversationId === conversationId && !current.error && (current.state === "ready" || current.state === "off")) return current;
+        if (epoch.version !== request && current.conversationId === conversationId && !current.error && (current.state === "ready" || current.state === "off" || (start && current.state === "setup" && ["waiting", "running"].includes(current.phase)))) return current;
         const previous = current.conversationId === conversationId ? current : off(conversationId);
         return { ...previous, state: previous.state === "starting" ? "setup" : previous.state, error, phase: "blocked" };
       });

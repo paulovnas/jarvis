@@ -288,7 +288,9 @@ pub(super) fn command_at_for(
     target: Option<&str>,
 ) -> Result<tokio::process::Command, CoreError> {
     let mut command = command_at_unbound(directory, root)?;
-    set_design_path(&mut command, &fs::canonicalize(root)?, target)?;
+    let root = fs::canonicalize(root)?;
+    set_design_path(&mut command, &root, target)?;
+    set_product_path(&mut command, &root, target)?;
     Ok(command)
 }
 fn command_at_unbound(directory: &Path, root: &Path) -> Result<tokio::process::Command, CoreError> {
@@ -330,6 +332,8 @@ fn command_at_unbound(directory: &Path, root: &Path) -> Result<tokio::process::C
         .env_remove("IMPECCABLE_CONTEXT_DIR")
         .env_remove("IMPECCABLE_DESIGN_PATH")
         .env_remove("IMPECCABLE_DESIGN_ROOT")
+        .env_remove("IMPECCABLE_PRODUCT_PATH")
+        .env_remove("IMPECCABLE_PRODUCT_ROOT")
         .env_remove("IMPECCABLE_BUNDLE_PATH")
         .env_remove("IMPECCABLE_DOWNLOAD_BASE")
         .kill_on_drop(true);
@@ -341,23 +345,54 @@ pub(crate) fn set_design_path(
     root: &Path,
     target: Option<&str>,
 ) -> Result<(), CoreError> {
-    command
-        .env_remove("IMPECCABLE_DESIGN_PATH")
-        .env_remove("IMPECCABLE_DESIGN_ROOT");
-    if let Some(relative) = crate::agent::knowledge::design_path(root, target)
-        .map_err(|cause| error(cause.message()))?
-    {
+    let path = crate::agent::knowledge::design_path(root, target)
+        .map_err(|cause| error(cause.message()))?;
+    set_context_path(
+        command,
+        root,
+        path,
+        "IMPECCABLE_DESIGN_PATH",
+        "IMPECCABLE_DESIGN_ROOT",
+    );
+    Ok(())
+}
+
+pub(crate) fn set_product_path(
+    command: &mut tokio::process::Command,
+    root: &Path,
+    target: Option<&str>,
+) -> Result<(), CoreError> {
+    let path = crate::agent::knowledge::product_path(root, target)
+        .map_err(|cause| error(cause.message()))?;
+    set_context_path(
+        command,
+        root,
+        path,
+        "IMPECCABLE_PRODUCT_PATH",
+        "IMPECCABLE_PRODUCT_ROOT",
+    );
+    Ok(())
+}
+
+fn set_context_path(
+    command: &mut tokio::process::Command,
+    root: &Path,
+    path: Option<PathBuf>,
+    path_env: &str,
+    root_env: &str,
+) {
+    command.env_remove(path_env).env_remove(root_env);
+    if let Some(relative) = path {
         command
             .env(
-                "IMPECCABLE_DESIGN_PATH",
+                path_env,
                 crate::library::strip_verbatim(&root.join(relative).to_string_lossy()).as_ref(),
             )
             .env(
-                "IMPECCABLE_DESIGN_ROOT",
+                root_env,
                 crate::library::strip_verbatim(&root.to_string_lossy()).as_ref(),
             );
     }
-    Ok(())
 }
 pub fn command(home: &Path, root: &Path) -> Result<tokio::process::Command, CoreError> {
     command_for(home, root, None)
@@ -370,7 +405,7 @@ pub(crate) fn command_for(
     let record = super::installed(home, super::ComponentId::Impeccable)?;
     command_at_for(&record.path(home)?, root, target)
 }
-/// Closing an authenticated helper must still work when its design file is missing.
+/// Closing an authenticated helper must still work when a context file is missing.
 pub(crate) fn command_unbound(
     home: &Path,
     root: &Path,

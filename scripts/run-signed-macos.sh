@@ -10,6 +10,30 @@ jarvis_executable=$1
 shift
 jarvis_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
+# CEF's pinned CLI owns the complete app bundle and its nested signatures. Never
+# repackage that executable into the small notification-only development bundle.
+jarvis_binary_dir=$(CDPATH= cd -- "$(dirname -- "$jarvis_executable")" && pwd)
+jarvis_cef_bundle=
+case "$jarvis_binary_dir" in
+  *.app/Contents/MacOS)
+    jarvis_candidate=${jarvis_binary_dir%/Contents/MacOS}
+    jarvis_main_name=${jarvis_executable##*/}
+    # Shared Core runtimes ship the per-app helpers while loading the framework
+    # externally; an embedded distribution ships both. Preserve either bundle.
+    if [ -d "$jarvis_candidate/Contents/Frameworks/Chromium Embedded Framework.framework" ] || [ -x "$jarvis_candidate/Contents/Frameworks/$jarvis_main_name Helper.app/Contents/MacOS/$jarvis_main_name Helper" ]; then
+      jarvis_cef_bundle=$jarvis_candidate
+    fi
+    ;;
+esac
+if [ -n "$jarvis_cef_bundle" ]; then
+  /usr/bin/codesign --verify --deep --strict "$jarvis_cef_bundle"
+  exec "$jarvis_executable" "$@"
+fi
+if [ "${JARVIS_CEF_RUNTIME:-}" = "1" ]; then
+  echo "O Chromium precisa do bundle completo com framework e helpers. Inicie com bun run tauri dev usando o CLI fixado do Jarvis." >&2
+  exit 1
+fi
+
 # Sign before exec, so the Keychain sees the same certificate and identifier after each rebuild.
 # exec preserves Cargo/Tauri's process lifecycle, signals, exit status and application arguments.
 /usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier "$JARVIS_SIGNING_IDENTIFIER" --entitlements "$jarvis_root/src-tauri/Entitlements.plist" --timestamp=none "$jarvis_executable"

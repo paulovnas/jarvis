@@ -44,7 +44,7 @@ async function harness(framework = true, deferredPost = false): Promise<{
     "deferredRecoverySuperseded", "cssIdent", "hasFrameworkHmrOwnership", "connectSSE", "sendEvent", "maybeCompleteSteer",
     "createLiveBrowserSessionState", "saveSession", "clearSession", "markSessionHandled", "isSessionHandled", "clearScrollY",
     "watchForHandledRuntimeWrapper", "scheduleHandledRuntimeWrapperReload", "handledWrapperReloadKey", "clearHandledWrapperReloadStamp",
-    "restoreSessionWithoutWrapper", "findActiveSessionSummary", "isTerminalSessionSummary",
+    "restoreSessionWithoutWrapper", "findActiveSessionSummary", "isTerminalSessionSummary", "jarvisOwnsSession",
   ];
   document.body.innerHTML = `<main><div data-impeccable-variants="${sessionId}"><div data-impeccable-variant="1"><section class="chosen">One</section></div><div data-impeccable-variant="2"><section class="chosen">Two</section></div><div data-impeccable-variant="3"><section class="chosen">Three</section></div></div></main>`;
   if (framework) Object.defineProperty(document.querySelector("main"), "__reactFiber$fixture", { value: {} });
@@ -275,6 +275,6 @@ describe("native Live accept acknowledgement", () => {
   });
 
   it("fails closed when the pinned upstream accept contract changes", () => {
-    expect(() => bindNativeAcceptLifecycle("function handleAccept() { return true; }")).toThrow("contrato de aceitação Live mudou");
+    expect(() => bindNativeAcceptLifecycle("if (typeof window === 'undefined') return; function handleAccept() { return true; }")).toThrow("contrato de aceitação Live mudou");
   });
 });

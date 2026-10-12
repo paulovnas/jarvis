@@ -28,6 +28,21 @@ fn incomplete_inference_is_retryable_but_output_limits_and_refusals_are_not() {
 }
 
 #[test]
+fn local_projection_failures_do_not_repeat_the_same_request() {
+    use crate::diagnostics::{ProviderMetadata, ProviderProtocolReason};
+
+    let mut error = AgentError::new("provider_protocol", "Invalid request projection");
+    let mut metadata = ProviderMetadata::new(None, None, None);
+    metadata.protocol_reason = Some(ProviderProtocolReason::RequestProjection);
+    error.provider_metadata = Some(Box::new(metadata));
+    assert!(!retryable(&error));
+
+    error.provider_metadata.as_mut().unwrap().protocol_reason =
+        Some(ProviderProtocolReason::InvalidSse);
+    assert!(retryable(&error));
+}
+
+#[test]
 fn antigravity_timeouts_allow_one_retry_while_other_failures_keep_the_shared_budget() {
     let mut antigravity = CodexCredential::new("synthetic-key", "", i64::MAX, "", None, None);
     antigravity.project_id = Some("synthetic-project".into());

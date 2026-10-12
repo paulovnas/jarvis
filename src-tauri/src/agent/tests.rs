@@ -827,6 +827,93 @@ fn activity_tracks_loaded_sessions_without_exposing_history() {
     assert!(ended[0].revision > revision);
 }
 
+#[test]
+fn live_choice_cancels_only_its_exact_turn_and_retains_a_neutral_durable_reason() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let signal = session
+        .reserve(
+            "Generate scoped Live variants".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    let turn_id = session.snapshot().unwrap().active_turn_id.unwrap();
+    supersede_live_turn(&session, "another-turn").unwrap();
+    assert!(!*signal.borrow());
+    supersede_live_turn(&session, &turn_id).unwrap();
+    assert!(*signal.borrow());
+    finish(&session, Err(AgentError::cancelled()));
+    let saved = session.snapshot().unwrap().turns[0].clone();
+    assert_eq!(saved.status, TurnStatus::Cancelled);
+    assert_eq!(
+        saved.error.as_ref().unwrap().code,
+        "impeccable_live_superseded"
+    );
+    assert!(saved
+        .error
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("Escolha recebida"));
+    let (journal, _) = journal::read_only(&session.journal).unwrap();
+    assert_eq!(
+        journal[0].turn.error.as_ref().unwrap().code,
+        "impeccable_live_superseded"
+    );
+    assert!(session.snapshot().unwrap().active_turn_id.is_none());
+
+    let newer = session
+        .reserve("Another user request".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    supersede_live_turn(&session, &turn_id).unwrap();
+    assert!(!*newer.borrow());
+}
+
+#[test]
+fn live_supersession_does_not_hide_prior_user_cancellation_or_real_failures() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Generate Live variants".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let turn_id = session.snapshot().unwrap().active_turn_id.unwrap();
+    session
+        .data
+        .lock()
+        .unwrap()
+        .active
+        .as_mut()
+        .unwrap()
+        .cancel();
+    supersede_live_turn(&session, &turn_id).unwrap();
+    finish(&session, Err(AgentError::cancelled()));
+    assert_eq!(
+        session.snapshot().unwrap().turns[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .code,
+        "cancelled"
+    );
+
+    session
+        .reserve(
+            "Generate another Live request".into(),
+            options(ApprovalMode::Yolo),
+        )
+        .unwrap();
+    let turn_id = session.snapshot().unwrap().active_turn_id.unwrap();
+    supersede_live_turn(&session, &turn_id).unwrap();
+    finish(
+        &session,
+        Err(AgentError::new("provider_error", "Provider failure")),
+    );
+    let data = session.data.lock().unwrap();
+    let current = &data.turns.last().unwrap().turn;
+    assert_eq!(current.status, TurnStatus::Error);
+    assert_eq!(current.error.as_ref().unwrap().code, "provider_error");
+}
+
 #[tokio::test]
 async fn panicked_runs_release_the_chat_and_preserve_progress_without_replaying_the_queue() {
     let fixture = Fixture::new();

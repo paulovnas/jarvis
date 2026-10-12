@@ -26,10 +26,11 @@ required-features = ["browser-probe"]
 
 [dependencies]
 tauri = { version = "2", features = ["unstable", "protocol-asset", "macos-private-api"] }
-tauri-plugin-opener = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-single-instance = "2"
-tauri-plugin-clipboard-manager = "2"
+tauri-runtime-cef = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = ["unstable", "macos-private-api", "devtools"] }
+tauri-plugin-opener = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-updater = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-single-instance = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-clipboard-manager = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-util = { version = "0.3", features = ["sink"] }
@@ -45,7 +46,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["blocking"
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.10"
 url = "2.5"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030", default-features = false, features = ["xdg-portal"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs", "net"] }
 libc = "0.2.189"
 rmcp = { version = "3.2.0", default-features = false, features = ["client", "transport-async-rw", "transport-streamable-http-client-reqwest", "reqwest", "auth"] }
@@ -80,14 +81,10 @@ objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-user-notifications = "0.3"
 block2 = "0.6"
-objc2-web-kit = "0.3"
 objc2-app-kit = "0.3"
 dispatch2 = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gtk = "0.18"
-webkit2gtk = "2.0"
-cairo-rs = { version = "0.18", features = ["png"] }
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
@@ -96,7 +93,6 @@ zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
 
 [target.'cfg(windows)'.dependencies]
 notify-rust = "4"
-webview2-com = "0.38"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 windows = { version = "0.61", features = ["UI_Notifications", "Win32_System_WinRT", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage"] }
 windows-registry = "0.6"
@@ -107,6 +103,22 @@ junction = "2.0.0"
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }
 ts-rs = { version = "11", features = ["serde-json-impl", "no-serde-warnings"] }
+
+# CEF uses Tauri's dynamic runtime contract; keep plugins and bundler on one revision.
+[patch.crates-io]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-codegen = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-macros = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-runtime = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-plugin = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+# CEF and its window runtime share DPI types; Cargo.lock pins this upstream revision.
+dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }
+
+# Preserve the official CEF runtime while fixing native lifetime bugs locally.
+[patch."https://github.com/tauri-apps/tauri"]
+tauri-runtime-cef = { path = "vendor/tauri-runtime-cef" }
 
 # Keep the native test binary within macOS unwind-table limits.
 [profile.test.package.jarvis]

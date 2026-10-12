@@ -288,6 +288,9 @@ async fn drive(
         } else {
             projection.apply(session, &event)?;
         }
+        if finish_live_accept(bridge).await? {
+            return Ok(());
+        }
         if let Some(result) = projection.final_result(&event) {
             result?;
             queue::inject_pending_auxiliary(session, bridge.runtime.home).await?;
@@ -367,6 +370,27 @@ async fn drive(
             return Ok(());
         }
     }
+}
+
+async fn finish_live_accept(bridge: &bridge::Bridge<'_>) -> Result<bool, AgentError> {
+    if !bridge.accepted_live {
+        return Ok(false);
+    }
+    let remaining = bridge
+        .session
+        .data
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .turns
+        .last()
+        .ok_or_else(AgentError::internal)?
+        .turn
+        .steps
+        .iter()
+        .flat_map(|step| step.tools.iter().cloned())
+        .collect::<Vec<_>>();
+    impeccable::finish_accept(bridge.session, &remaining).await?;
+    Ok(true)
 }
 
 async fn record_native_session(
@@ -681,6 +705,24 @@ async fn execute_tool(
         .await?;
     core_runtime::record(bridge.session, bridge.context.take_activity())?;
     core_runtime::record(bridge.session, bridge.graft.take_activity())?;
+    if impeccable::should_finish_accept(
+        bridge
+            .execution
+            .as_ref()
+            .and_then(workflow::Execution::native_app),
+        bridge.session,
+        &bridge
+            .execution
+            .as_ref()
+            .map_or(bridge.session, |exec| exec.root())
+            .id,
+        &tool,
+        &output,
+        status,
+    )? {
+        bridge.session.flush_async().await?;
+        bridge.accepted_live = true;
+    }
     bridge.session.transition(turn_state::TurnPhase::Sampling)?;
     with_native_images(
         bridge,

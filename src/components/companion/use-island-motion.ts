@@ -19,6 +19,8 @@ export function useIslandMotion(island: RefObject<HTMLDivElement | null>, pet: R
     if (!island.current || !pet.current) return;
     const shell = island.current;
     const character = pet.current;
+    // Keep Rive's drawing surface stable while the visual size changes.
+    Object.assign(character.style, { left: "0px", top: "0px", width: "80px", height: "80px", transformOrigin: "top left" });
     const spring = state.current;
     const notchInset = geometry.notchWidth > 0 ? geometry.headerHeight : 0;
     spring.frame.x += geometry.compactX - spring.compactX;
@@ -34,7 +36,7 @@ export function useIslandMotion(island: RefObject<HTMLDivElement | null>, pet: R
     const paint = () => {
       const current = spring.frame;
       Object.assign(shell.style, { left: `${current.x}px`, top: `${current.y}px`, width: `${current.width}px`, height: `${current.height}px`, borderRadius: notchInset > 0 ? `0 0 ${current.radius}px ${current.radius}px` : `${current.radius}px` });
-      Object.assign(character.style, { left: `${current.petX}px`, top: `${current.petY}px`, width: `${current.petSize}px`, height: `${current.petSize}px` });
+      Object.assign(character.style, { transform: `translate3d(${current.petX}px, ${current.petY}px, 0) scale(${current.petSize / 80})` });
     };
     const report = () => {
       const x = Math.max(0, Math.min(spring.frame.x, geometry.width - 1));

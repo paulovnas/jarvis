@@ -51,6 +51,7 @@ pub(super) struct ActiveTurn {
     pub id: String,
     pub cancel: watch::Sender<bool>,
     pub phase: TurnPhase,
+    live_superseded: bool,
     elapsed: Duration,
     running_since: Option<Instant>,
     mailbox: TurnMailbox,
@@ -64,6 +65,7 @@ impl ActiveTurn {
             id,
             cancel,
             phase: TurnPhase::Reserved,
+            live_superseded: false,
             elapsed: Duration::ZERO,
             running_since: None,
             mailbox: TurnMailbox {
@@ -274,6 +276,19 @@ impl ActiveTurn {
     pub(super) fn cancel(&mut self) {
         self.transition(TurnPhase::Cancelling);
         let _ = self.cancel.send(true);
+    }
+
+    pub(super) fn supersede_live(&mut self) {
+        // An earlier user cancellation retains its reason. Only an active
+        // generation stopped by the host's newer browser choice is neutral.
+        if self.phase != TurnPhase::Cancelling && !*self.cancel.borrow() {
+            self.live_superseded = true;
+            self.cancel();
+        }
+    }
+
+    pub(super) fn live_superseded(&self) -> bool {
+        self.live_superseded
     }
 }
 

@@ -9,8 +9,14 @@ export const coreDownloadSchema = z.object({
   receivedBytes: z.number().int().nonnegative(), totalBytes: z.number().int().positive().nullable(),
 });
 export const coreDownloadEventSchema = z.object({ id: coreIdSchema, download: coreDownloadSchema });
+export const browserRuntimeSchema = z.object({
+  version: z.string().min(1), state: z.enum(["included", "development", "unavailable"]),
+  diagnostics: z.array(z.object({ label: z.string(), passed: z.boolean(), message: z.string() })),
+});
+export type BrowserRuntime = z.infer<typeof browserRuntimeSchema>;
 export const coreSnapshotSchema = z.object({
   ready: z.boolean(), checking: z.boolean(),
+  browserRuntime: browserRuntimeSchema.optional(),
   items: z.array(z.object({
     id: coreIdSchema, name: z.string(), repository: z.string().url(),
     installedVersion: z.string().nullable(), latestVersion: z.string().nullable(),

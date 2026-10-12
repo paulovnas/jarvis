@@ -25,6 +25,8 @@ describe.skipIf(process.env.JARVIS_TEST_NATIVE_ENGINE !== "1" || process.platfor
     const env: NodeJS.ProcessEnv = { ...process.env, IMPECCABLE_HOME: path.join(root, "home"), IMPECCABLE_SKILL_DIR: path.join(resources, ".agents/skills/impeccable") };
     delete env.IMPECCABLE_DESIGN_PATH;
     delete env.IMPECCABLE_DESIGN_ROOT;
+    delete env.IMPECCABLE_PRODUCT_PATH;
+    delete env.IMPECCABLE_PRODUCT_ROOT;
     const run = () => {
       const output = execFileSync(path.join(resources, "bin/impeccable"), ["live-accept", "--id", "ab12cd34", ...(operation === "discard" ? ["--discard"] : ["--variant", "2", "--no-bake"])], {
         cwd: root, encoding: "utf8", timeout: 15_000,

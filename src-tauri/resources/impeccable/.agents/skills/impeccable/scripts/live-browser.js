@@ -12,6 +12,7 @@
 (function () {
   'use strict';
   if (typeof window === 'undefined') return;
+  if (typeof window.__jarvisBrowser !== 'function') return;
 
   // Guard against double-init. Bun's HTML loader may process the <script> tag
   // and create a bundled copy alongside the external load, or HMR may re-execute.
@@ -7570,7 +7571,7 @@
           hasProjectContext = !!msg.hasProjectContext;
           // The generate lane runs without PRODUCT.md by design and never
           // sends the user to init, so its quiet chrome skips this notice.
-          if (!hasProjectContext && !liveBarHiddenByHelper) showToast(`PRODUCT.md não encontrado. As alternativas não terão contexto de marca. Peça ao agente ${IMPECCABLE_COMMAND} init para criá-lo.`, 7000);
+          if (!hasProjectContext && !liveBarHiddenByHelper) showToast(`PRD do projeto não encontrado. As alternativas não terão contexto de marca. Peça ao agente ${IMPECCABLE_COMMAND} init para criá-lo.`, 7000);
           console.log('[impeccable] Live mode connected.');
           syncAgentPollingUi(!!msg.agentPolling);
           startAgentStatusPoll();
@@ -9412,15 +9413,15 @@ void main() {
     location.reload();
   }
 
-  function cleanupAcceptedSession() {
+  function cleanupAcceptedSession(keepPreview = false) {
     hideBar();
     hideHighlight();
     stopScrollTracking();
     if (variantObserver) { variantObserver.disconnect(); variantObserver = null; }
     stopScrollLock();
-    removeVariantStateStylesheet();
+    if (!keepPreview) removeVariantStateStylesheet();
     clearScrollY();
-    clearSession();
+    if (!keepPreview) clearSession();
     resetSessionFileMeta();
     selectedElement = null;
     hoveredElement = null;
@@ -9543,7 +9544,7 @@ void main() {
   }
 
   function findActiveSessionSummary(saved, activeSessions) {
-    if (!saved?.id || !Array.isArray(activeSessions)) return null;
+    if (!(saved?.id && jarvisOwnsSession(saved?.id)) || !Array.isArray(activeSessions)) return null;
     return activeSessions.find((session) =>
       session?.id === saved.id
       && pageMatchesCurrent(session.pageUrl || saved.pageUrl)
@@ -9578,7 +9579,7 @@ void main() {
   function findAdoptableServerSession(activeSessions) {
     if (!Array.isArray(activeSessions)) return null;
     return activeSessions.find((session) => (
-      session?.id
+      (session?.id && jarvisOwnsSession(session?.id))
       && !isTerminalSessionSummary(session)
       && !isSessionHandled(session.id)
       && session.pageUrl
@@ -9615,7 +9616,7 @@ void main() {
     // resume it: the server-adoption branch below already applies the same
     // check, and a tab on another page has nothing to render for it.
     const cachedRaw = loadSession();
-    const cached = cachedRaw?.id && !pageMatchesCurrent(cachedRaw.pageUrl) ? null : cachedRaw;
+    const cached = cachedRaw?.id && (!pageMatchesCurrent(cachedRaw.pageUrl) || !jarvisOwnsSession(cachedRaw.id)) ? null : cachedRaw;
     // localStorage is a cache, not a gate. A cleared tab, a second browser
     // profile, or a teardown that dropped local state all leave the durable
     // server session as the only record of work in progress; adopt it instead
@@ -9672,7 +9673,44 @@ void main() {
     return true;
   }
 
+  // Only the native queue may revive historical work in a Jarvis-owned tab.
+  let jarvisLiveProjection = null;
+  let jarvisLiveSessions = null;
+  let jarvisLiveRoute = location.pathname;
+  let jarvisRestoreKey = null;
+  function jarvisOwnsSession(id) {
+    return typeof window.__jarvisBrowser !== 'function'
+      || jarvisLiveProjection?.sessionIds?.includes(id) === true;
+  }
+  function syncJarvisLiveSession(projection) {
+    jarvisLiveProjection = projection;
+    const key = location.pathname + ':' + JSON.stringify(projection.sessionIds || []);
+    if (key === jarvisRestoreKey) return;
+    jarvisRestoreKey = key;
+    if (jarvisLiveRoute !== location.pathname) {
+      jarvisLiveRoute = location.pathname;
+      liveInteractionRevision += 1;
+      // Navigation detaches chrome, never accepts/discards work or exposes all variants.
+      cleanupAcceptedSession(true);
+      hideShaderOverlay();
+      jarvisLiveSessions = null;
+      fetchAgentPollingStatus();
+      return;
+    }
+    resumeJarvisLiveRoute();
+  }
+  function resumeJarvisLiveRoute() {
+    if (!jarvisLiveProjection || !Array.isArray(jarvisLiveSessions)) return;
+    if (!currentSessionId && (state === 'IDLE' || state === 'PICKING')) {
+      if (findAnyVariantsWrapper()) resumeSession();
+      else restoreFromActiveSessions(jarvisLiveSessions, 'native_route_resume');
+      recoverMissedGenerationCompletion(jarvisLiveSessions);
+    }
+  }
+  window.__JARVIS_IMPECCABLE_SESSION__ = syncJarvisLiveSession;
+
   function restoreFromActiveSessions(activeSessions, reason) {
+    if (Array.isArray(activeSessions)) jarvisLiveSessions = activeSessions;
     const wrapper = findAnyVariantsWrapper();
     if (wrapper && !isFrameworkComponentPreviewMode(wrapper.dataset.impeccablePreview)) return false;
     if (svelteComponentSession?.sessionId === currentSessionId) return false;
@@ -10026,6 +10064,7 @@ void main() {
   }
 
   function resumeSession(recoveryRevision = liveInteractionRevision, opts = {}) {
+    if (typeof window.__jarvisBrowser === 'function' && !jarvisLiveProjection) return false;
     // Which path resumed matters in the journal: an init resume is a fresh
     // page load, the deferred-wrapper scout is a mid-page-load arrival. Both
     // used to log the same `browser_resumed`, which made issue #719 take a
@@ -10045,6 +10084,8 @@ void main() {
     }
 
     const sessionId = wrapper.dataset.impeccableVariants;
+    if (!jarvisOwnsSession(sessionId)) return false;
+    if (typeof window.__jarvisBrowser === 'function' && !jarvisLiveSessions?.some(session => session?.id === sessionId)) return false;
 
     // Don't resume if this session was already accepted/discarded
     if (isSessionHandled(sessionId)) return false;
@@ -11607,6 +11648,10 @@ void main() {
       .then((data) => {
         if (data && typeof data.agentPolling === 'boolean') {
           syncAgentPollingUi(data.agentPolling);
+          if (typeof window.__jarvisBrowser === 'function' && Array.isArray(data.activeSessions)) {
+            jarvisLiveSessions = data.activeSessions;
+            resumeJarvisLiveRoute();
+          }
         }
       })
       .catch(() => { /* server loss handled elsewhere */ });

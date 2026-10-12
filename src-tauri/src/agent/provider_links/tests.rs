@@ -31,6 +31,122 @@ fn fixture() -> (Connection, tempfile::TempDir) {
 }
 
 #[test]
+fn model_inventory_releases_database_during_history_io_and_preserves_bindings_and_fallbacks() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let project = "2".repeat(32);
+    let conversation = "3".repeat(32);
+    let mut original = choice("openai-codex-old", "historical-model");
+    original.fallback = Some(Box::new(choice("openai-codex-old", "historical-secondary")));
+    let target = choice("openai-codex-new", "replacement-model");
+    state.with_connection(home.path(), |db| {
+        persistence::insert_provider_account(db, "openai-codex-old", "old")?;
+        persistence::insert_provider_account(db, "openai-codex-new", "new")?;
+        db.execute_batch("INSERT INTO workspaces(id,name) VALUES('w','Workspace');")?;
+        db.execute("INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,'w','Project','/tmp/project')", [&project])?;
+        db.execute("INSERT INTO conversations(id,project_id,title) VALUES(?1,?2,'History snapshot')", params![conversation, project])?;
+        model_bindings::replace(db, &format!("chat:{conversation}"), &original, &target)
+    }).unwrap();
+    let path = library::session_path(home.path(), &project, &conversation, true).unwrap();
+    let mut options = super::super::tests::options(super::super::ApprovalMode::Yolo);
+    original.apply(&mut options);
+    options.model_selection = Some(original.clone());
+    std::fs::write(&path, format!("{{}}\n{}\n", json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"saved-turn","options":options},"wire":[{"content":"Confirmed output must remain unchanged"}]}}))).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let (started, started_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let reader_state = state.clone();
+    let reader_home = home.path().to_owned();
+    let reader = std::thread::spawn(move || {
+        model_references(&reader_state, &reader_home, |path| {
+            started.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            chat_choices(path)
+        })
+    });
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (read, read_rx) = mpsc::channel();
+    let query_state = state.clone();
+    let query_home = home.path().to_owned();
+    let query = std::thread::spawn(move || {
+        let count = query_state
+            .with_connection(&query_home, |db| {
+                db.query_row("SELECT COUNT(*) FROM conversations", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(persistence::PersistenceError::from)
+            })
+            .unwrap();
+        read.send(count).unwrap();
+    });
+    let available = read_rx.recv_timeout(Duration::from_secs(2));
+    // Always release the simulated slow reader before asserting or joining.
+    release.send(()).unwrap();
+    let inventory = reader.join().unwrap().unwrap();
+    query.join().unwrap();
+    assert_eq!(
+        available.unwrap(),
+        1,
+        "System commands must be able to read the DB while history I/O is blocked"
+    );
+    assert_eq!(inventory.bindings.len(), 1);
+    let current = inventory
+        .references
+        .iter()
+        .find(|item| item.item_key == format!("chat:{conversation}"))
+        .unwrap();
+    assert_eq!(current.choice.model, "replacement-model");
+    assert_eq!(current.source, original);
+    assert_eq!(
+        current.choice.fallback.as_deref().unwrap().model,
+        "historical-secondary"
+    );
+    assert!(inventory.references.iter().any(|item| item.item_key
+        == format!("chat:{conversation}:fallback")
+        && item.choice.model == "historical-secondary"));
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    state.close();
+}
+
+#[test]
+fn metadata_reader_keeps_latest_turn_and_queue_without_replaying_old_turn_checkpoints() {
+    let (_, home) = fixture();
+    let path = home.path().join("choices.jsonl");
+    let mut first = super::super::tests::options(super::super::ApprovalMode::Yolo);
+    first.model = "first".into();
+    let mut latest = first.clone();
+    latest.model = "latest".into();
+    let mut queued = first.clone();
+    queued.model = "queued".into();
+    let mut records = String::from("{}\n");
+    for record in [
+        json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"first","options":first}}}),
+        json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"latest","options":latest}}}),
+        json!({"type":"tool_checkpoint","version":1,"data":{"output":"large irrelevant output".repeat(5000)}}),
+        // An old turn's unusable options were always ignored after a newer turn.
+        json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"first","options":"retired unused options"}}}),
+        json!({"type":"queue_checkpoint","version":1,"data":[{"id":"queued","options":queued,"text":"queued input"}]}),
+    ] {
+        records.push_str(&format!("{record}\n"));
+    }
+    std::fs::write(&path, &records).unwrap();
+    let choices = chat_choices(&path).unwrap();
+    assert_eq!(choices.len(), 2);
+    assert_eq!(
+        (choices[0].0.model.as_str(), choices[0].1),
+        ("latest", false)
+    );
+    assert_eq!(
+        (choices[1].0.model.as_str(), choices[1].1),
+        ("queued", true)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), records);
+}
+
+#[test]
 fn unsent_chat_models_and_fallbacks_are_independent_dependencies_and_remain_unresolved_without_replacement(
 ) {
     let (mut db, home) = fixture();

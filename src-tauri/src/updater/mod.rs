@@ -311,13 +311,12 @@ pub async fn install_app_update(
         .map_err(|_| "Atualizador indisponível.")?
         .clone();
     if already_installed.is_none() {
-        let mut update = state
+        let update = state
             .candidate
             .lock()
             .map_err(|_| "Atualizador indisponível.")?
             .clone()
             .ok_or("Verifique as atualizações antes de instalar.")?;
-        update = update.restart_after_install(true);
         let mut downloaded = 0u64;
         let mut last_progress = std::time::Instant::now();
         let _ = on_progress.send(Progress::Downloading {

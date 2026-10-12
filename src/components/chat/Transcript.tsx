@@ -34,11 +34,12 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, 
       ? "Execução interrompida"
       : "Falha na execução";
   const response = finalTurnResponse(turn);
+  const liveSuperseded = turn.status === "cancelled" && turn.error?.code === "impeccable_live_superseded";
   const repeatedError = turn.error?.message.trim() === response.text.trim();
   const exportFileName = `Resposta-Jarvis-${new Date(turn.createdAt).toISOString().slice(0, 16).replace("T", "-").replace(":", "-")}.md`;
   const sources = new Set([turn.id, ...(turn.auxiliaryMessages?.map(message => message.id) ?? [])]);
   return <AssistantMessageTurn onRetry={onRetry && retryableTurn(turn) ? () => onRetry(turn.id) : undefined} retrying={retrying} message={{
-    id: turn.id, role: "assistant", content: running || repeatedError ? "" : response.text, timestamp,
+    id: turn.id, role: "assistant", content: liveSuperseded ? turn.error?.message ?? "" : running || repeatedError ? "" : response.text, timestamp,
     lessons: lessons?.filter(lesson => lesson.evidence.some(source => source.conversationId === conversationId && sources.has(source.messageId))),
     model: executionLabel(turn.options), streaming: running,
     work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < response.firstStep)) ? {
@@ -48,7 +49,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, 
       detailContext: conversationId ? { conversationId, turnId: turn.id } : undefined,
       steps: turn.steps.map((step, index) => ({ thinking: step.summary, tools: step.tools, coreActivities: step.coreActivities, commentary: running || index < response.firstStep ? step.text : "" })),
     } : undefined,
-    error: turn.error ? { title: errorTitle, message: turn.error.message } : undefined,
+    error: turn.error && !liveSuperseded ? { title: errorTitle, message: turn.error.message } : undefined,
     exportFileName,
   }} />;
 });

@@ -9,7 +9,7 @@ pub struct Check {
     pub(super) message: String,
 }
 impl Check {
-    fn result(label: &str, result: Result<(), CoreError>, success: &str) -> Self {
+    pub(super) fn result(label: &str, result: Result<(), CoreError>, success: &str) -> Self {
         Self {
             label: label.into(),
             passed: result.is_ok(),

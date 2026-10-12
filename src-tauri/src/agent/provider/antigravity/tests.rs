@@ -400,7 +400,7 @@ async fn http_response(status: &str, body: &str) -> reqwest::Response {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let response=format!("HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+    let response=format!("HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nx-goog-request-id: request-test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
     std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         socket
@@ -463,6 +463,44 @@ async fn http_errors_trigger_compaction_without_leaking_upstream_body() {
         .unwrap();
     assert_eq!(error.code, "provider_auth");
     assert!(!error.message.contains("test-private-data"));
+}
+
+#[tokio::test]
+async fn malformed_stream_failures_keep_redacted_reason_and_http_evidence() {
+    for (body, reason, message) in [
+        ("data: {test-private-data}\n\n", ProviderProtocolReason::InvalidSse, "evento de resposta inválido"),
+        ("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"test-private-data\"}]}}]}}\n\n", ProviderProtocolReason::MissingCompletion, "antes de confirmar"),
+        ("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[]},\"finishReason\":\"STOP\"}]}}\n\n", ProviderProtocolReason::EmptyCompletion, "resposta vazia"),
+        ("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":\"test-private-data\"}}]},\"finishReason\":\"STOP\"}]}}\n\n", ProviderProtocolReason::InvalidToolCall, "chamada de ferramenta"),
+    ] {
+        let response = http_response("200 OK", body).await;
+        let (_tx, rx) = watch::channel(false);
+        let error = receive(response, "gemini-3.8-flash", rx, None, &mut |_| Ok(())).await.unwrap_err();
+        assert_eq!(error.code, "provider_protocol");
+        assert!(error.message.contains(message));
+        assert!(!error.message.contains("test-private-data"));
+        let metadata = error.provider_metadata.unwrap();
+        assert_eq!(metadata.protocol_reason, Some(reason));
+        assert_eq!(metadata.http_status, Some(200));
+        assert_eq!(metadata.request_id.as_deref(), Some("request-test"));
+        assert_eq!(metadata.transport_stage, Some(ProviderTransportStage::ResponseStream));
+        assert_eq!(metadata.upstream_code, None);
+    }
+}
+
+#[test]
+fn invalid_local_projection_is_distinct_from_an_upstream_stream_failure() {
+    let error = contents(&[json!({"type":"function_call","call_id":"call","name":"read_file","arguments":"test-private-data"})], "gemini-3.8-flash").unwrap_err();
+    assert_eq!(error.code, "provider_protocol");
+    assert!(error.message.contains("histórico não pôde ser convertido"));
+    assert!(!error.message.contains("test-private-data"));
+    let metadata = error.provider_metadata.unwrap();
+    assert_eq!(
+        metadata.protocol_reason,
+        Some(ProviderProtocolReason::RequestProjection)
+    );
+    assert_eq!(metadata.http_status, None);
+    assert_eq!(metadata.transport_stage, None);
 }
 
 #[tokio::test]

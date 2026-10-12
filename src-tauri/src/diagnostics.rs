@@ -107,6 +107,8 @@ struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     upstream_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    protocol_reason: Option<ProviderProtocolReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
 }
 
@@ -138,12 +140,24 @@ impl ProviderTransportStage {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProviderProtocolReason {
+    RequestProjection,
+    InvalidSse,
+    StreamLimit,
+    MissingCompletion,
+    EmptyCompletion,
+    InvalidToolCall,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderMetadata {
     pub(crate) http_status: Option<u16>,
     pub(crate) upstream_code: Option<String>,
     pub(crate) request_id: Option<String>,
     pub(crate) transport_stage: Option<ProviderTransportStage>,
+    pub(crate) protocol_reason: Option<ProviderProtocolReason>,
 }
 
 impl ProviderMetadata {
@@ -157,6 +171,7 @@ impl ProviderMetadata {
             upstream_code: upstream_code.and_then(|value| safe_token(value, 96)),
             request_id: request_id.and_then(|value| safe_token(value, 160)),
             transport_stage: None,
+            protocol_reason: None,
         }
     }
 }
@@ -182,6 +197,8 @@ pub struct DiagnosticEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     upstream_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_reason: Option<ProviderProtocolReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
 }
 
@@ -198,6 +215,7 @@ impl From<Record> for DiagnosticEvent {
             category: record.category,
             http_status: record.http_status,
             upstream_code: record.upstream_code,
+            protocol_reason: record.protocol_reason,
             request_id: record.request_id,
         }
     }
@@ -445,6 +463,7 @@ impl Record {
             category: None,
             http_status: None,
             upstream_code: None,
+            protocol_reason: None,
             request_id: None,
         }
     }
@@ -782,6 +801,9 @@ fn copyable_summary(
         if let Some(code) = &record.upstream_code {
             detail.push(format!("upstream={code}"));
         }
+        if let Some(reason) = record.protocol_reason {
+            detail.push(format!("protocol={reason:?}"));
+        }
         if let Some(request) = &record.request_id {
             detail.push(format!("request={request}"));
         }
@@ -857,16 +879,27 @@ pub(crate) fn record_provider_failure(
     metadata: Option<&ProviderMetadata>,
 ) {
     let Some(state) = ACTIVE.get() else { return };
-    let Some(provider) = safe_token(provider, 32) else {
-        return;
-    };
-    if !matches!(provider.as_str(), "openai_codex" | "antigravity" | "custom") {
-        return;
+    if let Some(record) =
+        provider_failure_record(state, provider, correlation_value, category, metadata)
+    {
+        state.record(record);
     }
-    let Some(category) = safe_token(category, 96) else {
-        return;
-    };
-    let refusal = metadata.is_some_and(|metadata| metadata.http_status.is_some())
+}
+
+fn provider_failure_record(
+    state: &DiagnosticsState,
+    provider: &str,
+    correlation_value: &str,
+    category: &str,
+    metadata: Option<&ProviderMetadata>,
+) -> Option<Record> {
+    let provider = safe_token(provider, 32)?;
+    if !matches!(provider.as_str(), "openai_codex" | "antigravity" | "custom") {
+        return None;
+    }
+    let category = safe_token(category, 96)?;
+    let refusal = metadata
+        .is_some_and(|metadata| metadata.http_status.is_some_and(|status| status >= 400))
         || matches!(
             category.as_str(),
             "provider_auth"
@@ -892,9 +925,10 @@ pub(crate) fn record_provider_failure(
             .map(|stage| stage.operation().into());
         record.http_status = metadata.http_status;
         record.upstream_code.clone_from(&metadata.upstream_code);
+        record.protocol_reason = metadata.protocol_reason;
         record.request_id.clone_from(&metadata.request_id);
     }
-    state.record(record);
+    Some(record)
 }
 
 #[tauri::command]

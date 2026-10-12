@@ -24,7 +24,7 @@ export function pageOperation(args: PageOperation) {
   type Descriptor = { tag: string; role: string; name: string; label: string; text: string; testId: string; inputType: string };
   type Record = { element: Element; descriptor: Descriptor };
   type Prepared = { element: Element; key: string; mode?: "click" | "fill" | "press"; box?: number[]; scrolled?: boolean; focused?: boolean; token?: string };
-  type Guard = { token: string; element: Element; blocked: boolean; expired: boolean; cleanup: () => void };
+  type Guard = { token: string; element: Element; clicked: boolean; blocked: boolean; expired: boolean; cleanup: () => void };
   const page = window as unknown as { __jarvisElements?: Map<string, Record>; __jarvisPrepared?: Prepared; __jarvisGuard?: Guard; __jarvisSequence?: number };
   const nextToken = () => String(page.__jarvisSequence = (page.__jarvisSequence ?? 0) + 1);
   const normalize = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
@@ -180,7 +180,7 @@ export function pageOperation(args: PageOperation) {
     if (!guard || guard.token !== args.element) return { blocked: true };
     guard.cleanup();
     page.__jarvisGuard = undefined;
-    return { blocked: guard.blocked || guard.expired || !guard.element.isConnected };
+    return { blocked: guard.blocked || guard.expired || (!guard.clicked && !guard.element.isConnected) };
   }
   if (args.action === "guard") {
     const prepared = page.__jarvisPrepared;
@@ -194,13 +194,16 @@ export function pageOperation(args: PageOperation) {
     }
     const events = ["pointerover", "pointerdown", "pointerup", "pointermove", "mouseover", "mousedown", "mouseup", "mousemove", "click", "auxclick", "dblclick", "contextmenu"];
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const guard: Guard = { token: args.element, element: prepared.element, blocked: false, expired: false, cleanup: () => {
+    const guard: Guard = { token: args.element, element: prepared.element, clicked: false, blocked: false, expired: false, cleanup: () => {
       clearTimeout(timer);
       for (const root of roots) for (const event of events) root.removeEventListener(event, capture, true);
     } };
     const capture = (event: Event) => {
       if (!event.isTrusted) return;
-      if (!guard.blocked && guard.element.isConnected && event.composedPath().includes(guard.element)) return;
+      if (!guard.blocked && guard.element.isConnected && event.composedPath().includes(guard.element)) {
+        if (event.type === "click") guard.clicked = true;
+        return;
+      }
       guard.blocked = true;
       event.preventDefault();
       event.stopImmediatePropagation();

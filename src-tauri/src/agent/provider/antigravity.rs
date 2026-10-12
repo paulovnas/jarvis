@@ -1,7 +1,46 @@
 //! Convert the shared journal into Cloud Code Assist requests, retaining signed
 //! model parts privately so tools and provider switches can replay safely.
 use super::*;
+use crate::diagnostics::{ProviderProtocolReason, ProviderTransportStage};
 use crate::openai_codex::antigravity::{user_agent, ENDPOINTS};
+
+fn protocol_failure(reason: ProviderProtocolReason) -> AgentError {
+    let detail = match reason {
+        ProviderProtocolReason::RequestProjection => {
+            "O histórico não pôde ser convertido para uma solicitação válida ao Antigravity."
+        }
+        ProviderProtocolReason::InvalidSse => {
+            "O Antigravity enviou um evento de resposta inválido."
+        }
+        ProviderProtocolReason::StreamLimit => {
+            "A resposta do Antigravity excedeu o limite seguro de processamento."
+        }
+        ProviderProtocolReason::MissingCompletion => {
+            "O Antigravity encerrou a conexão antes de confirmar a conclusão da resposta."
+        }
+        ProviderProtocolReason::EmptyCompletion => {
+            "O Antigravity confirmou uma resposta vazia, sem conteúdo ou ferramentas utilizáveis."
+        }
+        ProviderProtocolReason::InvalidToolCall => {
+            "O Antigravity enviou uma chamada de ferramenta incompleta ou inválida."
+        }
+    };
+    let mut error = AgentError::new(
+        "provider_protocol",
+        &format!("{detail} O progresso recebido foi preservado."),
+    );
+    let mut metadata = crate::diagnostics::ProviderMetadata::new(None, None, None);
+    metadata.protocol_reason = Some(reason);
+    if reason != ProviderProtocolReason::RequestProjection {
+        metadata.transport_stage = Some(ProviderTransportStage::ResponseStream);
+    }
+    error.provider_metadata = Some(Box::new(metadata));
+    error
+}
+
+fn projection_error() -> AgentError {
+    protocol_failure(ProviderProtocolReason::RequestProjection)
+}
 
 // Gemini may buffer a complete tool argument object after its reasoning chunks.
 // Keep a bounded wait that permits this gap without changing other providers.
@@ -81,8 +120,8 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
         let kind = item["type"].as_str().unwrap_or("message");
         if kind == "function_call" {
             names.insert(
-                item["call_id"].as_str().ok_or_else(protocol_error)?,
-                item["name"].as_str().ok_or_else(protocol_error)?,
+                item["call_id"].as_str().ok_or_else(projection_error)?,
+                item["name"].as_str().ok_or_else(projection_error)?,
             );
         }
         if item["_antigravity_model"] == model && item["_antigravity_part"].is_object() {
@@ -109,7 +148,7 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
                             let data = part["image_url"]
                                 .as_str()
                                 .and_then(|url| url.strip_prefix("data:image/png;base64,"))
-                                .ok_or_else(protocol_error)?;
+                                .ok_or_else(projection_error)?;
                             push_part(
                                 &mut result,
                                 role,
@@ -121,8 +160,8 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
             }
             "function_call" => {
                 let args: Value =
-                    serde_json::from_str(item["arguments"].as_str().ok_or_else(protocol_error)?)
-                        .map_err(|_| protocol_error())?;
+                    serde_json::from_str(item["arguments"].as_str().ok_or_else(projection_error)?)
+                        .map_err(|_| projection_error())?;
                 let mut part = json!({"functionCall":{"name":item["name"],"args":args}});
                 if claude {
                     part["functionCall"]["id"] = item["call_id"].clone();
@@ -130,8 +169,8 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
                 push_model_part(&mut result, part, claude);
             }
             "function_call_output" => {
-                let id = item["call_id"].as_str().ok_or_else(protocol_error)?;
-                let name = names.get(id).ok_or_else(protocol_error)?;
+                let id = item["call_id"].as_str().ok_or_else(projection_error)?;
+                let name = names.get(id).ok_or_else(projection_error)?;
                 let mut part =
                     json!({"functionResponse":{"name":name,"response":{"output":item["output"]}}});
                 if claude {
@@ -145,7 +184,7 @@ fn contents(input: &[Value], model: &str) -> Result<Vec<Value>, AgentError> {
         }
     }
     if result.is_empty() {
-        return Err(protocol_error());
+        return Err(projection_error());
     }
     Ok(result)
 }
@@ -557,7 +596,7 @@ impl Output {
     }
     fn finish(self, model: &str) -> Result<Response, AgentError> {
         if !self.finished {
-            return Err(protocol_error());
+            return Err(protocol_failure(ProviderProtocolReason::MissingCompletion));
         }
         let mut output = vec![];
         if !self.grounding.is_empty() {
@@ -573,10 +612,10 @@ impl Output {
                 let name = call["name"]
                     .as_str()
                     .filter(|s| !s.is_empty())
-                    .ok_or_else(protocol_error)?;
+                    .ok_or_else(|| protocol_failure(ProviderProtocolReason::InvalidToolCall))?;
                 let args = call.get("args").cloned().unwrap_or(json!({}));
                 if !args.is_object() {
-                    return Err(protocol_error());
+                    return Err(protocol_failure(ProviderProtocolReason::InvalidToolCall));
                 }
                 let id = match call["id"]
                     .as_str()
@@ -609,11 +648,13 @@ impl Output {
         // A completed thought-only response must reach session recovery with
         // its signatures and usage intact, rather than repeat identical inference.
         // Validate all calls before any file, terminal or MCP action is permitted.
-        tool_calls(&output)?;
+        tool_calls(&output)
+            .map_err(|_| protocol_failure(ProviderProtocolReason::InvalidToolCall))?;
         if let (Some(item), Some(execution)) = (output.last_mut(), self.execution) {
             item["_antigravity_execution"] = json!(execution);
         }
-        let response = Response::from_output(output, self.usage)?;
+        let response = Response::from_output(output, self.usage)
+            .map_err(|_| protocol_failure(ProviderProtocolReason::EmptyCompletion))?;
         debug_assert_eq!(response.text, text);
         debug_assert_eq!(response.summary, summary);
         Ok(response)
@@ -886,9 +927,11 @@ async fn receive(
             last_transport = tokio::time::Instant::now();
             size = size.saturating_add(chunk.len());
             if size > MAX_STREAM {
-                return Err(protocol_error());
+                return Err(protocol_failure(ProviderProtocolReason::StreamLimit));
             }
-            let events = parser.push(&chunk)?;
+            let events = parser
+                .push(&chunk)
+                .map_err(|_| protocol_failure(ProviderProtocolReason::InvalidSse))?;
             let completed = !events.is_empty();
             completed_events = completed_events.saturating_add(events.len() as u64);
             for event in events {
@@ -913,7 +956,10 @@ async fn receive(
             }
         }
         // Some SSE implementations omit the final blank line at EOF.
-        for event in parser.push(b"\n\n")? {
+        for event in parser
+            .push(b"\n\n")
+            .map_err(|_| protocol_failure(ProviderProtocolReason::InvalidSse))?
+        {
             completed_events = completed_events.saturating_add(1);
             if output.event(&event, &mut forward)? {
                 last_progress = tokio::time::Instant::now();
@@ -921,7 +967,37 @@ async fn receive(
         }
         output.finish(model)
     }
-    .await;
+    .await
+    .map_err(|error| {
+        if !error.code.starts_with("provider_") && error.code != "context_overflow" {
+            return error;
+        }
+        let status = error
+            .provider_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.http_status)
+            .unwrap_or(response.status().as_u16());
+        let upstream_code = error
+            .provider_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.upstream_code.clone());
+        let request_id = error
+            .provider_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.request_id.clone());
+        let mut error = super::with_provider_metadata(
+            error,
+            Some(status),
+            upstream_code.as_deref(),
+            request_id
+                .as_deref()
+                .or_else(|| super::request_id(&response)),
+        );
+        if let Some(metadata) = error.provider_metadata.as_mut() {
+            metadata.transport_stage = Some(ProviderTransportStage::ResponseStream);
+        }
+        error
+    });
     if let Some(context) = telemetry {
         use super::super::telemetry::{self, Event, ProviderKind};
         let now = tokio::time::Instant::now();

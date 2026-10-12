@@ -198,7 +198,7 @@ export const liveActionPortuguese: Readonly<Record<string, string>> = {
 
 /** Template fragments are presentation text; substitutions and HTML remain intact. */
 export const liveTemplatePortuguese: Readonly<Record<string, string>> = {
-  "No PRODUCT.md found. Variants will be brand-agnostic. Run ": "PRODUCT.md não encontrado. As alternativas não terão contexto de marca. Peça ao agente ",
+  "No PRODUCT.md found. Variants will be brand-agnostic. Run ": "PRD do projeto não encontrado. As alternativas não terão contexto de marca. Peça ao agente ",
   " init to generate one.": " init para criá-lo.",
   "<strong>No DESIGN.md yet</strong>Create one by running <code>": "<strong>DESIGN.md ainda não existe</strong>Peça ao agente <code>",
   " document</code> in your terminal, then re-open this panel.": " document</code> no chat do Jarvis e abra este painel novamente.",

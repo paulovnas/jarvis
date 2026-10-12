@@ -195,6 +195,42 @@ it("updates correlated waiting and running phases without submitting work from t
   expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
 });
 
+it.each(["config_missing", "context_missing", "target_selection_required", "page_unavailable", "dev_server_missing"])("keeps recoverable %s setup out of error notifications while the Designer prepares Live", async error => {
+  const hook = renderHook(() => useImpeccableLive("c1"));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  vi.mocked(invoke).mockImplementationOnce(async () => {
+    listeners.forEach(handler => handler({ event: "impeccable-live:changed", id: 1, payload: { ...status("c1", "setup"), phase: "blocked", error: "O Designer precisa iniciar a página local.", setupNeeded: { error } } }));
+    const preparing = { ...status("c1", "setup"), phase: "waiting", activity: "Preparando a página local" };
+    listeners.forEach(handler => handler({ event: "impeccable-live:changed", id: 2, payload: preparing }));
+    return preparing;
+  });
+  await act(async () => { await hook.result.current.toggle(chatOptions); });
+  expect(hook.result.current.status.phase).toBe("waiting");
+  expect(hook.result.current.status.activity).toBe("Preparando a página local");
+  expect(hook.result.current.status.error).toBeNull();
+  expect(toast.error).not.toHaveBeenCalled();
+});
+
+it.each(["admission_failed", "session_owned_elsewhere", "server_start_failed", "inject_failed", "event_failed"])("still reports the actual %s Live failure", async error => {
+  const hook = renderHook(() => useImpeccableLive("c1"));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  await act(async () => { listeners.forEach(handler => handler({ event: "impeccable-live:changed", id: 1, payload: { ...status("c1", "setup"), phase: "blocked", error: "Não foi possível iniciar o Live.", setupNeeded: { error } } })); });
+  expect(hook.result.current.status.phase).toBe("blocked");
+  expect(hook.result.current.status.error).toBe("Não foi possível iniciar o Live.");
+  expect(toast.error).toHaveBeenCalledWith("Modo Live", { id: "impeccable-live:c1", description: "Não foi possível iniciar o Live." });
+});
+
+it.each(["waiting", "running"] as const)("does not submit another preparation while Live setup is %s and still permits stopping it", async phase => {
+  vi.mocked(invoke).mockImplementationOnce(async () => ({ ...status("c1", "setup"), phase, activity: "Preparando a página local" }));
+  const hook = renderHook(() => useImpeccableLive("c1"));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  await act(async () => { await hook.result.current.resume(chatOptions); });
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "start_impeccable_live")).toHaveLength(0);
+  await act(async () => { await hook.result.current.toggle(); });
+  expect(invoke).toHaveBeenLastCalledWith("stop_impeccable_live", { conversationId: "c1" });
+  expect(hook.result.current.active).toBe(false);
+});
+
 it.each(["starting", "setup"] as const)("keeps an invoke failure after a native %s event actionable", async state => {
   const hook = renderHook(() => useImpeccableLive("c1"));
   await waitFor(() => expect(hook.result.current.loaded).toBe(true));
@@ -236,6 +272,24 @@ it.each(["ready", "off"] as const)("preserves a newer successful native %s event
   expect(hook.result.current.status.error).toBeNull();
   expect(hook.result.current.status.phase).toBe("idle");
   expect(hook.result.current.busy).toBe(false);
+});
+
+it.each(["waiting", "running"] as const)("preserves newer %s setup preparation after the previous start RPC rejects", async phase => {
+  const hook = renderHook(() => useImpeccableLive("c1"));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  vi.mocked(invoke).mockImplementationOnce(async () => {
+    listeners.forEach(handler => handler({ event: "impeccable-live:changed", id: 1, payload: { ...status("c1", "setup"), phase, activity: "Preparando a página local" } }));
+    throw new Error("A resposta anterior foi perdida.");
+  });
+  await act(async () => { await hook.result.current.resume(chatOptions); });
+  expect(hook.result.current.status.state).toBe("setup");
+  expect(hook.result.current.status.phase).toBe(phase);
+  expect(hook.result.current.status.activity).toBe("Preparando a página local");
+  expect(hook.result.current.status.error).toBeNull();
+  expect(hook.result.current.busy).toBe(false);
+  expect(toast.error).not.toHaveBeenCalled();
+  await act(async () => { await hook.result.current.resume(chatOptions); });
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "start_impeccable_live")).toHaveLength(1);
 });
 
 it("keeps setup and pumping native, ignores other conversations, and never passes a remote page as the Live target", async () => {

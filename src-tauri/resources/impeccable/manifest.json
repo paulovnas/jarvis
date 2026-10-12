@@ -274,7 +274,7 @@
     },
     {
       "path": ".agents/skills/impeccable/scripts/live-browser.js",
-      "sha256": "0e48cd7735861491654c103947efdd2b9ba8d0dfbc5c41571d07fcc791009132"
+      "sha256": "de56ec16589688cf8247e66676cbcd5cae8ae2781065fbd09fb122f67f76ac66"
     },
     {
       "path": ".agents/skills/impeccable/scripts/modern-screenshot.umd.js",
@@ -286,7 +286,7 @@
     },
     {
       "path": "NOTICE.md",
-      "sha256": "c08e085d304f5648f0b0a01aa7a490b9f1ecb97a534d0f27a18e6099cb9fde39"
+      "sha256": "c4733589a09d2b815911767e41423a4fff8ee631064abfedf63cade57ee3360c"
     },
     {
       "path": "UPSTREAM-NOTICE.md",
@@ -294,7 +294,7 @@
     },
     {
       "path": "jarvis-live-adapter.js",
-      "sha256": "0b7ea79ed4f93086d512bf3ffc6564db64a3c7868ec79d07d22453d187492c78"
+      "sha256": "995c97524d262632eb5f2bdb31e2162802abdd5a65c0778f86208c718cf6c2e1"
     },
     {
       "path": "modern-screenshot.LICENSE",

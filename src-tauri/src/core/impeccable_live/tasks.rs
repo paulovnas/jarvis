@@ -87,6 +87,8 @@ struct Canonical {
     pending_at: u64,
     final_status: Option<Status>,
     journal_sequence: u64,
+    choice_sequence: Option<u64>,
+    phase_sequence: u64,
 }
 
 pub(super) fn now_ms() -> u64 {
@@ -286,6 +288,8 @@ fn canonical(root: &Path, id: &str, bytes: &[u8]) -> Result<Option<Canonical>, C
     let mut pending = None;
     let mut pending_at = 0;
     let mut final_status = None;
+    let mut choice_sequence = None;
+    let mut phase_sequence = 0;
     for line in content.lines().filter(|line| !line.trim().is_empty()) {
         if line.len() > MAX_ENTRY {
             return Err(invalid());
@@ -321,13 +325,18 @@ fn canonical(root: &Path, id: &str, bytes: &[u8]) -> Result<Option<Canonical>, C
                         created_at: at,
                         event: event.clone(),
                     });
+                    choice_sequence = None;
                 }
                 pending_at = request.as_ref().map_or(at, |request| request.created_at);
                 event["_jarvisPendingEventSeq"] = Value::from(sequence);
                 pending = Some(event);
+                phase_sequence = sequence;
                 final_status = None;
             }
             "accept" | "discard" | "carbonize_cleanup" => {
+                if kind != "carbonize_cleanup" {
+                    choice_sequence = Some(sequence);
+                }
                 if request.is_none() {
                     request = Some(Request {
                         sequence,
@@ -338,6 +347,7 @@ fn canonical(root: &Path, id: &str, bytes: &[u8]) -> Result<Option<Canonical>, C
                 pending_at = submitted_at(&record, &event);
                 event["_jarvisPendingEventSeq"] = Value::from(sequence);
                 pending = Some(event);
+                phase_sequence = sequence;
                 final_status = None;
             }
             "agent_done" | "steer_done" | "variants_ready" | "complete" => {
@@ -362,6 +372,8 @@ fn canonical(root: &Path, id: &str, bytes: &[u8]) -> Result<Option<Canonical>, C
         pending_at,
         final_status,
         journal_sequence: previous,
+        choice_sequence,
+        phase_sequence,
     }))
 }
 
@@ -575,6 +587,47 @@ pub(super) fn is_current(root: &Path, task: &Task) -> Result<bool, CoreError> {
     }))
 }
 
+fn current_event(snapshot: &Canonical, task: &Task) -> bool {
+    if format!("{}:{}", snapshot.action_id, snapshot.request.sequence) != task.request_id {
+        return false;
+    }
+    let Some(sequence) = task.event["_jarvisPendingEventSeq"]
+        .as_u64()
+        .filter(|seq| *seq > 0)
+    else {
+        return false;
+    };
+    match task.event["type"].as_str() {
+        Some("accept" | "discard") => snapshot.choice_sequence == Some(sequence),
+        Some("generate" | "steer") => snapshot.choice_sequence.is_none_or(|seq| seq <= sequence),
+        _ => {
+            snapshot.phase_sequence == sequence
+                && snapshot
+                    .pending
+                    .as_ref()
+                    .is_none_or(|pending| pending["type"] == task.event["type"])
+        }
+    }
+}
+
+/// A choice owns its cleanup, but never a later browser decision in the same request.
+/// Terminal outcomes remain readable after a successful completion or discard.
+pub(super) fn is_current_event(root: &Path, task: &Task) -> Result<bool, CoreError> {
+    Ok(current_snapshot(root, task)?.is_some_and(|snapshot| current_event(&snapshot, task)))
+}
+
+/// A terminal failure or discard cannot authorize another source mutation or ACK.
+/// A completed choice retains its lineage for the helper's idempotent completion.
+pub(super) fn can_mutate_current_event(root: &Path, task: &Task) -> Result<bool, CoreError> {
+    Ok(current_snapshot(root, task)?.is_some_and(|snapshot| {
+        current_event(&snapshot, task)
+            && !matches!(
+                snapshot.final_status,
+                Some(Status::Blocked | Status::Cancelled)
+            )
+    }))
+}
+
 /// A model may fail after a successful ACK. Reconciliation must prove that the
 /// same human request is confirmed and that no later lifecycle event is pending.
 pub(super) fn confirmed_outcome(root: &Path, task: &Task) -> Result<Option<Status>, CoreError> {
@@ -693,6 +746,7 @@ pub(super) fn scan(
             record.journal_sequence = snapshot.journal_sequence;
             let next = match record.task.status {
                 Status::Cancelled if new_choice => Some(status),
+                Status::Running if new_choice => Some(status),
                 Status::Completed if lifecycle => Some(status),
                 Status::Paused | Status::Blocked if new_lifecycle => Some(status),
                 Status::Pending if activation_changed => Some(if record.explicit_resume {
@@ -871,6 +925,32 @@ pub(super) fn transition(
         }
         if let Some(id) = turn_id {
             record.task.turn_id = Some(id.into());
+        }
+        Ok(())
+    })
+}
+
+/// A turn admission may finish after a browser choice updates the same request.
+/// Keep that newer phase pending instead of marking it as the old running turn.
+pub(super) fn admit(
+    root: &Path,
+    home: &Path,
+    task: &Task,
+    bead_id: &str,
+    turn_id: Option<&str>,
+) -> Result<Task, CoreError> {
+    mutate(root, home, &task.request_id, None, |record| {
+        if matches!(record.task.status, Status::Pending | Status::Running)
+            && record.private_event["type"] == task.event["type"]
+            && record.private_event["_jarvisPendingEventSeq"]
+                == task.event["_jarvisPendingEventSeq"]
+        {
+            record.task.status = Status::Running;
+            record.explicit_resume = false;
+            record.task.bead_id = Some(bead_id.into());
+            if let Some(id) = turn_id {
+                record.task.turn_id = Some(id.into());
+            }
         }
         Ok(())
     })
@@ -1345,6 +1425,189 @@ mod tests {
         )
         .unwrap();
         (task, events)
+    }
+
+    #[test]
+    fn choice_completion_cannot_acknowledge_a_later_choice_in_the_same_human_request() {
+        let fixture = Fixture::new();
+        let mut events = vec![(110, generate("choice", "Move the badge", 110))];
+        fixture.journal("choice", &events);
+        let generation = fixture.scan(100).remove(0);
+        assert!(is_current_event(&fixture.root, &generation).unwrap());
+        events.push((120, json!({"id":"choice","type":"variants_ready"})));
+        events.push((130, json!({"id":"choice","type":"accept","variantId":"2"})));
+        fixture.journal("choice", &events);
+        let first = fixture.scan(100).remove(0);
+        assert!(is_current_event(&fixture.root, &first).unwrap());
+        assert!(!is_current_event(&fixture.root, &generation).unwrap());
+        events.push((140, json!({"id":"choice","type":"carbonize_cleanup"})));
+        fixture.journal("choice", &events);
+        let cleanup = fixture.scan(100).remove(0);
+        assert!(is_current_event(&fixture.root, &first).unwrap());
+        assert!(is_current_event(&fixture.root, &cleanup).unwrap());
+        events.push((150, json!({"id":"choice","type":"accept","variantId":"1"})));
+        fixture.journal("choice", &events);
+        let latest = fixture.scan(100).remove(0);
+        assert_eq!(latest.request_id, first.request_id);
+        assert!(!is_current_event(&fixture.root, &first).unwrap());
+        assert!(!is_current_event(&fixture.root, &cleanup).unwrap());
+        assert!(is_current_event(&fixture.root, &latest).unwrap());
+        events.push((160, json!({"id":"choice","type":"carbonize_cleanup"})));
+        events.push((170, json!({"id":"choice","type":"complete"})));
+        fixture.journal("choice", &events);
+        assert!(!is_current_event(&fixture.root, &first).unwrap());
+        assert!(is_current_event(&fixture.root, &latest).unwrap());
+    }
+
+    #[test]
+    fn blocked_or_discarded_choice_cannot_mutate_even_while_its_host_turn_is_running() {
+        for terminal in ["agent_error", "discarded"] {
+            let fixture = Fixture::new();
+            let mut events = vec![
+                (110, generate("stale-choice", "Move the badge", 110)),
+                (120, json!({"id":"stale-choice","type":"variants_ready"})),
+                (
+                    130,
+                    json!({"id":"stale-choice","type":"accept","variantId":"2"}),
+                ),
+            ];
+            let journal = fixture.journal("stale-choice", &events);
+            let task = fixture.scan(100).remove(0);
+            let task = transition(
+                &fixture.root,
+                &fixture.home,
+                &task.request_id,
+                Status::Running,
+                Some("same-bead"),
+                Some("accept-turn"),
+            )
+            .unwrap();
+            assert!(can_mutate_current_event(&fixture.root, &task).unwrap());
+            events.push((140, json!({"id":"stale-choice","type":terminal})));
+            fixture.journal("stale-choice", &events);
+            let before = fs::read(&journal).unwrap();
+            // Queue reconciliation preserves the active turn until it settles;
+            // admission must inspect the canonical outcome, not this host status.
+            assert_eq!(fixture.scan(100)[0].status, Status::Running);
+            assert!(is_current_event(&fixture.root, &task).unwrap());
+            assert!(!can_mutate_current_event(&fixture.root, &task).unwrap());
+            assert_eq!(fs::read(&journal).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn confirmed_discard_is_readable_without_authorizing_another_mutation() {
+        let fixture = Fixture::new();
+        let mut events = vec![
+            (110, generate("discard-result", "Move the badge", 110)),
+            (120, json!({"id":"discard-result","type":"variants_ready"})),
+            (130, json!({"id":"discard-result","type":"discard"})),
+        ];
+        fixture.journal("discard-result", &events);
+        let task = fixture.scan(100).remove(0);
+        assert!(can_mutate_current_event(&fixture.root, &task).unwrap());
+        events.push((140, json!({"id":"discard-result","type":"discarded"})));
+        fixture.journal("discard-result", &events);
+        assert!(is_current_event(&fixture.root, &task).unwrap());
+        assert!(!can_mutate_current_event(&fixture.root, &task).unwrap());
+        assert_eq!(
+            confirmed_outcome(&fixture.root, &task).unwrap(),
+            Some(Status::Cancelled)
+        );
+    }
+
+    #[test]
+    fn choice_retains_cleanup_and_idempotent_completion_only_for_its_own_lineage() {
+        let fixture = Fixture::new();
+        let mut events = vec![
+            (110, generate("choice-lineage", "Move the badge", 110)),
+            (120, json!({"id":"choice-lineage","type":"variants_ready"})),
+            (
+                130,
+                json!({"id":"choice-lineage","type":"accept","variantId":"2"}),
+            ),
+        ];
+        fixture.journal("choice-lineage", &events);
+        let task = fixture.scan(100).remove(0);
+        events.push((
+            140,
+            json!({"id":"choice-lineage","type":"carbonize_cleanup"}),
+        ));
+        fixture.journal("choice-lineage", &events);
+        assert!(can_mutate_current_event(&fixture.root, &task).unwrap());
+        events.push((150, json!({"id":"choice-lineage","type":"complete"})));
+        fixture.journal("choice-lineage", &events);
+        assert!(can_mutate_current_event(&fixture.root, &task).unwrap());
+        assert_eq!(
+            confirmed_outcome(&fixture.root, &task).unwrap(),
+            Some(Status::Completed)
+        );
+        events.push((
+            160,
+            json!({"id":"choice-lineage","type":"accept","variantId":"1"}),
+        ));
+        fixture.journal("choice-lineage", &events);
+        assert!(!can_mutate_current_event(&fixture.root, &task).unwrap());
+        assert!(!is_current_event(&fixture.root, &task).unwrap());
+    }
+
+    #[test]
+    fn browser_choice_supersedes_running_generation_once_without_replacing_the_request() {
+        for kind in ["accept", "discard"] {
+            let fixture = Fixture::new();
+            let mut events = vec![(110, generate(kind, "Move the badge", 110))];
+            fixture.journal(kind, &events);
+            let task = fixture.scan(100).remove(0);
+            transition(
+                &fixture.root,
+                &fixture.home,
+                &task.request_id,
+                Status::Running,
+                Some("same-bead"),
+                Some("generation-turn"),
+            )
+            .unwrap();
+            events.push((120, json!({"type":"variants_ready","id":kind})));
+            fixture.journal(kind, &events);
+            assert_eq!(fixture.scan(100)[0].status, Status::Running);
+            events.push((
+                130,
+                json!({"type":kind,"id":kind,"variantId":"2","clientSentAt":130}),
+            ));
+            let journal = fixture.journal(kind, &events);
+            let original = fs::read(&journal).unwrap();
+            let choice = fixture.scan(100).remove(0);
+            assert_eq!(choice.status, Status::Pending);
+            assert_eq!(choice.request_id, task.request_id);
+            assert_eq!(choice.bead_id.as_deref(), Some("same-bead"));
+            assert_eq!(choice.turn_id.as_deref(), Some("generation-turn"));
+            assert_eq!(choice.event["type"], kind);
+            assert_eq!(choice.event["variantId"], "2");
+            let late_admission = admit(
+                &fixture.root,
+                &fixture.home,
+                &task,
+                "same-bead",
+                Some("late-generation-turn"),
+            )
+            .unwrap();
+            assert_eq!(late_admission.status, Status::Pending);
+            assert_eq!(late_admission.event["variantId"], "2");
+            assert_eq!(late_admission.turn_id.as_deref(), Some("generation-turn"));
+            let running = transition(
+                &fixture.root,
+                &fixture.home,
+                &choice.request_id,
+                Status::Running,
+                None,
+                Some("choice-turn"),
+            )
+            .unwrap();
+            let again = fixture.scan(100).remove(0);
+            assert_eq!(again.status, Status::Running);
+            assert_eq!(again.revision, running.revision);
+            assert_eq!(fs::read(journal).unwrap(), original);
+        }
     }
 
     #[test]

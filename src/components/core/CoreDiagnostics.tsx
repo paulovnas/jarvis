@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { RowsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { CoreInstallProgress } from "@/components/core/CoreInstallProgress";
 import { CoreReinstallDialog } from "@/components/core/CoreReinstallDialog";
+import { BrowserRuntimeRow } from "@/components/core/BrowserRuntimeRow";
 import { DiagnosticEvidence } from "@/components/core/DiagnosticEvidence";
 import { Context7Configuration } from "@/components/settings/CoreSettings";
 import { OpenMontageConfiguration } from "@/components/settings/OpenMontageConfiguration";
@@ -24,7 +25,7 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
   const { snapshot, busy, diagnose, repair, install } = core;
   useEffect(() => { if (snapshot && !started.current && !busy && snapshot.items.some(item => activeCore(item.id) && !item.diagnostics.length)) { started.current = true; void diagnose(); } }, [snapshot, busy, diagnose]);
   const target = snapshot?.items.find(item => item.id === reinstall);
-  const hasPendingError = snapshot?.items.some(item => item.error) === true;
+  const hasPendingError = snapshot?.items.some(item => item.error) === true || snapshot?.browserRuntime?.state === "unavailable";
   const blocking = busy && !snapshot?.items.some(item => item.stage === "Analisando componente");
   return <>
     <Dialog open onOpenChange={open => { if (!open && !blocking) onClose(); }}>
@@ -35,6 +36,7 @@ export default function CoreDiagnostics({ core, onClose }: { core: CoreControlle
           <div className="mb-4 flex items-center justify-between gap-3"><Badge variant="outline" className={snapshot?.ready && !hasPendingError ? "border-onedark-green/30 text-onedark-green" : "border-onedark-yellow/30 text-onedark-yellow"}>{snapshot?.ready ? hasPendingError ? "Core funcional · ação pendente" : "Core pronto" : "Atenção necessária"}</Badge><Button size="sm" variant="ghost" disabled={busy} onClick={() => void diagnose()}><RefreshCw className="size-3.5" />Analisar novamente</Button></div>
           <Card className="instrument-panel gap-0 py-0"><CardContent className="divide-y divide-border p-0">
             {!snapshot && <RowsSkeleton label="Carregando diagnóstico" count={ACTIVE_CORE_IDS.length} />}
+            {snapshot?.browserRuntime && <BrowserRuntimeRow runtime={snapshot.browserRuntime} />}
             {snapshot?.items.filter(item => activeCore(item.id)).map(item => {
               const { icon: Icon, color, summary, description } = CORE_DETAILS[item.id];
               const ready = item.installed && item.configured && !item.healthError;

@@ -24,6 +24,7 @@ mod http;
 pub(crate) mod image_generation;
 pub(crate) mod image_tasks;
 mod impeccable;
+pub(crate) use impeccable::observe_setup as observe_impeccable_setup;
 mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
@@ -1215,10 +1216,9 @@ impl Session {
     }
     fn has_active_task(&self) -> Result<bool, AgentError> {
         let data = self.data.lock().map_err(|_| AgentError::internal())?;
-        Ok(data
-            .turns
-            .last()
-            .is_some_and(|turn| tasks::has_active(&turn.turn.tasks)))
+        Ok(data.turns.last().is_some_and(|turn| {
+            tasks::has_active(&turn.turn.tasks) || core_runtime::has_native_live_task(turn)
+        }))
     }
     fn has_unfinished_tasks(&self) -> Result<bool, AgentError> {
         let data = self.data.lock().map_err(|_| AgentError::internal())?;
@@ -1746,6 +1746,7 @@ impl AgentState {
                 manual_compaction: false,
             }),
             emit: Arc::new(move |snapshot| {
+                impeccable::observe_setup(&handle, &snapshot);
                 companion::observe(&handle, &snapshot);
                 companion_chat::changed(&handle, &snapshot);
                 desktop_events::attention(&handle, &snapshot.conversation_id, &snapshot);
@@ -2510,6 +2511,24 @@ pub fn cancel_agent_turn(
         if active.id == turn_id {
             active.cancel();
         }
+    }
+    Ok(())
+}
+
+/// Host-only cancellation when a newer Live browser choice owns the request.
+/// Matching the exact turn prevents stopping unrelated work in the same chat.
+pub(crate) fn supersede_agent_turn(
+    agent: tauri::State<'_, AgentState>,
+    conversation_id: String,
+    turn_id: String,
+) -> Result<(), AgentError> {
+    supersede_live_turn(agent.existing(&conversation_id)?.as_ref(), &turn_id)
+}
+
+fn supersede_live_turn(session: &Session, turn_id: &str) -> Result<(), AgentError> {
+    let mut data = session.data.lock().map_err(|_| AgentError::internal())?;
+    if let Some(active) = data.active.as_mut().filter(|active| active.id == turn_id) {
+        active.supersede_live();
     }
     Ok(())
 }
@@ -3342,6 +3361,7 @@ fn run_turn_once<'a>(
             _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
             result = skill_input::load_from_snapshot(session, home, &frozen_skills) => result?,
         }
+        core_runtime::prepare_live_task(session, execution.as_ref()).await?;
         if options.executor != crate::claude::Executor::Jarvis {
             let learning_owner = execution.as_ref().map_or(session, |exec| exec.root());
             if !global_companion {
@@ -5139,6 +5159,14 @@ fn run_turn_once<'a>(
                     confirmed_mutation || (tool.name.starts_with("mcp_") && requires_task),
                 );
                 let retained_bytes = wire_output.len() as u64;
+                let accepted_live = impeccable::should_finish_accept(
+                    execution.as_ref().and_then(workflow::Execution::native_app),
+                    session,
+                    &owner.id,
+                    &tool,
+                    &output,
+                    status,
+                )?;
                 session
                     .update_async(|data| {
                         let current = data.turns.last_mut().unwrap();
@@ -5217,6 +5245,12 @@ fn run_turn_once<'a>(
                 {
                     return Err(AgentError::cancelled());
                 }
+                if accepted_live {
+                    impeccable::finish_accept(session, &calls[call_index + 1..]).await?;
+                    context.close().await;
+                    graft.close().await;
+                    return Ok(());
+                }
                 if tool.name == "hub_complete" && status == "completed" {
                     if let Some(text) = execution.as_ref().and_then(|exec| exec.handoff_text()) {
                         session
@@ -5281,15 +5315,22 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
                 active.transition(turn_state::TurnPhase::Draining);
             }
             data.sync_timing();
+            let live_superseded = data.active.as_ref().is_some_and(Active::live_superseded);
             let current = data.turns.last_mut().unwrap();
             journal::interrupt_tools(current);
             current.turn.active_since = None;
             let mut recovery = None;
             match result {
                 Ok(()) => current.turn.status = TurnStatus::Completed,
-                Err(error) => {
+                Err(mut error) => {
+                    if live_superseded && error.code == "cancelled" {
+                        error = AgentError::new(
+                            "impeccable_live_superseded",
+                            "Escolha recebida no Live. A geração anterior foi encerrada.",
+                        );
+                    }
                     current.turn.status = match error.code.as_str() {
-                        "cancelled" => TurnStatus::Cancelled,
+                        "cancelled" | "impeccable_live_superseded" => TurnStatus::Cancelled,
                         "progress_paused" | "interrupted" => {
                             if current.turn.options.direct() {
                                 recovery = Some(current.turn.id.clone());

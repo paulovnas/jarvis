@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { CEF_BINDINGS_VERSION } from "./prepare-cef-ci";
+import { TAURI_CEF_REVISION } from "./tauri-cef-cli";
 
 const state = vi.hoisted(() => ({
   root: "", command: vi.fn<(...args: unknown[]) => string>(),
@@ -132,7 +134,7 @@ it("uses the current launcher to select a validated release source without repea
   for (const check of ["bun run check", "cargo clippy", "cargo test", "check-linux-keyring.sh"]) expect(workflow).not.toContain(check);
   expect(workflow).toContain("bun scripts/release-ci.ts stage");
   const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
-  for (const required of ["src-tauri/**", "bun.lock", "package.json", "macos-15", "windows-2022", "ubuntu-22.04", "bun scripts/native-validation.ts", "needs.changes.outputs.required == 'true'", "check-linux-keyring.sh"]) expect(native).toContain(required);
+  for (const required of ["src-tauri/**", "bun.lock", "package.json", "macos-15", "windows-2022", "ubuntu-24.04", "bun scripts/native-validation.ts", "needs.changes.outputs.required == 'true'", "check-linux-keyring.sh"]) expect(native).toContain(required);
   expect(native).toContain("--lib -- system:: secrets::");
   expect(native).toContain("bun run build:extension");
   expect(native).toContain("github.event_name == 'pull_request' && github.ref || github.sha");
@@ -145,6 +147,31 @@ it("allows enough time to upload every signed release artifact", () => {
   const publishJob = workflow.split("\n  publish:")[1];
   expect(publishJob).toBeDefined();
   expect(publishJob).toContain("timeout-minutes: 30");
+});
+it("prepares matching native Chromium libraries and the pinned bundler for every CI platform", () => {
+  const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
+  const release = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  for (const workflow of [native, release]) {
+    expect(workflow).toContain("ubuntu-24.04");
+    expect(workflow).not.toContain("ubuntu-22.04");
+    for (const dependency of ["ninja-build", "libgtk-4-dev", "libx11-dev", "libnss3-dev", "libgbm-dev"]) expect(workflow).toContain(dependency);
+    expect(workflow).toContain(`~/.cache/jarvis/cef/${CEF_BINDINGS_VERSION}`);
+    expect(workflow).toContain(TAURI_CEF_REVISION);
+    const preparation = workflow.indexOf("run: bun scripts/prepare-cef-ci.ts");
+    expect(workflow).toContain("if ! command -v ninja >/dev/null 2>&1; then");
+    expect(workflow).toContain("HOMEBREW_NO_AUTO_UPDATE=1 brew install ninja");
+    expect(workflow).toContain("Get-Command ninja -ErrorAction SilentlyContinue");
+    expect(workflow).toContain("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }");
+    expect(workflow.indexOf("brew install ninja")).toBeLessThan(preparation);
+    expect(workflow.indexOf("Get-Command ninja")).toBeLessThan(preparation);
+    expect(preparation).toBeGreaterThan(workflow.indexOf("rustup default stable"));
+    expect(preparation).toBeLessThan(workflow.indexOf(workflow === native ? "cargo test --locked" : "run: bun run tauri build"));
+  }
+  expect(native).toContain("core::browser_runtime::");
+  expect(release).toContain("bun scripts/prepare-cef-ci.ts --cli");
+  expect(release).toContain(`~/.cache/jarvis/tauri-cli/${TAURI_CEF_REVISION}/bin`);
+  expect(release).not.toContain("bunx tauri");
+  expect(readFileSync(path.join(process.cwd(), "src-tauri/src/core/browser_runtime.rs"), "utf8")).toContain(`const CEF_VERSION: &str = "${CEF_BINDINGS_VERSION}"`);
 });
 it("prepares and transports installed release notes for every platform before publication", () => {
   const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");

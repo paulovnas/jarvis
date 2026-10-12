@@ -1,6 +1,9 @@
+diff --git a/crates/live/src/jarvis_request_guard.rs b/crates/live/src/jarvis_request_guard.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..eafa41b9ad62e5c41f713611c56ca00527f5b332
 --- /dev/null
 +++ b/crates/live/src/jarvis_request_guard.rs
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,567 @@
 +//! Optional Jarvis host admission/cancellation fencing. Upstream callers keep
 +//! their original protocol; guarded host requests never cross a human revision.
 +use crate::{session::SessionStore, util::Env};
@@ -92,7 +95,13 @@
 +        .get("JARVIS_LIVE_EVENT_TYPE")
 +        .filter(|kind| !kind.is_empty())
 +        .ok_or_else(|| "invalid_jarvis_request".to_string())?;
++    let pending = env
++        .get("JARVIS_LIVE_PENDING_EVENT_SEQ")
++        .and_then(|raw| raw.parse::<u64>().ok())
++        .filter(|seq| *seq > 0)
++        .ok_or_else(|| "invalid_jarvis_request".to_string())?;
 +    body["jarvisRequestSeq"] = Value::from(seq);
++    body["jarvisPendingEventSeq"] = Value::from(pending);
 +    body["jarvisEventType"] = Value::from(kind.as_str());
 +    Ok(true)
 +}
@@ -105,13 +114,21 @@
 +    request_seq: u64,
 +    pending_seq: Option<u64>,
 +) -> bool {
++    read_journal(store, id).is_some_and(|bytes| {
++        identity(id, &bytes).is_some_and(|(current, pending)| {
++            current == request_seq && pending_seq.is_none_or(|expected| pending == Some(expected))
++        })
++    })
++}
++
++fn read_journal(store: &SessionStore, id: &str) -> Option<Vec<u8>> {
 +    if id.is_empty()
 +        || id.len() > 128
 +        || !id
 +            .bytes()
 +            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 +    {
-+        return false;
++        return None;
 +    }
 +    for directory in [&store.root_dir, &store.legacy_root_dir] {
 +        let directory = Path::new(directory);
@@ -120,42 +137,193 @@
 +            continue;
 +        };
 +        if meta.is_symlink() || !meta.is_file() || meta.len() > MAX_JOURNAL {
-+            return false;
++            return None;
 +        }
 +        let (Ok(root), Ok(canonical)) = (directory.canonicalize(), path.canonicalize()) else {
-+            return false;
++            return None;
 +        };
 +        if canonical.parent() != Some(root.as_path()) {
-+            return false;
++            return None;
 +        }
 +        let mut options = fs::OpenOptions::new();
 +        options.read(true);
 +        let Ok(file) = options.open(&path) else {
-+            return false;
++            return None;
 +        };
 +        let mut bytes = Vec::new();
 +        if file.take(MAX_JOURNAL + 1).read_to_end(&mut bytes).is_err()
 +            || bytes.len() as u64 > MAX_JOURNAL
 +        {
-+            return false;
++            return None;
 +        }
-+        return identity(id, &bytes).is_some_and(|(current, pending)| {
-+            current == request_seq && pending_seq.is_none_or(|expected| pending == Some(expected))
-+        });
++        return Some(bytes);
 +    }
-+    false
++    None
++}
++
++fn records(id: &str, bytes: &[u8]) -> Option<Vec<(u64, Value)>> {
++    identity(id, bytes)?;
++    std::str::from_utf8(bytes)
++        .ok()?
++        .lines()
++        .filter(|line| !line.trim().is_empty())
++        .map(|line| {
++            let record: Value = serde_json::from_str(line).ok()?;
++            Some((record["seq"].as_u64()?, record["event"].clone()))
++        })
++        .collect()
++}
++
++/// A cleanup belongs to the last durable browser choice, never a client field.
++pub(crate) fn choice_seq(store: &SessionStore, id: &str) -> Option<u64> {
++    let bytes = read_journal(store, id)?;
++    let records = records(id, &bytes)?;
++    records
++        .iter()
++        .rev()
++        .find(|(_, event)| matches!(event["type"].as_str(), Some("accept" | "discard")))
++        .filter(|(_, event)| event["type"] == "accept")
++        .map(|(seq, _)| *seq)
++}
++
++/// Acknowledgements fence the leased phase, with only host-owned enrichment
++/// and the accepted choice's cleanup allowed to advance that phase.
++pub(crate) fn reply_matches(
++    store: &SessionStore,
++    id: &str,
++    request_seq: u64,
++    pending_seq: u64,
++    kind: &str,
++    reply_kind: &str,
++) -> bool {
++    let Some(bytes) = read_journal(store, id) else {
++        return false;
++    };
++    let Some((current_request, current_pending)) = identity(id, &bytes) else {
++        return false;
++    };
++    if current_request != request_seq {
++        return false;
++    }
++    let Some(records) = records(id, &bytes) else {
++        return false;
++    };
++    let Some((_, source)) = records.iter().find(|(seq, _)| *seq == pending_seq) else {
++        return false;
++    };
++    if source["type"].as_str() != Some(kind) {
++        return false;
++    }
++    if current_pending == Some(pending_seq) {
++        return true;
++    }
++    let later = records.iter().filter(|(seq, _)| *seq > pending_seq);
++    if matches!(kind, "generate" | "steer") && current_pending.is_some() {
++        return later
++            .clone()
++            .all(|(_, event)| match event["type"].as_str().unwrap_or("") {
++                "generate" | "steer" => same_submission(source, event),
++                "accept"
++                | "discard"
++                | "carbonize_cleanup"
++                | "manual_edit_apply"
++                | "variant_mount_failed"
++                | "agent_done"
++                | "steer_done"
++                | "variants_ready"
++                | "complete"
++                | "discarded"
++                | "agent_error" => false,
++                _ => true,
++            });
++    }
++    if kind != "accept" || !matches!(reply_kind, "complete" | "error" | "agent_done" | "done") {
++        return false;
++    }
++    let last_choice = records
++        .iter()
++        .rev()
++        .find(|(_, event)| matches!(event["type"].as_str(), Some("accept" | "discard")));
++    if last_choice.map(|(seq, _)| *seq) != Some(pending_seq) {
++        return false;
++    }
++    let mut final_complete = false;
++    let mut accept_ack = false;
++    let mut cleanup_pending = false;
++    for (_, event) in later {
++        match event["type"].as_str().unwrap_or("") {
++            "carbonize_cleanup" if !final_complete => {
++                if event
++                    .get("_jarvisChoiceEventSeq")
++                    .is_some_and(|seq| seq.as_u64() != Some(pending_seq))
++                    || event["sessionId"] != id
++                    || event["variantId"] != source["variantId"]
++                {
++                    return false;
++                }
++                cleanup_pending = true;
++            }
++            "agent_done" if !final_complete => {
++                if !matches!(
++                    event["sourceEventType"].as_str(),
++                    Some("accept" | "carbonize_cleanup")
++                ) {
++                    return false;
++                }
++                accept_ack = true;
++                cleanup_pending = false;
++            }
++            "complete" => {
++                if !matches!(
++                    event["sourceEventType"].as_str(),
++                    Some("accept" | "carbonize_cleanup")
++                ) {
++                    return false;
++                }
++                final_complete = true;
++                cleanup_pending = false;
++            }
++            "generate"
++            | "steer"
++            | "manual_edit_apply"
++            | "variant_mount_failed"
++            | "accept"
++            | "discard"
++            | "carbonize_cleanup"
++            | "agent_done"
++            | "steer_done"
++            | "variants_ready"
++            | "discarded"
++            | "agent_error" => return false,
++            _ => {}
++        }
++    }
++    if current_pending.is_some() {
++        return cleanup_pending && !final_complete;
++    }
++    (accept_ack && !final_complete) || (final_complete && reply_kind == "complete")
 +}
 +
 +/// A reused action ID can leave an older in-memory queue payload because
 +/// upstream deduplicates id+type. Reconcile only against its canonical snapshot.
 +pub(crate) fn pending(store: &SessionStore, id: &str) -> Option<serde_json::Map<String, Value>> {
-+    store
++    let mut event = store
 +        .read_state(id, false)
 +        .ok()?
 +        .snapshot
 +        .get("pendingEvent")?
 +        .as_object()
-+        .cloned()
++        .cloned()?;
++    event.insert(
++        "_jarvisPendingEventSeq".into(),
++        Value::from(pending_seq(store, id)?),
++    );
++    Some(event)
++}
++
++pub(crate) fn pending_seq(store: &SessionStore, id: &str) -> Option<u64> {
++    let bytes = read_journal(store, id)?;
++    identity(id, &bytes)?.1
 +}
 +
 +#[cfg(test)]
@@ -281,15 +449,133 @@
 +        env.insert("JARVIS_LIVE_REQUEST_SEQ".into(), "7".into());
 +        assert!(bind_reply(&mut body, &env).is_err());
 +        env.insert("JARVIS_LIVE_EVENT_TYPE".into(), "accept".into());
++        assert!(bind_reply(&mut body, &env).is_err());
++        env.insert("JARVIS_LIVE_PENDING_EVENT_SEQ".into(), "9".into());
 +        assert!(bind_reply(&mut body, &env).unwrap());
 +        assert_eq!(body["jarvisRequestSeq"], 7);
++        assert_eq!(body["jarvisPendingEventSeq"], 9);
 +        assert_eq!(body["jarvisEventType"], "accept");
 +        assert_eq!(body["sourceEventType"], "accept");
 +    }
++
++    fn with_journal(events: &[Value], test: impl FnOnce(&SessionStore)) {
++        let directory = std::env::temp_dir().join(format!(
++            "jarvis-cas-phase-{}-{:?}",
++            std::process::id(),
++            std::thread::current().id()
++        ));
++        std::fs::create_dir_all(&directory).unwrap();
++        let store = SessionStore {
++            root_dir: directory.to_string_lossy().into_owned(),
++            legacy_root_dir: directory.join("legacy").to_string_lossy().into_owned(),
++            session_id: None,
++        };
++        let bytes = journal(events);
++        let file = directory.join("action.jsonl");
++        std::fs::write(&file, &bytes).unwrap();
++        test(&store);
++        assert_eq!(std::fs::read(file).unwrap(), bytes);
++        std::fs::remove_dir_all(directory).unwrap();
++    }
++
++    #[test]
++    fn jarvis_cas_old_accept_ack_never_clears_a_new_choice_from_the_same_human() {
++        with_journal(
++            &[
++                json!({"id":"action","type":"generate","freeformPrompt":"Badge"}),
++                json!({"id":"action","type":"agent_done"}),
++                json!({"id":"action","type":"accept","variantId":"1"}),
++                json!({"id":"action","type":"accept","variantId":"2"}),
++            ],
++            |store| {
++                assert!(!reply_matches(store, "action", 1, 3, "accept", "complete"));
++                assert!(reply_matches(store, "action", 1, 4, "accept", "complete"));
++                assert_eq!(choice_seq(store, "action"), Some(4));
++                assert_eq!(
++                    pending(store, "action").unwrap()["_jarvisPendingEventSeq"],
++                    4
++                );
++            },
++        );
++    }
++
++    #[test]
++    fn jarvis_cas_accept_ack_survives_its_owned_cleanup_and_completion_only() {
++        let mut events = vec![
++            json!({"id":"action","type":"generate","freeformPrompt":"Badge"}),
++            json!({"id":"action","type":"agent_done"}),
++            json!({"id":"action","type":"accept","variantId":"2"}),
++            json!({"id":"action","type":"agent_done","sourceEventType":"accept","carbonize":true}),
++        ];
++        with_journal(&events, |store| {
++            assert!(reply_matches(store, "action", 1, 3, "accept", "complete"))
++        });
++        events.push(json!({"id":"action","type":"carbonize_cleanup","sessionId":"action","variantId":"2","file":"index.html","_jarvisChoiceEventSeq":3}));
++        with_journal(&events, |store| {
++            assert!(reply_matches(store, "action", 1, 3, "accept", "complete"));
++            assert!(!matches(store, "action", 1, Some(3)));
++        });
++        events.push(json!({"id":"action","type":"complete","sourceEventType":"carbonize_cleanup"}));
++        with_journal(&events, |store| {
++            assert!(reply_matches(store, "action", 1, 3, "accept", "complete"))
++        });
++        events.push(json!({"id":"action","type":"accept","variantId":"1"}));
++        with_journal(&events, |store| {
++            assert!(!reply_matches(store, "action", 1, 3, "accept", "complete"))
++        });
++    }
++
++    #[test]
++    fn jarvis_cas_accept_cleanup_cannot_cross_discard_cancellation_or_wrong_choice() {
++        let base = vec![
++            json!({"id":"action","type":"generate","freeformPrompt":"Badge"}),
++            json!({"id":"action","type":"agent_done"}),
++            json!({"id":"action","type":"accept","variantId":"2"}),
++        ];
++        for boundary in [
++            json!({"id":"action","type":"discard"}),
++            json!({"id":"action","type":"agent_error","sourceEventType":"accept"}),
++        ] {
++            let mut events = base.clone();
++            events.push(boundary);
++            events.push(json!({"id":"action","type":"carbonize_cleanup","sessionId":"action","variantId":"2","file":"index.html","_jarvisChoiceEventSeq":3}));
++            with_journal(&events, |store| {
++                assert!(!reply_matches(store, "action", 1, 3, "accept", "complete"))
++            });
++        }
++        let mut events = base;
++        events.push(json!({"id":"action","type":"carbonize_cleanup","sessionId":"action","variantId":"1","file":"index.html","_jarvisChoiceEventSeq":3}));
++        with_journal(&events, |store| {
++            assert!(!reply_matches(store, "action", 1, 3, "accept", "complete"))
++        });
++    }
++
++    #[test]
++    fn jarvis_cas_enriched_generation_and_steer_keep_their_ack_without_crossing_lifecycle() {
++        for (kind, reply) in [("generate", "done"), ("steer", "steer_done")] {
++            let source =
++                json!({"id":"action","type":kind,"freeformPrompt":"Badge","message":"Badge"});
++            let mut enriched = source.clone();
++            enriched["scaffoldAttempted"] = json!(true);
++            with_journal(&[source.clone(), enriched.clone()], |store| {
++                assert!(reply_matches(store, "action", 1, 1, kind, reply))
++            });
++            with_journal(
++                &[
++                    source,
++                    json!({"id":"action","type":"accept","variantId":"1"}),
++                    enriched,
++                ],
++                |store| assert!(!reply_matches(store, "action", 1, 1, kind, reply)),
++            );
++        }
++    }
 +}
+diff --git a/crates/live/src/lib.rs b/crates/live/src/lib.rs
+index 660299885194488a656596886774ef7689cb5a84..45ebcbef51b6561cb3cc74cd15a3054bc3309255 100644
 --- a/crates/live/src/lib.rs
 +++ b/crates/live/src/lib.rs
-@@ -18,6 +18,7 @@
+@@ -18,6 +18,7 @@ pub mod gitignore;
  pub mod inject;
  pub mod instructions;
  pub mod journal;
@@ -297,9 +583,11 @@
  pub mod json_error;
  pub mod live_http;
  pub mod manifests;
+diff --git a/crates/live/src/live_complete.rs b/crates/live/src/live_complete.rs
+index 6847f5b4d104c2a897b0275c6613c3a71f1cad72..9ce9369ffbb618cf1b721e7b8aa613b3e611ab8b 100644
 --- a/crates/live/src/live_complete.rs
 +++ b/crates/live/src/live_complete.rs
-@@ -132,6 +132,9 @@
+@@ -132,6 +132,9 @@ fn complete_cli(argv: &[String], io: &mut Io) -> i32 {
          if let Some(m) = &args.message {
              body["message"] = json!(m);
          }
@@ -309,7 +597,7 @@
          if info.token.is_none() {
              body.as_object_mut().map(|o| o.shift_remove("token"));
          }
-@@ -160,6 +163,10 @@
+@@ -160,6 +163,10 @@ fn complete_cli(argv: &[String], io: &mut Io) -> i32 {
          return 0;
      }
  
@@ -320,9 +608,11 @@
      let store = create_live_session_store(&cwd, &env, Some(&id));
      let event = match args.status {
          "discarded" => json!({ "type": "discarded", "id": id }),
+diff --git a/crates/live/src/live_poll.rs b/crates/live/src/live_poll.rs
+index 1a17ffafa6f99639774dec700a1c69fa859817f3..f105fd8633d83510e050af5a598012636adfc484 100644
 --- a/crates/live/src/live_poll.rs
 +++ b/crates/live/src/live_poll.rs
-@@ -194,8 +194,10 @@
+@@ -194,8 +194,10 @@ fn map_transport(e: &ureq::Transport) -> PollError {
  }
  
  /// JS: postReply(base, token, reply)
@@ -335,7 +625,7 @@
      let res = agent(300_000)
          .post(&format!("{}/poll", base))
          .set("Content-Type", "application/json")
-@@ -549,7 +551,7 @@
+@@ -549,7 +551,7 @@ fn augment_event_with_accept_handling(
          },
      };
      let mut ack: Option<Value> = None;
@@ -344,7 +634,7 @@
          let msg = match e {
              PollError::Auth => {
                  "Authentication failed. The server token may have changed.".to_string()
-@@ -735,7 +737,7 @@
+@@ -735,7 +737,7 @@ pub fn run(args: &[String], io: &mut Io) -> i32 {
              }
          };
          let then_poll = argv.iter().any(|a| a == "--then-poll");
@@ -353,9 +643,11 @@
              Ok(()) => {
                  let ack = reply_ack_json(&reply);
                  if then_poll {
+diff --git a/crates/live/src/live_server.rs b/crates/live/src/live_server.rs
+index 3aa3afc67d2e80d51c98b09b451488babc8ac7d2..2631c532da01fe6de43514e267e792b5ec45c3e1 100644
 --- a/crates/live/src/live_server.rs
 +++ b/crates/live/src/live_server.rs
-@@ -22,7 +22,7 @@
+@@ -22,7 +22,7 @@ use crate::paths::{
  use crate::random::random_uuid;
  use crate::roots::enter_live_root;
  use crate::server_state::{
@@ -364,7 +656,7 @@
      DEFAULT_POLL_TIMEOUT, SSE_HEARTBEAT_INTERVAL_MS,
  };
  use crate::session::create_live_session_store;
-@@ -747,6 +747,7 @@
+@@ -747,6 +747,7 @@ fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket)
                  .collect();
              let body = json!({
                  "status": "ok",
@@ -372,7 +664,7 @@
                  "port": st.port,
                  "connectedClients": st.sse_clients.len(),
                  "pendingEvents": pending,
-@@ -775,7 +776,7 @@
+@@ -775,7 +776,7 @@ fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket)
                  &cors,
                  json_res(
                      200,
@@ -381,7 +673,22 @@
                  ),
              );
          }
-@@ -1376,7 +1377,46 @@
+@@ -1272,6 +1273,14 @@ fn handle_events_post(
+         }
+     }
+     let missed = st.detect_missed_generation_completion(&msg_obj);
++    if ty == "carbonize_cleanup" {
++        msg_obj.remove("_jarvisChoiceEventSeq");
++        if let Some(o) = msg.as_object_mut() { o.remove("_jarvisChoiceEventSeq"); }
++        if let Some(choice) = id_str.as_deref().and_then(|id| crate::jarvis_request_guard::choice_seq(&st.store, id)) {
++            msg_obj.insert("_jarvisChoiceEventSeq".into(), json!(choice));
++            if let Some(o) = msg.as_object_mut() { o.insert("_jarvisChoiceEventSeq".into(), json!(choice)); }
++        }
++    }
+     if id_truthy {
+         if let Err(e) = st.store.append_event(&msg) {
+             drop(st);
+@@ -1376,7 +1385,46 @@ fn handle_poll_get(
          .map(str::trim)
          .filter(|s| !s.is_empty())
          .map(str::to_string);
@@ -428,7 +735,7 @@
      st.last_poll_at = now_i64();
      if let Some(idx) = st.find_available_pending_event(types.as_deref(), event_id.as_deref()) {
          st.pending_events[idx].lease_until = now_i64() + lease_ms;
-@@ -1386,8 +1426,17 @@
+@@ -1386,8 +1434,17 @@ fn handle_poll_get(
          // Leasing may run the generation preflight (a child process); the
          // arrival-order claim ends here.
          ticket.release();
@@ -448,36 +755,43 @@
          return;
      }
      let (poll_id, rx) = st.park_poll(lease_ms, types, event_id);
-@@ -1565,6 +1614,66 @@
+@@ -1565,6 +1622,73 @@ fn handle_poll_post(
      let msg_id_val = msg.get("id").cloned().unwrap_or(Value::Null);
      let msg_type = msg.get("type").and_then(|v| v.as_str()).map(String::from);
      let mut st = lock(shared);
 +    let expected_request = msg.get("jarvisRequestSeq");
 +    let expected_pending = msg.get("jarvisPendingEventSeq");
++    let expected_kind = msg.get("jarvisEventType").and_then(Value::as_str).filter(|kind| !kind.is_empty());
 +    let host_cancel = msg.get("jarvisCancel") == Some(&Value::Bool(true));
 +    if expected_request.is_some() || expected_pending.is_some() || host_cancel {
 +        let request_seq = expected_request.and_then(Value::as_u64).filter(|seq| *seq > 0);
 +        let pending_seq = expected_pending.and_then(Value::as_u64).filter(|seq| *seq > 0);
 +        if request_seq.is_none() || msg_id.is_none()
-+            || (expected_pending.is_some() && pending_seq.is_none())
++            || pending_seq.is_none()
++            || (!host_cancel && expected_kind.is_none())
 +            || (host_cancel && (pending_seq.is_none() || msg_type.as_deref() != Some("error")))
 +        {
 +            respond(stream, cors, json_res(400, json!({"error":"invalid_jarvis_request"})));
 +            return;
 +        }
 +        let id = msg_id.as_deref().unwrap_or("");
-+        if !crate::jarvis_request_guard::matches(&st.store, id, request_seq.unwrap_or(0), pending_seq) {
++        let matched = if host_cancel {
++            crate::jarvis_request_guard::matches(&st.store, id, request_seq.unwrap_or(0), pending_seq)
++        } else {
++            crate::jarvis_request_guard::reply_matches(&st.store, id, request_seq.unwrap_or(0), pending_seq.unwrap_or(0), expected_kind.unwrap_or(""), msg_type.as_deref().unwrap_or(""))
++        };
++        if !matched {
 +            respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
 +            return;
 +        }
-+        if let Some(expected_kind) = msg.get("jarvisEventType") {
-+            let Some(expected_kind) = expected_kind.as_str().filter(|kind| !kind.is_empty()) else {
++        if msg.get("jarvisEventType").is_some() && expected_kind.is_none() {
 +                respond(stream, cors, json_res(400, json!({"error":"invalid_jarvis_request"})));
 +                return;
-+            };
++        }
++        if let Some(expected_kind) = expected_kind.filter(|_| host_cancel) {
 +            if let Some(current) = crate::jarvis_request_guard::pending(&st.store, id) {
 +                let kind = current.get("type").and_then(Value::as_str);
-+                if kind != Some(expected_kind) && !(expected_kind == "accept" && kind == Some("carbonize_cleanup")) {
++                if kind != Some(expected_kind) {
 +                    respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
 +                    return;
 +                }
@@ -515,35 +829,56 @@
      let cwd = st.cwd.clone();
  
      // 1. In-flight manual apply deferred
-@@ -1852,8 +1961,24 @@
+@@ -1703,9 +1827,14 @@ fn handle_poll_post(
+         }
+     }
+     // 3. sourceEventType
+-    let source_event_type: Option<String> = match msg.get("sourceEventType") {
+-        Some(v) if truthy(Some(v)) => Some(js_display(v)),
+-        _ => infer_source_event_type(&st, &msg),
++    let source_event_type: Option<String> = match expected_kind {
++        Some("accept") if crate::jarvis_request_guard::pending(&st.store, msg_id.as_deref().unwrap_or(""))
++            .is_some_and(|event| event["type"] == "carbonize_cleanup") => Some("carbonize_cleanup".into()),
++        Some(kind) => Some(kind.into()),
++        None => match msg.get("sourceEventType") {
++            Some(v) if truthy(Some(v)) => Some(js_display(v)),
++            _ => infer_source_event_type(&st, &msg),
++        },
+     };
+     // 4. retry
+     if msg_type.as_deref() == Some("retry") {
+@@ -1852,8 +1981,16 @@ fn handle_poll_post(
              );
              return;
          }
-+        st = lock(shared);
+-        let _ = bump_svelte_component_preview_revision(&id, &cwd);
+         st = lock(shared);
 +        // Compile released the mutex. Repeat the human/phase compare before
 +        // publishing or journaling an ACK that could erase a newer request.
 +        if let Some(expected) = expected_request.and_then(Value::as_u64) {
-+            if !crate::jarvis_request_guard::matches(&st.store, &id, expected, None) {
++            if !crate::jarvis_request_guard::reply_matches(&st.store, &id, expected, expected_pending.and_then(Value::as_u64).unwrap_or(0), expected_kind.unwrap_or(""), msg_type.as_deref().unwrap_or("")) {
 +                respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
 +                return;
 +            }
-+            if let Some(expected_kind) = msg.get("jarvisEventType").and_then(Value::as_str) {
-+                if let Some(current) = crate::jarvis_request_guard::pending(&st.store, &id) {
-+                    if current.get("type").and_then(Value::as_str) != Some(expected_kind) {
-+                        respond(stream, cors, json_res(409, json!({"error":"jarvis_request_changed"})));
-+                        return;
-+                    }
-+                }
-+            }
 +        }
-         let _ = bump_svelte_component_preview_revision(&id, &cwd);
--        st = lock(shared);
++        let _ = bump_svelte_component_preview_revision(&id, &cwd);
      }
      // 9. Journal
      if truthy(msg.get("id")) && !skip_journal_reply {
+@@ -1884,6 +2021,8 @@ fn handle_poll_post(
+         }
+         if let Some(t) = acknowledged.as_ref().and_then(|a| a.get("type")) {
+             ev.insert("sourceEventType".into(), t.clone());
++        } else if expected_request.is_some() {
++            if let Some(source) = &source_event_type { ev.insert("sourceEventType".into(), json!(source)); }
+         }
+         ev.insert(
+             "carbonize".into(),
+diff --git a/crates/live/src/server_state.rs b/crates/live/src/server_state.rs
+index 1de8572848f1e9a7d4c8f8b315c70fa3762676a3..f1faddaf6c8b0008210089ca87495615a55d39b5 100644
 --- a/crates/live/src/server_state.rs
 +++ b/crates/live/src/server_state.rs
-@@ -1393,9 +1393,24 @@
+@@ -1393,9 +1393,24 @@ pub fn lease_event(
      entry_event: Map<String, Value>,
      lease_ms: i64,
  ) -> Map<String, Value> {
@@ -570,15 +905,30 @@
      if !truthy(event.get("id")) {
          st.pending_events.retain(|e| e.seq != seq);
          return event;
-@@ -1420,13 +1435,22 @@
+@@ -1416,17 +1431,37 @@ pub fn lease_event(
+     }
+     st.schedule_lease_flush();
+     st.broadcast_agent_polling_if_changed();
++    if expected_request.is_some() {
++        if let Some(pending) = crate::jarvis_request_guard::pending_seq(&st.store, ev_str(&event, "id").unwrap_or("")) {
++            event.insert("_jarvisPendingEventSeq".into(), json!(pending));
++        }
++    }
+     event
  }
  
  /// JS: prepareGenerateEventForLease(entry)
 -fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<String, Value>) {
 +fn guarded_event_matches(st: &ServerState, event: &Map<String, Value>, expected: u64) -> bool {
 +    let id = ev_str(event, "id").unwrap_or("");
-+    crate::jarvis_request_guard::matches(&st.store, id, expected, None)
-+        && crate::jarvis_request_guard::pending(&st.store, id).is_some_and(|current| current.get("type") == event.get("type"))
++    let Some(pending) = event.get("_jarvisPendingEventSeq").and_then(Value::as_u64) else { return false };
++    let kind = ev_str(event, "type").unwrap_or("");
++    if matches!(kind, "generate" | "steer") {
++        crate::jarvis_request_guard::reply_matches(&st.store, id, expected, pending, kind, "done")
++    } else {
++        crate::jarvis_request_guard::matches(&st.store, id, expected, Some(pending))
++            && crate::jarvis_request_guard::pending(&st.store, id).is_some_and(|current| current.get("type") == event.get("type"))
++    }
 +}
 +
 +fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<String, Value>, expected_request: Option<u64>) -> bool {
@@ -595,7 +945,7 @@
          st.record_agent_phase(&id, "picked_up", &[]);
          st.record_agent_phase(&id, "scaffolding", &[]);
          let sig = crate::preflight::target_signature(event);
-@@ -1435,6 +1459,9 @@
+@@ -1435,6 +1470,9 @@ fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<S
      };
      let result = run_generation_preflight(event, &cwd, &env, cached.as_deref());
      let mut st = lock(shared);
@@ -605,7 +955,7 @@
      match &result {
          PreflightOutcome::Skipped => {}
          PreflightOutcome::Ok {
-@@ -1494,6 +1521,7 @@
+@@ -1494,6 +1532,7 @@ fn prepare_generate_event_for_lease(shared: &Shared, seq: i64, event: &mut Map<S
          },
          &[("durationMs", duration), ("previewMode", preview_mode)],
      );

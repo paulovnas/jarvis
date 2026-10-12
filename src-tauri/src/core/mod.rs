@@ -3,6 +3,7 @@ pub mod activity;
 pub(crate) mod audiovisual;
 pub mod beads;
 pub(crate) mod brag;
+mod browser_runtime;
 pub(crate) mod comfyui;
 pub mod context;
 pub mod context7;
@@ -307,6 +308,7 @@ pub struct Snapshot {
     pub ready: bool,
     pub items: Vec<CoreItem>,
     pub checking: bool,
+    pub browser_runtime: browser_runtime::Status,
 }
 #[derive(Clone, Default)]
 struct StateData {
@@ -450,6 +452,7 @@ impl CoreState {
             }),
             items,
             checking: data.checking,
+            browser_runtime: browser_runtime::snapshot(),
         })
     }
     async fn snapshot_async(&self, home: &Path) -> Result<Snapshot, CoreError> {

@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn snapshot_releases_status_locks_before_slow_shell_probes() {
+    let home = tempfile::tempdir().unwrap();
+    let system = SystemState::default();
+    *system.store.lock().unwrap() = Some(Ok(Store::open(home.path().join("system.json")).unwrap()));
+    *system.sleep.lock().unwrap() = (true, Some("saved power warning".into()));
+    *system.notification_error.lock().unwrap() = Some("saved notification warning".into());
+    let snapshot = system
+        .snapshot_with_shells(|| {
+            let mut sleep = system
+                .sleep
+                .try_lock()
+                .expect("Slow probes must not retain the power-state mutex");
+            sleep.0 = false;
+            *system
+                .notification_error
+                .try_lock()
+                .expect("Slow probes must not retain the notification mutex") = None;
+            assert!(system.store.try_lock().is_ok());
+            vec!["/fixture/shell".into()]
+        })
+        .unwrap();
+    assert!(snapshot.sleep_inhibited);
+    assert_eq!(snapshot.sleep_error.as_deref(), Some("saved power warning"));
+    assert_eq!(
+        snapshot.notification_error.as_deref(),
+        Some("saved notification warning")
+    );
+    assert_eq!(snapshot.available_terminal_shells, ["/fixture/shell"]);
+    assert!(!system.sleep.lock().unwrap().0);
+}
+
+#[test]
 fn retired_cli_settings_do_not_prevent_loading_or_reappear_in_saved_preferences() {
     let home = tempfile::tempdir().unwrap();
     let path = crate::data_dir::root(home.path()).join("system.json");

@@ -33,7 +33,7 @@ const capturedClick = () => {
   };
 };
 const trustedClick = (target: Element, path: EventTarget[] = [target, document]) => ({
-  isTrusted: true, composedPath: () => path,
+  type: "click", isTrusted: true, composedPath: () => path,
   preventDefault: vi.fn(), stopImmediatePropagation: vi.fn(),
 } as unknown as MouseEvent);
 
@@ -290,6 +290,36 @@ describe("actionability preparation", () => {
 });
 
 describe("native select and wait operations", () => {
+  it("confirms a delivered trusted click when its handler replaces the original control", () => {
+    const { element, id } = target("<button>Próxima variante</button>");
+    prepared(id);
+    const token = prepared(id).token;
+    const click = capturedClick();
+    pageOperation({ action: "guard", element: token });
+    const event = trustedClick(element);
+    click()(event);
+    const replacement = element.cloneNode(true);
+    element.replaceWith(replacement);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(element.isConnected).toBe(false);
+    expect(pageOperation({ action: "finish", element: token })).toEqual({ blocked: false });
+  });
+
+  it.each(["mousedown", "synthetic-click", "expired-click"])("does not confirm detached controls from %s", kind => {
+    vi.useFakeTimers();
+    const { element, id } = target("<button>Enviar</button>");
+    prepared(id);
+    const token = prepared(id).token;
+    const click = capturedClick();
+    pageOperation({ action: "guard", element: token });
+    const event = kind === "synthetic-click" ? new MouseEvent("click", { bubbles: true }) : trustedClick(element);
+    if (kind === "mousedown") Object.defineProperty(event, "type", { value: "mousedown" });
+    click()(event);
+    element.remove();
+    if (kind === "expired-click") vi.advanceTimersByTime(3000);
+    expect(pageOperation({ action: "finish", element: token })).toEqual({ blocked: true });
+  });
+
   it("blocks a mismatched click after preparation and removes guards on finish", () => {
     const { element, id } = target("<button>Enviar</button>");
     prepared(id);

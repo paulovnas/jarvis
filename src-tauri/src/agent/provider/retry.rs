@@ -29,6 +29,12 @@ pub(crate) struct Status {
 }
 
 pub(super) fn retryable(error: &AgentError) -> bool {
+    if error.provider_metadata.as_ref().is_some_and(|metadata| {
+        metadata.protocol_reason
+            == Some(crate::diagnostics::ProviderProtocolReason::RequestProjection)
+    }) {
+        return false;
+    }
     matches!(
         error.code.as_str(),
         "provider_network"

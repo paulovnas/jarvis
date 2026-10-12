@@ -63,6 +63,48 @@ it("only offers new browser tabs for the loaded embedded backend and preserves e
   expect(screen.getByRole("button", { name: "Vincular aba externa" })).toBeVisible();
 });
 
+it("marks the owned native Live tab and protects it until Live is explicitly switched off", async () => {
+  const user = userEvent.setup();
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [
+    { id: "live", conversationId: "chat", title: "Meu projeto", url: "http://localhost:5173/dashboard", loading: false },
+    { id: "ordinary", conversationId: "chat", title: "Outra aba", url: "http://localhost:5173/dashboard", loading: false },
+  ] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  const view = render(<FileWorkspace browser={browser} liveTabId="live"><ChatDraft /></FileWorkspace>);
+  const live = screen.getByRole("tab", { name: "Meu projeto" });
+  expect(within(live).getByText("Live")).toBeVisible();
+  expect(live).toHaveAccessibleDescription(/Impeccable Live ativo\. Desligue o Live antes de fechar esta aba\./);
+  expect(within(screen.getByRole("tab", { name: "Outra aba" })).queryByText("Live")).not.toBeInTheDocument();
+  const protectedClose = screen.getByRole("button", { name: "Fechar navegador Meu projeto" });
+  expect(protectedClose).toBeDisabled();
+  await user.click(protectedClose);
+  fireEvent.click(protectedClose);
+  expect(browser.command).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Fechar navegador Outra aba" }));
+  expect(browser.command).toHaveBeenCalledExactlyOnceWith({ action: "close", id: "ordinary" });
+
+  view.rerender(<FileWorkspace browser={browser} liveTabId={null}><ChatDraft /></FileWorkspace>);
+  expect(within(live).queryByText("Live")).not.toBeInTheDocument();
+  expect(protectedClose).toBeEnabled();
+  await user.click(protectedClose);
+  expect(browser.command).toHaveBeenLastCalledWith({ action: "close", id: "live" });
+});
+
+it.each([
+  { id: "ext:outside", conversationId: "chat" },
+  { id: "foreign", conversationId: "other-chat" },
+])("does not mark or protect a matching tab outside the native Live ownership ($id)", async ({ id, conversationId }) => {
+  const user = userEvent.setup();
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [
+    { id, conversationId, title: "Outra superfície", url: "http://localhost:5173/dashboard", loading: false },
+  ] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  render(<FileWorkspace browser={browser} liveTabId={id}><ChatDraft /></FileWorkspace>);
+  expect(within(screen.getByRole("tab", { name: "Outra superfície" })).queryByText("Live")).not.toBeInTheDocument();
+  const close = screen.getByRole("button", { name: "Fechar navegador Outra superfície" });
+  expect(close).toBeEnabled();
+  await user.click(close);
+  expect(browser.command).toHaveBeenCalledExactlyOnceWith({ action: "close", id });
+});
+
 it("keeps browser feedback visible outside the hidden Chat panel without remounting the draft", async () => {
   const user = userEvent.setup();
   const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [{ id: "web", conversationId: "chat", title: "Projeto · Live", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };

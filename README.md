@@ -134,7 +134,7 @@ Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem
 Outras extensões ficam disponíveis sob demanda:
 
 - **MCPs:** servidores locais ou remotos, teste de conexão, descoberta de ferramentas e ativação individual.
-- **Chromium extension:** optional browser integration with conversation-owned tabs, screenshots, console, network and scoped DevTools. Configure it in **Configurações → Navegador**; install externally through **Load unpacked**, with no store dependency. See [installation and capabilities](docs/CHROMIUM-EXTENSION.md).
+- **Extensão externa:** integração opcional para inspecionar uma aba do seu navegador pessoal quando você a escolhe ou solicita isso explicitamente. A navegação dos agentes usa o Chromium incluído no Jarvis; não há um seletor global de navegador. Configure a extensão em **Configurações → Navegador** e consulte [instalação e capacidades](docs/CHROMIUM-EXTENSION.md).
 - **Skills:** instruções locais, pastas `.agents/skills` e atalhos simbólicos, Marketplace, detalhes em Markdown, atualização, ativação e remoção.
 - **Ferramentas dos agentes:** busca de arquivos, terminal, processos, navegador, LSP, Context-mode, patch, perguntas, tarefas, leitura de skills e MCPs. Cada agente personalizado pode receber somente as permissões necessárias.
 
@@ -154,8 +154,8 @@ O botão **Publicar** no Inspector pede que a IA prepare uma proposta com os arq
 
 Baixe a versão mais recente em [Releases](https://github.com/paulovnas/jarvis/releases):
 
-- **macOS Apple Silicon:** abra o `.dmg` e copie o Jarvis para **Aplicativos**.
-- **Windows x64:** execute o instalador `-setup.exe`. O instalador garante o WebView2 quando necessário; em computadores sem ele, essa etapa usa a internet. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
+- **macOS Apple Silicon, versão 13 ou superior:** abra o `.dmg` e copie o Jarvis para **Aplicativos**.
+- **Windows x64:** execute o instalador `-setup.exe`. O Chromium já está incluído no aplicativo. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
 
 O onboarding conduz cinco etapas:
 
@@ -167,7 +167,7 @@ O onboarding conduz cinco etapas:
 
 Git é necessário para versionamento e publicação. Configure `git config --global user.name` e `git config --global user.email` antes do primeiro commit; um projeto também pode definir essa identidade localmente. O GitHub CLI é necessário somente para criar ou mesclar pull requests pelo Jarvis; autentique-o com `gh auth login` antes do primeiro uso.
 
-Não é necessário instalar Bun, Node.js, Python, Rust, Cargo, Visual Studio, Chrome ou Playwright para usar o Jarvis. O Core mantém seus próprios runtimes e o navegador integrado usa o WebView do sistema. Toolchains adicionais pertencem ao projeto aberto: o Jarvis os detecta quando um comando de build, teste ou linguagem realmente precisar deles. No Windows, PowerShell 7, Git Bash e WSL são opções de terminal, não pré-requisitos.
+Não é necessário instalar Bun, Node.js, Python, Rust, Cargo, Visual Studio, Chrome, WebView2 ou Playwright para usar o Jarvis. O navegador integrado usa o Chromium Embedded Framework (CEF), incluído no aplicativo e atualizado junto com ele. Sua sessão é separada do navegador pessoal; o Impeccable Live funciona nessa aba integrada. O Core mantém seus próprios runtimes para outras ferramentas, incluindo a renderização de vídeos. Toolchains adicionais pertencem ao projeto aberto: o Jarvis os detecta quando um comando de build, teste ou linguagem realmente precisar deles. No Windows, PowerShell 7, Git Bash e WSL são opções de terminal, não pré-requisitos.
 
 O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux ARM64.
 
@@ -205,7 +205,9 @@ Versões beta recebem novas betas e versões estáveis; instalações estáveis 
 
 O projeto usa **Tauri v2 e Rust** no backend, com **React 19, TypeScript estrito, Tailwind CSS v4, shadcn/ui e Bun** na interface.
 
-Instale [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), Git e os [pré-requisitos do Tauri](https://v2.tauri.app/start/prerequisites/) para o seu sistema. No macOS, isso inclui as ferramentas do Xcode; no Windows, WebView2 e as ferramentas C++ do Visual Studio.
+Instale [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), Git, CMake e Ninja. No macOS, também são necessárias as ferramentas do Xcode; no Windows, as ferramentas C++ do Visual Studio. No Linux, use GTK 4.14 ou superior e as bibliotecas X11, NSS, GBM e áudio listadas em [native-validation.yml](.github/workflows/native-validation.yml).
+
+O launcher `bun run tauri` prepara o CLI e o bundler da revisão Tauri com suporte a CEF fixada pelo projeto. Use esse comando para desenvolvimento e empacotamento: o aplicativo precisa do Chromium e dos seus processos auxiliares no bundle completo. Preserve as revisões do runtime, dos plugins e do CLI, junto com `Cargo.lock`; a primeira preparação pode demorar enquanto as ferramentas são compiladas.
 
 ```bash
 git clone https://github.com/paulovnas/jarvis.git

@@ -12,6 +12,8 @@ export function useNotificationFeedback() {
     let previous: string | null = null;
     let pending: string | null = null;
     let version = 0;
+    let refreshing = false;
+    let refreshAgain = false;
     let unlisten: (() => void) | undefined;
     const present = () => {
       if (!alive || document.visibilityState !== "visible" || !document.hasFocus()) return;
@@ -32,11 +34,18 @@ export function useNotificationFeedback() {
     };
     const refresh = async () => {
       present();
+      if (!alive) return;
+      if (refreshing) { refreshAgain = true; return; }
+      refreshing = true;
       const request = ++version;
       try {
         const value = await invoke<unknown>("get_system_preferences");
         if (alive && request === version) accept(value);
       } catch { /* Browser previews have no notification service. */ }
+      finally {
+        refreshing = false;
+        if (alive && refreshAgain) { refreshAgain = false; void refresh(); }
+      }
     };
     const stopResume = onDesktopResume(() => { void refresh(); });
     void listen("system:changed", event => {

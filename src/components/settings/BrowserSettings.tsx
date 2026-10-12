@@ -23,7 +23,7 @@ export function BrowserSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const extension = useBrowserExtensionStatus(preferences?.mode === "extension");
+  const extension = useBrowserExtensionStatus(preferences !== null);
   useEffect(() => {
     let alive = true;
     let changed = false;
@@ -44,13 +44,13 @@ export function BrowserSettings() {
     setBusy(true); setError(null);
     try { await action(); } catch (cause) { setError(browserError(cause)); } finally { setBusy(false); }
   };
-  const save = (patch: Partial<BrowserPreferences>) => run(async () => {
+  const saveApplication = (application: BrowserPreferences["application"]) => run(async () => {
     const current = systemSnapshotSchema.parse(await invoke("get_system_preferences"));
-    const browser = browserPreferencesSchema.parse({ ...current.preferences.browser, ...patch });
+    const browser = browserPreferencesSchema.parse({ ...current.preferences.browser, mode: "embedded", application });
     const saved = systemSnapshotSchema.parse(await invoke("save_system_preferences", { preferences: { ...current.preferences, browser } }));
     if (browser.application !== current.preferences.browser.application) setSetup(null);
     setPreferences(saved.preferences.browser);
-    toast.success("Preferências do navegador salvas");
+    toast.success("Preferências da extensão salvas");
   });
   const copy = (value: string, message: string) => run(async () => { await writeClipboardText(value); toast.success(message); });
 
@@ -63,16 +63,13 @@ export function BrowserSettings() {
   const problem = error ?? extension.error ?? extension.status?.error;
   return <div className="space-y-4">
     <Card className="gap-4 p-5">
-      <div><h3 className="flex items-center gap-2 text-sm font-medium"><Globe className="size-4 text-onedark-cyan" />Navegação dos agentes</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha onde abrir novas abas. As abas já vinculadas continuam no navegador de origem.</p></div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2"><Label htmlFor="browser-mode" className="text-xs">Modo de navegação</Label><Select value={preferences.mode} disabled={busy} onValueChange={mode => { if (mode === "embedded" || mode === "extension") void save({ mode }); }}><SelectTrigger id="browser-mode" className="w-full cursor-pointer text-xs"><SelectValue>{preferences.mode === "embedded" ? "Embutido no Jarvis" : "Extensão do navegador"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="embedded" className="cursor-pointer">Embutido no Jarvis</SelectItem><SelectItem value="extension" className="cursor-pointer">Extensão do navegador</SelectItem></SelectContent></Select></div>
-        {preferences.mode === "extension" && <div className="space-y-2"><Label htmlFor="browser-application" className="text-xs">Navegador instalado</Label><Select value={preferences.application} disabled={busy} onValueChange={application => { if (application && application in browserApplications) void save({ application: application as BrowserPreferences["application"] }); }}><SelectTrigger id="browser-application" className="w-full cursor-pointer text-xs"><SelectValue>{browserApplications[preferences.application]}</SelectValue></SelectTrigger><SelectContent>{Object.entries(browserApplications).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer">{label}</SelectItem>)}</SelectContent></Select></div>}
-      </div>
-      <p className="text-xs leading-5 text-muted-foreground">{preferences.mode === "embedded" ? "Navegue em uma área integrada ao chat, com uma sessão separada do seu navegador pessoal." : "Use a sessão do seu navegador para interagir com páginas, capturar imagens e inspecionar console e rede. A extensão controla apenas as abas abertas ou vinculadas ao chat."}</p>
+      <div><h3 className="flex items-center gap-2 text-sm font-medium"><Globe className="size-4 text-onedark-cyan" />Navegação integrada</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Os agentes abrem novas páginas dentro do Jarvis usando o Chromium incluído no aplicativo, em uma sessão separada do seu navegador pessoal.</p></div>
+      <p className="text-xs leading-5 text-muted-foreground">O Impeccable Live funciona na aba integrada do chat. Para inspecionar uma página do seu navegador, vincule a aba externa ao chat ou solicite isso explicitamente ao agente.</p>
     </Card>
-    {preferences.mode === "extension" && <>
       <Card className="gap-3 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-medium"><PlugZap className="size-4 text-onedark-cyan" />Conexão local</h3><Badge variant="outline" className={connected ? "text-onedark-green" : "text-muted-foreground"}>{connected ? "Conectada" : extension.status?.state === "error" ? "Falha na conexão" : "Aguardando extensão"}</Badge></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-sm font-medium"><PlugZap className="size-4 text-onedark-cyan" />Extensão externa</h3><Badge variant="outline" className={connected ? "text-onedark-green" : "text-muted-foreground"}>{connected ? "Conectada" : extension.status?.state === "error" ? "Falha na conexão" : "Aguardando extensão"}</Badge></div>
+        <p className="text-xs leading-5 text-muted-foreground">Use a extensão para inspecionar console e rede de uma aba externa escolhida por você. A conexão não altera a navegação integrada dos agentes.</p>
+        <div className="max-w-sm space-y-2"><Label htmlFor="browser-application" className="text-xs">Navegador da extensão</Label><Select value={preferences.application} disabled={busy} onValueChange={application => { if (application && application in browserApplications) void saveApplication(application as BrowserPreferences["application"]); }}><SelectTrigger id="browser-application" className="w-full cursor-pointer text-xs"><SelectValue>{browserApplications[preferences.application]}</SelectValue></SelectTrigger><SelectContent>{Object.entries(browserApplications).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer">{label}</SelectItem>)}</SelectContent></Select></div>
         <p className="text-xs leading-5 text-muted-foreground">{connected ? `${extension.status?.profileLabel ?? "Navegador conectado"}${extension.status?.extensionVersion ? ` · extensão ${extension.status.extensionVersion}` : ""}` : "Mantenha o navegador aberto. Após a instalação, a reconexão acontece automaticamente."}</p>
         <p className="text-xs leading-5 text-muted-foreground">Um perfil de navegador por vez. Para trocar o navegador já pareado, revogue a conexão e gere um novo código.</p>
         <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={busy} className="cursor-pointer" onClick={() => void run(async () => { await invoke("open_browser_application", { application: preferences.application }); })}><ExternalLink className="size-3.5" />Abrir {browserApplications[preferences.application]}</Button><Hint content="Atualizar estado da conexão"><Button variant="ghost" size="icon-sm" aria-label="Atualizar conexão" className="cursor-pointer" onClick={extension.refresh}><RefreshCw className="size-3.5" /></Button></Hint><Button variant="ghost" size="sm" disabled={busy} className="cursor-pointer text-muted-foreground" onClick={() => void run(async () => { await invoke("revoke_browser_extension"); setSetup(null); extension.refresh(); toast.success("Conexão revogada. Gere um novo código para conectar novamente."); })}><Unplug className="size-3.5" />Revogar conexão</Button></div>
@@ -85,7 +82,6 @@ export function BrowserSettings() {
           <li><p className="font-medium">3. Conecte ao Jarvis</p><p className="text-muted-foreground">Abra as opções da extensão Jarvis, cole o código e conecte. O código autoriza este navegador; mantenha-o privado.</p><Button size="sm" variant="secondary" disabled={busy || !setup} className="mt-2 cursor-pointer" onClick={() => { if (setup) void copy(setup.connectionCode, "Código de conexão copiado"); }}><Copy className="size-3.5" />Copiar código de conexão</Button></li>
         </ol>
       </Card>
-    </>}
     {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
   </div>;
 }

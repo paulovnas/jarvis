@@ -29,6 +29,13 @@ mod skills;
 mod system;
 mod updater;
 mod voice;
+
+fn application_context() -> tauri::Context {
+    // Generate the embedded macOS Info.plist once per crate. The optional
+    // browser probe customizes its own returned context without a second macro.
+    tauri::generate_context!()
+}
+
 #[cfg(feature = "browser-probe")]
 pub fn run_browser_probe() {
     initialize_tls();
@@ -41,10 +48,7 @@ fn initialize_tls() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 }
 
-fn main_only(
-    invoke: tauri::ipc::Invoke<tauri::Wry>,
-    handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool,
-) -> bool {
+fn main_only(invoke: tauri::ipc::Invoke, handler: fn(tauri::ipc::Invoke) -> bool) -> bool {
     if !application_command_allowed(invoke.message.webview().label(), invoke.message.command()) {
         invoke
             .resolver
@@ -193,7 +197,7 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     initialize_tls();
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().runtime(tauri_runtime_cef::Cef::default());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         use tauri::Manager;
@@ -271,6 +275,8 @@ pub fn run() {
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
             companion::setup(app.handle());
+            #[cfg(all(feature = "browser-probe", target_os = "macos"))]
+            agent::browser::probe::observe_companion(app.handle());
             let agent = app.state::<agent::AgentState>();
             agent
                 .terminals
@@ -304,7 +310,7 @@ pub fn run() {
         .invoke_handler(|invoke| {
             // Remote child views must never call privileged application commands,
             // even if a site navigates to a local URL matching the development origin.
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+            let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
                 auxiliary_windows::open_auxiliary_window,
                 voice::get_voice_settings,
                 voice::save_voice_settings,
@@ -577,7 +583,7 @@ pub fn run() {
             ];
             main_only(invoke, handler)
         })
-        .build(tauri::generate_context!())
+        .build(application_context())
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]

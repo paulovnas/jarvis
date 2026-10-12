@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 
-/** Native focus also covers WKWebView resumes without a DOM focus event. */
+/** Native focus also covers desktop resumes without a DOM focus event. */
 export function onDesktopResume(refresh: () => void): () => void {
   let alive = true;
   let stop: (() => void) | undefined;

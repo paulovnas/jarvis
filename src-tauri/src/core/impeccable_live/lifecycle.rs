@@ -42,14 +42,32 @@ fn stop_with_timeout(
     if !request_stop(stream, identity, deadline)? {
         return Ok(());
     }
+    wait_closed(identity, deadline, |timeout| {
+        TcpStream::connect_timeout(&address, timeout).map(drop)
+    })
+}
 
+fn wait_closed(
+    identity: &(PathBuf, u16, String),
+    deadline: Instant,
+    mut probe: impl FnMut(Duration) -> std::io::Result<()>,
+) -> Result<(), CoreError> {
     // Upstream removes server.json before it closes its listener. Neither the
     // acknowledgement nor a missing file alone proves that shutdown finished.
     loop {
         verify_helper_identity(identity)?;
-        match TcpStream::connect_timeout(&address, remaining(deadline)?.min(CONNECT_TIMEOUT)) {
-            Ok(stream) => drop(stream),
+        match probe(remaining(deadline)?.min(CONNECT_TIMEOUT)) {
+            Ok(()) => (),
             Err(cause) if cause.kind() == ErrorKind::ConnectionRefused => return Ok(()),
+            Err(cause)
+                if matches!(
+                    cause.kind(),
+                    ErrorKind::ConnectionReset
+                        | ErrorKind::ConnectionAborted
+                        | ErrorKind::Interrupted
+                        | ErrorKind::TimedOut
+                        | ErrorKind::WouldBlock
+                ) => {}
             Err(_) => {
                 return Err(error(
                     "Não foi possível verificar o encerramento do helper Live.",
@@ -180,6 +198,51 @@ mod tests {
             "host must not unlink the server record"
         );
         assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, identity.1)).is_err());
+    }
+
+    #[test]
+    fn transient_shutdown_probes_wait_for_connection_refusal() {
+        let (_directory, identity, _listener) = fixture("owned");
+        let mut outcomes = std::collections::VecDeque::from([
+            Err(ErrorKind::ConnectionReset),
+            Err(ErrorKind::ConnectionAborted),
+            Err(ErrorKind::Interrupted),
+            Err(ErrorKind::TimedOut),
+            Err(ErrorKind::WouldBlock),
+            Ok(()),
+            Err(ErrorKind::ConnectionRefused),
+        ]);
+        wait_closed(&identity, Instant::now() + STOP_TIMEOUT, |_| {
+            outcomes.pop_front().unwrap().map_err(std::io::Error::from)
+        })
+        .unwrap();
+        assert!(outcomes.is_empty(), "only refusal confirms closure");
+        assert!(identity.0.is_file());
+    }
+
+    #[test]
+    fn recurring_transient_shutdown_errors_still_expire() {
+        let (_directory, identity, _listener) = fixture("owned");
+        let result = wait_closed(
+            &identity,
+            Instant::now() + Duration::from_millis(100),
+            |_| Err(ErrorKind::ConnectionReset.into()),
+        );
+        assert!(result.unwrap_err().message.contains("prazo"));
+        assert!(identity.0.is_file());
+    }
+
+    #[test]
+    fn permanent_shutdown_probe_errors_preserve_the_owned_record() {
+        let (_directory, identity, _listener) = fixture("owned");
+        let mut attempts = 0;
+        let result = wait_closed(&identity, Instant::now() + STOP_TIMEOUT, |_| {
+            attempts += 1;
+            Err(ErrorKind::PermissionDenied.into())
+        });
+        assert!(result.unwrap_err().message.contains("verificar"));
+        assert_eq!(attempts, 1);
+        assert!(identity.0.is_file());
     }
 
     #[test]

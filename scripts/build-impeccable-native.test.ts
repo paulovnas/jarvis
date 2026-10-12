@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { publishImpeccableNative, type NativeStage } from "./build-impeccable-native";
-import { IMPECCABLE_SOURCE_COMMIT, nativeEnginePatches } from "./prepare-impeccable";
+import { IMPECCABLE_ENGINE_VERSION, IMPECCABLE_SOURCE_COMMIT, nativeEnginePatches } from "./prepare-impeccable";
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
@@ -32,7 +32,15 @@ describe("native engine provenance publication", () => {
     const result = await publishImpeccableNative(stage, destination);
     expect(await readFile(result.enginePath, "utf8")).toBe("isolated test engine bytes");
     const receipt: unknown = JSON.parse(await readFile(path.join(destination, "bin/jarvis-engine.json"), "utf8"));
-    expect(receipt).toEqual({ schemaVersion: 1, engineVersion: "0.1.14", cliVersion: "4.0.0", sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: "darwin-arm64", patches: await nativeEnginePatches(), engineSha256: createHash("sha256").update(await readFile(stage.binary)).digest("hex") });
+    expect(receipt).toEqual({ schemaVersion: 1, engineVersion: IMPECCABLE_ENGINE_VERSION, cliVersion: "4.0.0", sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: "darwin-arm64", patches: await nativeEnginePatches(), engineSha256: createHash("sha256").update(await readFile(stage.binary)).digest("hex") });
+  });
+
+  it("rejects an engine receipt missing canonical product support while retaining design support", async () => {
+    const { stage, destination } = await fixture();
+    const patches = (await nativeEnginePatches()).filter(patch => !patch.path.endsWith("canonical-product.patch"));
+    await writeFile(path.join(stage.directory, "jarvis-stage.json"), JSON.stringify({ sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: stage.target, patches }));
+    await expect(publishImpeccableNative(stage, destination)).rejects.toThrow("não corresponde");
+    await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects stale patch provenance before creating or replacing any destination", async () => {

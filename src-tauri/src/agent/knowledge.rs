@@ -639,6 +639,22 @@ pub(crate) fn design_path(
     root: &Path,
     target: Option<&str>,
 ) -> Result<Option<std::path::PathBuf>, AgentError> {
+    context_path(root, target, Kind::Design)
+}
+
+/// Impeccable product context uses the same PRD as project knowledge.
+pub(crate) fn product_path(
+    root: &Path,
+    target: Option<&str>,
+) -> Result<Option<std::path::PathBuf>, AgentError> {
+    context_path(root, target, Kind::Product)
+}
+
+fn context_path(
+    root: &Path,
+    target: Option<&str>,
+    kind: Kind,
+) -> Result<Option<std::path::PathBuf>, AgentError> {
     let index = load_index(root)?;
     let target = tools::scoped(root, target.unwrap_or("."), false)?;
     let directory = if target.is_dir() {
@@ -650,7 +666,7 @@ pub(crate) fn design_path(
     if let Some(entry) = index
         .entries
         .iter()
-        .filter(|entry| entry.kind == Kind::Design && applies(&entry.scope, &scope))
+        .filter(|entry| entry.kind == kind && applies(&entry.scope, &scope))
         .max_by_key(|entry| {
             if entry.scope == "." {
                 0
@@ -667,11 +683,11 @@ pub(crate) fn design_path(
         .take_while(|path| path.starts_with(root))
     {
         let scope = scope_path(root, &directory.to_string_lossy())?;
-        let entry = entry_for(root, &index, &scope, Kind::Design);
+        let entry = entry_for(root, &index, &scope, kind);
         if root
             .join(&entry.path)
             .try_exists()
-            .map_err(|_| error("Não foi possível consultar o design do projeto."))?
+            .map_err(|_| error("Não foi possível consultar o conhecimento do projeto."))?
         {
             markdown_path(root, &entry.path, false)?;
             return Ok(Some(std::path::PathBuf::from(entry.path)));
@@ -682,12 +698,20 @@ pub(crate) fn design_path(
 
 /// Reuse canonical design sources without also loading competing root copies.
 pub(crate) fn design_paths(root: &Path, scopes: &[String]) -> Vec<std::path::PathBuf> {
+    context_paths(root, scopes, Kind::Design)
+}
+
+pub(crate) fn product_paths(root: &Path, scopes: &[String]) -> Vec<std::path::PathBuf> {
+    context_paths(root, scopes, Kind::Product)
+}
+
+fn context_paths(root: &Path, scopes: &[String], kind: Kind) -> Vec<std::path::PathBuf> {
     scopes
         .iter()
         .take(8)
         .map(|scope| Some(scope.as_str()))
         .chain(scopes.is_empty().then_some(None))
-        .filter_map(|target| design_path(root, target).ok().flatten())
+        .filter_map(|target| context_path(root, target, kind).ok().flatten())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()

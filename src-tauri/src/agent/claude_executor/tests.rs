@@ -17,6 +17,102 @@ fn assistant(id: &str, uuid: &str, content: Value) -> Value {
     json!({"type":"assistant","uuid":uuid,"message":{"id":id,"content":content,"usage":{"input_tokens":20,"output_tokens":7,"cache_read_input_tokens":80,"cache_creation_input_tokens":5}}})
 }
 
+#[tokio::test]
+async fn confirmed_live_accept_closes_cli_normally_and_skips_queued_tool_previews() {
+    let fixture = Fixture::new();
+    let (session, signal) = reserve(&fixture);
+    let state = AppState::default();
+    let oauth = OpenAiCodexState::default();
+    let mcp = crate::mcp::McpState::default();
+    let grants = execution_grants::GrantStore::default();
+    let mut bridge = bridge::tests::fixture_bridge(
+        &session,
+        TurnRuntime {
+            grants: &grants,
+            state: &state,
+            oauth: &oauth,
+            mcp: &mcp,
+            home: &fixture.root,
+        },
+        options(ApprovalMode::Yolo),
+        signal.clone(),
+    );
+    let mut projection = projection::Projection::default();
+    projection.apply(&session, &assistant("message", "envelope", json!([
+        {"type":"tool_use","id":"accept-complete","name":"mcp__jarvis__impeccable","input":{"command":"live-complete","args":["--id","ce0c0a38"]}},
+        {"type":"tool_use","id":"unneeded-write","name":"mcp__jarvis__write","input":{"path":"accidental.txt","content":"Must not execute"}}
+    ]))).unwrap();
+    let tool = projection
+        .take_tool(
+            "impeccable",
+            json!({"command":"live-complete","args":["--id","ce0c0a38"]}),
+            None,
+        )
+        .unwrap();
+    projection::start_tool(&session, &tool).await.unwrap();
+    let output = json!({"ok":true,"id":"ce0c0a38","phase":"completed","snapshot":{"id":"ce0c0a38","phase":"completed","pendingEvent":null}}).to_string();
+    core_runtime::checkpoint_tool(&session, &tool, &output, "completed", 1, None)
+        .await
+        .unwrap();
+    assert!(!finish_live_accept(&bridge).await.unwrap());
+    bridge.accepted_live = true;
+    assert!(finish_live_accept(&bridge).await.unwrap());
+    assert!(!*signal.borrow());
+    super::super::finish(&session, Ok(()));
+
+    let (loaded, _) = journal::read_only(&session.journal).unwrap();
+    let turn = &loaded[0];
+    assert_eq!(turn.turn.status, TurnStatus::Completed);
+    assert!(turn.turn.error.is_none());
+    assert!(turn
+        .turn
+        .steps
+        .last()
+        .unwrap()
+        .text
+        .starts_with("Alternativa escolhida aplicada."));
+    let tools = turn
+        .turn
+        .steps
+        .iter()
+        .flat_map(|step| &step.tools)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools
+            .iter()
+            .find(|tool| tool.id == "accept-complete")
+            .unwrap()
+            .output,
+        output
+    );
+    let skipped: Value = serde_json::from_str(
+        &tools
+            .iter()
+            .find(|tool| tool.id == "unneeded-write")
+            .unwrap()
+            .output,
+    )
+    .unwrap();
+    assert_eq!(skipped["executed"], false);
+    assert!(!session.root.join("accidental.txt").exists());
+    for id in ["accept-complete", "unneeded-write"] {
+        assert_eq!(
+            turn.wire
+                .iter()
+                .filter(|item| item["type"] == "function_call" && item["call_id"] == id)
+                .count(),
+            1
+        );
+        assert_eq!(
+            turn.wire
+                .iter()
+                .filter(|item| item["type"] == "function_call_output" && item["call_id"] == id)
+                .count(),
+            1
+        );
+    }
+}
+
 #[test]
 fn private_diagnostic_receipts_never_reveal_cached_results_on_resume() {
     let fixture = Fixture::new();

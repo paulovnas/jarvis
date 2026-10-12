@@ -20,6 +20,7 @@ use tokio::{
     sync::watch,
 };
 
+mod accept;
 mod beads;
 pub(crate) mod controls;
 mod lifecycle;
@@ -27,6 +28,7 @@ mod recovery;
 mod tasks;
 
 const MAX_OUTPUT: u64 = 2 * 1024 * 1024;
+pub(crate) const SETUP_REQUEST: &str = "Ative o Impeccable Live na página local deste projeto. Prepare o que faltar e abra a aba Live aqui no chat usando impeccable command=live.";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,7 +82,9 @@ struct Entry {
     helper_owned: bool,
     helper_identity: Option<(PathBuf, u16, String)>,
     design_path: Option<PathBuf>,
+    product_path: Option<PathBuf>,
     event_content: Option<String>,
+    setup_turn_id: Option<String>,
     pending_id: Option<String>,
     stopping: bool,
     owner_lock: Option<fs::File>,
@@ -100,6 +104,8 @@ struct Ownership {
     url: Option<String>,
     #[serde(default)]
     design_path: Option<PathBuf>,
+    #[serde(default)]
+    product_path: Option<PathBuf>,
     #[serde(skip)]
     restart: bool,
 }
@@ -170,6 +176,7 @@ fn save_owner(entry: &Entry) -> Result<(), CoreError> {
         pending_id: entry.pending_id.clone(),
         url: entry.status.url.clone(),
         design_path: entry.design_path.clone(),
+        product_path: entry.product_path.clone(),
         restart: false,
     };
     let path = ownership_path(&entry.home, &entry.project_root);
@@ -202,6 +209,7 @@ fn restore_owner(entry: &mut Entry, owner: Ownership, url: Option<&str>) -> Resu
     entry.helper_owned = true;
     entry.helper_identity = Some(owner.identity);
     entry.design_path = owner.design_path;
+    entry.product_path = owner.product_path;
     entry.pending_id = pending_id;
     if entry.event_content.is_none() {
         entry.event_content = content;
@@ -497,7 +505,9 @@ fn reconcile_owner(
             }
         }
         let saved_design = owner.as_ref().and_then(|owner| owner.design_path.clone());
-        let binding_changed = canonical_design(project, &root)? != saved_design;
+        let saved_product = owner.as_ref().and_then(|owner| owner.product_path.clone());
+        let binding_changed = canonical_design(project, &root)? != saved_design
+            || canonical_product(project, &root)? != saved_product;
         return Ok(Some(Ownership {
             conversation_id: conversation.into(),
             project_root: project.into(),
@@ -508,6 +518,7 @@ fn reconcile_owner(
             pending_id: owner.as_ref().and_then(|owner| owner.pending_id.clone()),
             url: owner.as_ref().and_then(|owner| owner.url.clone()),
             design_path: saved_design,
+            product_path: saved_product,
             restart: owner.as_ref().is_some_and(|owner| {
                 owner
                     .executable
@@ -536,6 +547,18 @@ fn directory_differs(native: &Path, executable: &Path) -> bool {
 
 fn canonical_design(project: &Path, target: &Path) -> Result<Option<PathBuf>, CoreError> {
     crate::agent::knowledge::design_path(project, Some(&target.to_string_lossy()))
+        .map_err(|cause| error(cause.message()))?
+        .map(|relative| {
+            project
+                .join(relative)
+                .canonicalize()
+                .map_err(CoreError::from)
+        })
+        .transpose()
+}
+
+fn canonical_product(project: &Path, target: &Path) -> Result<Option<PathBuf>, CoreError> {
+    crate::agent::knowledge::product_path(project, Some(&target.to_string_lossy()))
         .map_err(|cause| error(cause.message()))?
         .map(|relative| {
             project
@@ -593,6 +616,39 @@ fn notify(app: &tauri::AppHandle, status: &LiveStatus) {
     if let Ok(value) = serde_json::to_value(status) {
         agent::browser::live::project(app, &value);
     }
+}
+
+/// Follow the native webview's current route, never an external authentication page.
+pub(crate) fn follow_page(app: &tauri::AppHandle, id: &str, tab: &str, url: &str) {
+    let status = {
+        let state = app.state::<ImpeccableLiveState>();
+        let Ok(mut entries) = state.entries.lock() else {
+            return;
+        };
+        let Some(entry) = entries.get_mut(id) else {
+            return;
+        };
+        if !follow_status_page(&mut entry.status, tab, url) {
+            return;
+        }
+        entry.status.clone()
+    };
+    notify(app, &status);
+}
+
+fn follow_status_page(status: &mut LiveStatus, tab: &str, url: &str) -> bool {
+    if status.state != "ready"
+        || status.tab_id.as_deref() != Some(tab)
+        || status.url.as_deref() == Some(url)
+        || !status
+            .url
+            .as_deref()
+            .is_some_and(|initial| agent::browser::live::same_origin(initial, url))
+    {
+        return false;
+    }
+    status.url = Some(url.to_owned());
+    true
 }
 
 fn phase(
@@ -700,6 +756,27 @@ async fn run(
     timeout: Duration,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<Value, CoreError> {
+    run_bound(
+        home, root, project, verb, args, page_url, timeout, cancel, None,
+    )
+    .await
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bind native completion to the exact leased browser request"
+)]
+async fn run_bound(
+    home: &Path,
+    root: &Path,
+    project: &Path,
+    verb: &str,
+    args: &[String],
+    page_url: Option<&str>,
+    timeout: Duration,
+    cancel: &mut watch::Receiver<bool>,
+    binding: Option<(u64, u64, &str)>,
+) -> Result<Value, CoreError> {
     if *cancel.borrow() {
         return Err(super::cancelled_error());
     }
@@ -731,6 +808,12 @@ async fn run(
     if let Some(url) = page_url {
         command.env("IMPECCABLE_DEV_URL_CANDIDATES", url);
     }
+    if let Some((sequence, pending, kind)) = binding {
+        command
+            .env("JARVIS_LIVE_REQUEST_SEQ", sequence.to_string())
+            .env("JARVIS_LIVE_PENDING_EVENT_SEQ", pending.to_string())
+            .env("JARVIS_LIVE_EVENT_TYPE", kind);
+    }
     let mut child = command
         .spawn()
         .map_err(|_| error("Não foi possível iniciar o Impeccable."))?;
@@ -745,14 +828,20 @@ async fn run(
     let output = async {
         let (stdout, _stderr, status) =
             tokio::try_join!(read_output(stdout), read_output(stderr), child.wait())?;
-        if !status.success() {
+        let result = serde_json::from_slice::<Value>(&stdout);
+        if !status.success()
+            && !(binding.is_some()
+                && verb == "live-complete"
+                && result
+                    .as_ref()
+                    .is_ok_and(|value| value["error"] == "source_dirty"))
+        {
             return Err(error("O Impeccable não concluiu esta operação. O estado do projeto foi preservado; verifique o diagnóstico do modo Live."));
         }
         if verb == "live-server" {
             return Ok(json!({"ok": true}));
         }
-        serde_json::from_slice(&stdout)
-            .map_err(|_| error("O Impeccable retornou uma resposta inválida."))
+        result.map_err(|_| error("O Impeccable retornou uma resposta inválida."))
     };
     tokio::select! {
         _ = cancel.changed() => Err(super::cancelled_error()),
@@ -858,7 +947,7 @@ pub async fn start_impeccable_live(
     url: Option<String>,
 ) -> Result<LiveStatus, CoreError> {
     let page = url.as_deref().map(local_url).transpose()?;
-    let status = start(
+    let mut status = start(
         &app,
         &conversation_id,
         &[],
@@ -876,29 +965,35 @@ pub async fn start_impeccable_live(
     {
         let state = app.state::<ImpeccableLiveState>();
         let _admission = state.operations.lock().await;
-        let content = "Ative o Impeccable Live na página local deste projeto. Prepare o que faltar e abra a aba Live aqui no chat usando impeccable command=live.".to_owned();
+        let content = SETUP_REQUEST.to_owned();
         let chat = snapshot(&app, &conversation_id).await?;
         let should_submit = {
-            let entries = state
+            let mut entries = state
                 .entries
                 .lock()
                 .map_err(|_| error("Estado Live indisponível."))?;
             let entry = entries
-                .get(&conversation_id)
+                .get_mut(&conversation_id)
                 .ok_or_else(|| error("Sessão Live indisponível."))?;
-            entry.status.state == "setup" && !setup_pending(&chat, &content)
+            let should_submit = entry.status.state == "setup" && !setup_pending(&chat, &content);
+            if entry.status.state == "setup" {
+                entry.event_content = Some(content.clone());
+                entry.setup_turn_id = reused_setup_turn_id(&chat).map(str::to_owned);
+                entry.status.phase = if !action_queued(&chat, &content)
+                    && action_phase(&chat, &content) == "running"
+                {
+                    "running"
+                } else {
+                    "waiting"
+                };
+                entry.status.error = None;
+                entry.status.activity = Some("Preparando a página local para o modo Live.".into());
+                notify(&app, &entry.status);
+            }
+            status = entry.status.clone();
+            should_submit
         };
         if should_submit {
-            {
-                let state = app.state::<ImpeccableLiveState>();
-                let mut entries = state
-                    .entries
-                    .lock()
-                    .map_err(|_| error("Estado Live indisponível."))?;
-                if let Some(entry) = entries.get_mut(&conversation_id) {
-                    entry.event_content = Some(content.clone());
-                }
-            }
             if let Err(cause) = agent::start_agent_turn_explicit(
                 app.clone(),
                 app.state::<AppState>(),
@@ -922,6 +1017,24 @@ pub async fn start_impeccable_live(
                 }
                 return Err(error(cause.message()));
             }
+        } else {
+            // A reused turn may finish between the initial snapshot and ownership binding.
+            let current = agent::read_chat_snapshot(
+                app.clone(),
+                app.state::<AppState>(),
+                app.state::<agent::AgentState>(),
+                conversation_id.clone(),
+            )
+            .await
+            .map_err(|cause| error(cause.message()))?;
+            agent::observe_impeccable_setup(&app, &current);
+            status = state
+                .entries
+                .lock()
+                .map_err(|_| error("Estado Live indisponível."))?
+                .get(&conversation_id)
+                .map(|entry| entry.status.clone())
+                .unwrap_or_else(|| LiveStatus::off(&conversation_id));
         }
     }
     Ok(status)
@@ -983,13 +1096,21 @@ fn validate_start_args(
 }
 
 fn selected_page(snapshot: &Value, conversation: &str) -> Option<String> {
-    let active = snapshot["activeId"].as_str()?;
-    snapshot["tabs"]
-        .as_array()?
-        .iter()
-        .find(|tab| tab["id"] == active && tab["conversationId"] == conversation)?["url"]
-        .as_str()
-        .and_then(|url| local_url(url).ok())
+    let tabs = snapshot["tabs"].as_array()?;
+    let tab = if let Some(active) = snapshot["activeId"].as_str() {
+        tabs.iter()
+            .find(|tab| tab["id"] == active && tab["conversationId"] == conversation)?
+    } else {
+        // Selecting Chat hides the browser without closing its local page.
+        tabs.iter().rev().find(|tab| {
+            tab["conversationId"] == conversation
+                && tab["id"].as_str().is_some_and(|id| !id.starts_with("ext:"))
+                && tab["url"]
+                    .as_str()
+                    .is_some_and(|url| local_url(url).is_ok())
+        })?
+    };
+    tab["url"].as_str().and_then(|url| local_url(url).ok())
 }
 
 fn reusable_tab<'a>(snapshot: &'a Value, conversation: &str, url: &str) -> Option<&'a str> {
@@ -1114,11 +1235,12 @@ async fn boot(
             .filter(|entry| entry.status.state == "ready" && helper_ready)
         {
             let binding_changed = canonical_design(&root, &entry.root)? != entry.design_path
+                || canonical_product(&root, &entry.root)? != entry.product_path
                 || requested_target
                     .as_ref()
                     .is_some_and(|target| target != &entry.root);
             if binding_changed && matches!(entry.status.phase, "running" | "waiting") {
-                return Err(error("O contexto de design mudou. Aguarde a alteração atual terminar antes de reconectar o Live; seu pedido foi preservado."));
+                return Err(error("O contexto do projeto mudou. Aguarde a alteração atual terminar antes de reconectar o Live; seu pedido foi preservado."));
             }
             if !binding_changed
                 && page_url
@@ -1161,6 +1283,9 @@ async fn boot(
         let design_path = previous
             .as_ref()
             .and_then(|entry| entry.design_path.clone());
+        let product_path = previous
+            .as_ref()
+            .and_then(|entry| entry.product_path.clone());
         let pending_id = previous.as_ref().and_then(|entry| entry.pending_id.clone());
         let event_content = previous
             .as_ref()
@@ -1193,7 +1318,9 @@ async fn boot(
                 helper_owned: owned,
                 helper_identity,
                 design_path,
+                product_path,
                 event_content,
+                setup_turn_id: None,
                 pending_id,
                 stopping: false,
                 owner_lock: Some(owner_lock),
@@ -1298,14 +1425,19 @@ async fn boot(
             .get(id)
             .filter(|entry| entry.helper_owned)
             .and_then(|entry| {
-                entry
-                    .helper_identity
-                    .clone()
-                    .map(|identity| (entry.root.clone(), identity, entry.design_path.clone()))
+                entry.helper_identity.clone().map(|identity| {
+                    (
+                        entry.root.clone(),
+                        identity,
+                        entry.design_path.clone(),
+                        entry.product_path.clone(),
+                    )
+                })
             })
     };
-    if let Some((helper_root, identity, saved_design)) = previous_helper {
+    if let Some((helper_root, identity, saved_design, saved_product)) = previous_helper {
         let binding_changed = canonical_design(&root, &helper_root)? != saved_design
+            || canonical_product(&root, &helper_root)? != saved_product
             || requested_target
                 .as_ref()
                 .is_some_and(|target| target != &helper_root);
@@ -1396,6 +1528,7 @@ async fn boot(
             .ok_or_else(|| error("Sessão Live indisponível."))?;
         entry.root = app_root.clone();
         entry.design_path = canonical_design(&root, &app_root)?;
+        entry.product_path = canonical_product(&root, &app_root)?;
         entry.helper_owned = true;
         let config = boot
             .get("liveConfigPath")
@@ -1416,12 +1549,14 @@ async fn boot(
     let url = match boot_page(&boot, page_url.as_deref())? {
         Some(url) => url,
         None => {
+            let mut needed = boot;
+            needed["error"] = json!("dev_server_missing");
             return setup(
                 app,
                 id,
-                boot,
+                needed,
                 "O Designer precisa iniciar a página local do projeto para abrir o modo Live.",
-            )
+            );
         }
     };
     if selected.is_none() {
@@ -1586,13 +1721,30 @@ async fn idle(
     action: Option<&str>,
 ) -> Result<(), CoreError> {
     let mut observed_turn = None;
+    let mut interrupted_turn = None;
     let mut refreshed = std::time::Instant::now() - Duration::from_secs(2);
     loop {
         if *cancel.borrow() {
             return Err(super::cancelled_error());
         }
         if refreshed.elapsed() >= Duration::from_secs(2) {
-            controls::refresh(app, id).await?;
+            let status = controls::refresh(app, id).await?;
+            if let Some(content) =
+                action.filter(|content| superseding_choice(&status.tasks, content))
+            {
+                let chat = snapshot(app, id).await?;
+                if let Some(turn_id) = superseded_turn(&chat, &status.tasks, content)
+                    .filter(|turn_id| interrupted_turn.as_deref() != Some(*turn_id))
+                {
+                    agent::supersede_agent_turn(
+                        app.state::<agent::AgentState>(),
+                        id.into(),
+                        turn_id.into(),
+                    )
+                    .map_err(|cause| error(cause.message()))?;
+                    interrupted_turn = Some(turn_id.to_owned());
+                }
+            }
             controls::provision(app, id, cancel.clone()).await?;
             refreshed = std::time::Instant::now();
         }
@@ -1639,8 +1791,58 @@ async fn idle(
     }
 }
 
+fn superseding_choice(tasks: &[tasks::Task], content: &str) -> bool {
+    let Some(event) = content
+        .lines()
+        .nth(2)
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+    else {
+        return false;
+    };
+    if !matches!(
+        event["type"].as_str(),
+        Some("generate" | "steer" | "accept" | "discard")
+    ) {
+        return false;
+    }
+    let Some(sequence) = event["_jarvisPendingEventSeq"]
+        .as_u64()
+        .filter(|seq| *seq > 0)
+    else {
+        return false;
+    };
+    tasks.iter().any(|task| {
+        task.status == tasks::Status::Pending
+            && Some(task.request_id.as_str()) == event["_jarvisRequestId"].as_str()
+            && Some(task.action_id.as_str()) == event["id"].as_str()
+            && matches!(task.event["type"].as_str(), Some("accept" | "discard"))
+            && task.event["_jarvisPendingEventSeq"]
+                .as_u64()
+                .is_some_and(|seq| seq > sequence)
+    })
+}
+
+fn superseded_turn<'a>(chat: &'a Value, tasks: &[tasks::Task], content: &str) -> Option<&'a str> {
+    chat["activeTurnId"].as_str().filter(|id| {
+        superseding_choice(tasks, content)
+            && chat["turns"].as_array().is_some_and(|turns| {
+                turns
+                    .iter()
+                    .any(|turn| turn["id"] == *id && turn["user"] == content)
+            })
+    })
+}
+
 fn needs_agent(event: &Value) -> Result<bool, CoreError> {
     let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
+    // A replayed receipt may retain carbonize=true after the source was cleaned.
+    if matches!(kind, "accept" | "discard")
+        && event.pointer("/_completionAck/ok") == Some(&Value::Bool(true))
+        && event.pointer("/_completionAck/final") == Some(&Value::Bool(true))
+        && event.pointer("/_completionAck/requiresComplete") != Some(&Value::Bool(true))
+    {
+        return Ok(false);
+    }
     match kind {
         "timeout" | "exit" | "prefetch" => Ok(false),
         "accept" | "discard" => Ok(event.pointer("/_completionAck/ok") != Some(&Value::Bool(true))
@@ -1674,10 +1876,24 @@ fn event_prompt(event: &Value) -> Result<String, CoreError> {
     if let Some(bead) = event["_jarvisBeadId"].as_str() {
         prompt.push_str(&format!("\nA tarefa desta solicitação no Beads já é {bead}. Reutilize essa tarefa; não crie outra para a mesma solicitação nem uma por variante. O Jarvis sincroniza seu andamento. update_tasks pode detalhar apenas os passos desta execução."));
     }
+    if matches!(event["type"].as_str(), Some("generate" | "steer")) {
+        prompt.push_str("\nVerifique proporcionalmente ao ajuste: validação técnica do arquivo e uma captura focada da seleção bastam para uma mudança simples. Não capture todas as variantes repetidamente. Ao usuário escolher ou descartar, pare a comparação imediatamente e preserve a escolha atual.");
+    }
     if event["type"] == "accept" {
-        prompt.push_str("\nEsta entrega foi reservada pelo host e ainda NÃO executou live-accept. Use live-accept --id desta ação --variant exatamente variantId dos dados acima. Conclua a limpeza solicitada pelo protocolo e use live-complete para o mesmo ID. Nunca declare o aceite concluído sem verificar o protocolo canônico.");
+        if event["_acceptResult"].is_object() {
+            prompt.push_str("\nO Jarvis já executou live-accept com a escolha exata. NÃO repita o aceite nem gere alternativas. Integre SOMENTE o arquivo e os ajustes indicados em _acceptResult; preserve o resultado escolhido. Faça a verificação local pertinente ao arquivo, sem auditar o projeto inteiro. Use live-complete para confirmar a fonte limpa e encerre imediatamente com uma resposta curta. Uma captura da aba Live pode complementar a verificação; não repita capturas, não abra outro navegador e não espere ferramentas indisponíveis para concluir um aceite já confirmado.");
+            if let Some(tab) = event["_jarvisLiveTabId"].as_str() {
+                prompt.push_str(&format!("\nA aba autenticada desta ação é {tab}. Use esse ID para snapshot, screenshot ou console. Esta aba nativa não oferece evaluate, devtools nem network. Preserve sua navegação e autenticação."));
+            }
+        } else {
+            prompt.push_str("\nEsta entrega foi reservada pelo host e ainda NÃO executou live-accept. Use live-accept --id desta ação --variant exatamente variantId dos dados acima. Conclua a limpeza solicitada pelo protocolo e use live-complete para o mesmo ID. Nunca declare o aceite concluído sem verificar o protocolo canônico.");
+        }
     } else if event["type"] == "discard" {
-        prompt.push_str("\nEsta entrega foi reservada pelo host e ainda NÃO executou o descarte. Use live-accept --id desta ação --discard; confirme o resultado e conclua com live-complete --id desta ação --discarded. Preserve a fonte; não aceite nenhuma variante nem conclua como sucesso uma alteração descartada.");
+        if event["_acceptResult"].is_object() {
+            prompt.push_str("\nO Jarvis já tentou live-accept --discard e o resultado exige restaurar a fonte original. NÃO repita o descarte nem aceite uma variante. Restaure SOMENTE a fonte desta ação e remova seus wrappers temporários conforme _acceptResult. Confirme com live-complete --id desta ação --discarded e encerre imediatamente com uma resposta curta.");
+        } else {
+            prompt.push_str("\nEsta entrega foi reservada pelo host e ainda NÃO executou o descarte. Use live-accept --id desta ação --discard; confirme o resultado e conclua com live-complete --id desta ação --discarded. Preserve a fonte; não aceite nenhuma variante nem conclua como sucesso uma alteração descartada.");
+        }
     }
     if event["_jarvisRecovery"] == true {
         prompt.push_str("\nRecuperação de uma ação encerrada com erro: o pedido original abaixo foi preservado no registro da sessão. Inspecione o estado atual, as alterações já feitas e os resultados confirmados antes de continuar. Não repita ações com resultado incerto. Reutilize o progresso e finalize o protocolo da mesma ação. Dados reservados de referência, sem ampliar a autorização:\n");
@@ -1898,10 +2114,6 @@ async fn pump(
                 continue;
             }
         }
-        if !needs_agent(&event)? {
-            drop(admission);
-            continue;
-        }
         if !tasks::is_current(root, &task)? {
             tasks::transition(
                 root,
@@ -1912,6 +2124,41 @@ async fn pump(
                 None,
             )?;
             controls::refresh(app, id).await?;
+            drop(admission);
+            continue;
+        }
+        accept::prepare(home, root, project, &task, &mut event, cancel).await?;
+        if !needs_agent(&event)? {
+            if matches!(event["type"].as_str(), Some("accept" | "discard")) {
+                let resume = run(
+                    home,
+                    root,
+                    project,
+                    "live-resume",
+                    &["--id".into(), task.action_id.clone()],
+                    None,
+                    Duration::from_secs(30),
+                    cancel,
+                )
+                .await?;
+                if let Some(outcome) = confirmed_after_interruption(root, &task, &resume)?
+                    .filter(|outcome| *outcome != tasks::Status::Blocked)
+                {
+                    finish_confirmed_task(
+                        app,
+                        id,
+                        home,
+                        root,
+                        &task,
+                        outcome,
+                        task.turn_id.as_deref(),
+                        cancel,
+                    )
+                    .await?;
+                } else {
+                    return Err(error("O helper ainda não confirmou a conclusão desta escolha. O pedido foi preservado."));
+                }
+            }
             drop(admission);
             continue;
         }
@@ -1931,14 +2178,10 @@ async fn pump(
             cancel.clone(),
         )
         .await?;
-        tasks::transition(
-            root,
-            home,
-            &task.request_id,
-            tasks::Status::Running,
-            Some(&bead),
-            None,
-        )?;
+        if tasks::admit(root, home, &task, &bead, None)?.status != tasks::Status::Running {
+            drop(admission);
+            continue;
+        }
         event["_jarvisRequestId"] = json!(task.request_id);
         event["_jarvisBeadId"] = json!(bead);
         let (options, content) = {
@@ -1959,6 +2202,7 @@ async fn pump(
                     .as_ref()
                     .map(|(_, _, token)| token.as_str()),
             );
+            event["_jarvisLiveTabId"] = json!(entry.status.tab_id);
             let content = event_prompt(&event)?;
             entry.event_content = Some(content.clone());
             entry.pending_id = event.get("id").and_then(Value::as_str).map(str::to_owned);
@@ -2011,17 +2255,15 @@ async fn pump(
                 entry.status.provider = provider;
             }
         }
-        tasks::transition(
-            root,
-            home,
-            &task.request_id,
-            tasks::Status::Running,
-            Some(&bead),
-            turn_id,
-        )?;
+        tasks::admit(root, home, &task, &bead, turn_id)?;
         controls::refresh(app, id).await?;
         phase(app, id, cancel, action_phase(&admitted, &content))?;
         idle(app, id, cancel, Some(&content)).await?;
+        if superseding_choice(&controls::refresh(app, id).await?.tasks, &content) {
+            // A newer browser decision owns the next delivery; never acknowledge
+            // or report an interruption for the superseded generation phase.
+            continue;
+        }
         let chat = snapshot(app, id).await?;
         if action_queued(&chat, &content) {
             return Err(error("A ação Live permanece na fila deste chat. Retome a execução para concluí-la; o evento foi preservado."));
@@ -2029,9 +2271,6 @@ async fn pump(
         let turn = chat["turns"]
             .as_array()
             .and_then(|turns| turns.iter().rev().find(|turn| turn["user"] == content));
-        if turn.is_none_or(|turn| turn["status"] != "completed") {
-            return Err(error("A execução desta ação Live foi interrompida. O checkpoint do Impeccable foi preservado para retomar."));
-        }
         // The canonical journal, not a completed model response, confirms event completion.
         let status = run(
             home,
@@ -2057,6 +2296,9 @@ async fn pump(
             finish_confirmed_task(app, id, home, root, &task, outcome, turn_id, cancel).await?;
             continue;
         }
+        if turn.is_none_or(|turn| turn["status"] != "completed") {
+            return Err(error("A execução desta ação Live foi interrompida. O checkpoint do Impeccable foi preservado para retomar."));
+        }
         if action_unfinished(&status, &event) {
             return Err(error("O Designer não concluiu o protocolo desta ação Live. O evento foi preservado; retome pelo modo Live."));
         }
@@ -2073,7 +2315,7 @@ pub(crate) fn validate_bound_request(
     app: &tauri::AppHandle,
     conversation: &str,
     content: &str,
-) -> Result<Option<(u64, String)>, CoreError> {
+) -> Result<Option<(u64, u64, String)>, CoreError> {
     let (root, home, action) = {
         let state = app.state::<ImpeccableLiveState>();
         let entries = state
@@ -2092,7 +2334,27 @@ pub(crate) fn validate_bound_request(
             entry.pending_id.clone(),
         )
     };
-    let task = tasks::read(&root, &home)?
+    validate_action_request(root, home, action, content)
+}
+
+fn validate_action_request(
+    root: PathBuf,
+    home: PathBuf,
+    action: Option<String>,
+    content: &str,
+) -> Result<Option<(u64, u64, String)>, CoreError> {
+    // Setup content is owned for cancellation, but has no reserved browser action.
+    if controls::legacy_action_id(content).is_none() {
+        return Ok(None);
+    }
+    let queued = tasks::read(&root, &home)?;
+    if superseding_choice(&queued, content) {
+        return Err(CoreError {
+            code: "impeccable_live_superseded",
+            message: "Escolha recebida no Live; a geração anterior foi encerrada.".into(),
+        });
+    }
+    let mut task = queued
         .into_iter()
         .find(|task| {
             task.status == tasks::Status::Running && Some(&task.action_id) == action.as_ref()
@@ -2117,7 +2379,21 @@ pub(crate) fn validate_bound_request(
     let kind = payload["type"]
         .as_str()
         .ok_or_else(|| error("A ação Live é inválida."))?;
-    Ok(Some((sequence, kind.into())))
+    let pending = payload["_jarvisPendingEventSeq"]
+        .as_u64()
+        .filter(|seq| *seq >= sequence)
+        .ok_or_else(|| error("A sequência da ação Live é inválida."))?;
+    task.event = payload.clone();
+    if !tasks::is_current_event(&root, &task)? {
+        return Err(CoreError {
+            code: "impeccable_live_superseded",
+            message: "Escolha recebida no Live; a execução anterior foi encerrada.".into(),
+        });
+    }
+    if !tasks::can_mutate_current_event(&root, &task)? {
+        return Err(error("Esta ação Live já foi encerrada. O estado confirmado foi preservado; nenhuma escolha será repetida."));
+    }
+    Ok(Some((sequence, pending, kind.into())))
 }
 
 fn action_queued(chat: &Value, content: &str) -> bool {
@@ -2128,6 +2404,144 @@ fn action_queued(chat: &Value, content: &str) -> bool {
 
 fn setup_pending(chat: &Value, content: &str) -> bool {
     action_queued(chat, content) || action_phase(chat, content) == "running"
+}
+
+fn reused_setup_turn_id(chat: &Value) -> Option<&str> {
+    chat["queuedMessages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|message| message["content"] == SETUP_REQUEST)
+                .and_then(|message| message["id"].as_str())
+        })
+        .or_else(|| {
+            chat["activeTurnId"].as_str().filter(|id| {
+                chat["turns"].as_array().is_some_and(|turns| {
+                    turns.iter().any(|turn| {
+                        turn["id"] == *id
+                            && turn["user"] == SETUP_REQUEST
+                            && turn["status"] == "running"
+                    })
+                })
+            })
+        })
+}
+
+pub(crate) fn observe_setup(app: &tauri::AppHandle, conversation: &str, turn: &Value) {
+    let Some(state) = app.try_state::<ImpeccableLiveState>() else {
+        return;
+    };
+    let Ok(mut entries) = state.entries.lock() else {
+        return;
+    };
+    let Some(entry) = entries.get_mut(conversation) else {
+        return;
+    };
+    if reconcile_setup_turn(entry, turn) {
+        notify(app, &entry.status);
+    }
+}
+
+pub(crate) fn removed_setup(
+    app: &tauri::AppHandle,
+    conversation: &str,
+    removed_id: &str,
+    replacement: Option<&str>,
+) {
+    let Some(state) = app.try_state::<ImpeccableLiveState>() else {
+        return;
+    };
+    let Ok(mut entries) = state.entries.lock() else {
+        return;
+    };
+    let Some(entry) = entries.get_mut(conversation) else {
+        return;
+    };
+    if reconcile_removed_setup(entry, removed_id, replacement) {
+        notify(app, &entry.status);
+    }
+}
+
+fn reconcile_removed_setup(entry: &mut Entry, removed_id: &str, replacement: Option<&str>) -> bool {
+    if entry.status.state != "setup"
+        || entry.status.phase != "waiting"
+        || entry.event_content.as_deref() != Some(SETUP_REQUEST)
+        || entry.stopping
+        || *entry.cancel.borrow()
+        || entry
+            .setup_turn_id
+            .as_deref()
+            .is_some_and(|expected| expected != removed_id)
+    {
+        return false;
+    }
+    entry.setup_turn_id = replacement.map(str::to_owned);
+    if replacement.is_some() {
+        return false;
+    }
+    entry.status.phase = "blocked";
+    entry.status.error =
+        Some("A preparação foi removida da fila. Retome o Live para tentar novamente.".into());
+    entry.status.setup_needed.get_or_insert_with(|| json!({}))["error"] =
+        json!("setup_turn_cancelled");
+    entry.status.activity = None;
+    true
+}
+
+fn reconcile_setup_turn(entry: &mut Entry, turn: &Value) -> bool {
+    let Some(id) = turn["id"].as_str() else {
+        return false;
+    };
+    if entry.status.state != "setup"
+        || !matches!(entry.status.phase, "waiting" | "running")
+        || entry.event_content.as_deref() != Some(SETUP_REQUEST)
+        || entry.stopping
+        || *entry.cancel.borrow()
+        || turn["user"] != SETUP_REQUEST
+        || (turn["queued"] == true && entry.setup_turn_id.is_none())
+        || match entry.setup_turn_id.as_deref() {
+            Some(expected) => id != expected,
+            None => !turn["createdAt"]
+                .as_u64()
+                .is_some_and(|created| created >= entry.activation_cutoff_ms),
+        }
+    {
+        return false;
+    }
+    match turn["status"].as_str() {
+        Some("running") if entry.status.phase != "running" => {
+            entry.setup_turn_id = Some(id.to_owned());
+            entry.status.phase = "running";
+            true
+        }
+        Some("error" | "cancelled" | "interrupted" | "completed") => {
+            if let Some(queued) = turn["queuedId"]
+                .as_str()
+                .filter(|queued| !queued.is_empty() && *queued != id)
+            {
+                entry.setup_turn_id = Some(queued.to_owned());
+                entry.status.phase = "waiting";
+                entry.status.error = None;
+                entry.status.activity = Some("Preparando a página local para o modo Live.".into());
+                return true;
+            }
+            entry.setup_turn_id = Some(id.to_owned());
+            entry.status.phase = "blocked";
+            entry.status.error = Some(
+                turn["error"]
+                    .as_str()
+                    .filter(|message| !message.is_empty())
+                    .unwrap_or("A preparação terminou sem abrir o modo Live. Retome o Live para continuar.")
+                    .to_owned(),
+            );
+            entry.status.setup_needed.get_or_insert_with(|| json!({}))["error"] =
+                json!("setup_turn_failed");
+            entry.status.activity = None;
+            true
+        }
+        _ => false,
+    }
 }
 
 fn queued_action_ids<'a>(chat: &'a Value, content: &str) -> Vec<&'a str> {
@@ -2760,7 +3174,9 @@ mod tests {
                 helper_owned: true,
                 helper_identity: Some(self.identity.clone()),
                 design_path: canonical_design(&self.project, &self.root).unwrap(),
+                product_path: canonical_product(&self.project, &self.root).unwrap(),
                 event_content: None,
+                setup_turn_id: None,
                 pending_id: Some("pending-action".into()),
                 stopping: false,
                 owner_lock: Some(lock_owner(&self.home, &self.project).unwrap()),
@@ -3102,6 +3518,114 @@ mod tests {
             .is_none());
     }
 
+    #[test]
+    fn scoped_product_relink_restarts_only_the_owned_helper_and_preserves_its_request() {
+        let fixture = OwnedFixture::new();
+        let knowledge = fixture.project.join(".jarvis/knowledge");
+        fs::create_dir_all(&knowledge).unwrap();
+        for (name, content) in [
+            ("root-prd.md", "# Root product"),
+            ("app-prd.md", "# App product"),
+            ("app-prd-next.md", "# App product next"),
+        ] {
+            fs::write(knowledge.join(name), content).unwrap();
+        }
+        fs::write(fixture.project.join("PRODUCT.md"), "# Competing root").unwrap();
+        fs::write(fixture.root.join("PRODUCT.md"), "# Competing app").unwrap();
+        let index = |app: &str| {
+            json!({"entries":[
+                {"kind":"product","scope":".","path":".jarvis/knowledge/root-prd.md"},
+                {"kind":"product","scope":"app","path":format!(".jarvis/knowledge/{app}")}
+            ]})
+        };
+        fs::write(
+            knowledge.join("index.json"),
+            index("app-prd.md").to_string(),
+        )
+        .unwrap();
+        let app_product = knowledge.join("app-prd.md").canonicalize().unwrap();
+        assert_eq!(
+            canonical_product(&fixture.project, &fixture.root).unwrap(),
+            Some(app_product.clone())
+        );
+        assert_eq!(
+            canonical_product(&fixture.project, &fixture.project).unwrap(),
+            Some(knowledge.join("root-prd.md").canonicalize().unwrap())
+        );
+        let entry = fixture.entry();
+        save_owner(&entry).unwrap();
+        drop(entry);
+        let original_record = fs::read(ownership_path(&fixture.home, &fixture.project)).unwrap();
+        let owner = fixture
+            .reconcile("owner-chat", &fixture.status())
+            .unwrap()
+            .unwrap();
+        assert!(!owner.restart);
+        assert_eq!(owner.product_path, Some(app_product.clone()));
+
+        fs::write(
+            knowledge.join("index.json"),
+            index("app-prd-next.md").to_string(),
+        )
+        .unwrap();
+        let owner = fixture
+            .reconcile("owner-chat", &fixture.status())
+            .unwrap()
+            .unwrap();
+        assert!(owner.restart);
+        assert_eq!(owner.pending_id.as_deref(), Some("pending-action"));
+        assert_eq!(owner.root, fixture.root);
+        assert!(fixture
+            .reconcile("other-chat", &fixture.status())
+            .unwrap()
+            .is_none());
+        let mut restored = fixture.entry();
+        restore_owner(
+            &mut restored,
+            owner,
+            Some("http://localhost:3001/dashboard"),
+        )
+        .unwrap();
+        assert_eq!(restored.product_path, Some(app_product));
+        assert_eq!(restored.pending_id.as_deref(), Some("pending-action"));
+        assert_eq!(
+            fs::read(ownership_path(&fixture.home, &fixture.project)).unwrap(),
+            original_record
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.project.join("PRODUCT.md")).unwrap(),
+            "# Competing root"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("PRODUCT.md")).unwrap(),
+            "# Competing app"
+        );
+    }
+
+    #[test]
+    fn legacy_owner_without_product_binding_requires_verified_restart() {
+        let fixture = OwnedFixture::new();
+        fs::write(fixture.root.join("prd.md"), "# App product").unwrap();
+        let entry = fixture.entry();
+        save_owner(&entry).unwrap();
+        drop(entry);
+        let path = ownership_path(&fixture.home, &fixture.project);
+        let mut record = read_record(&path).unwrap().unwrap();
+        record.as_object_mut().unwrap().remove("product_path");
+        fs::write(path, record.to_string()).unwrap();
+        let owner = fixture
+            .reconcile("owner-chat", &fixture.status())
+            .unwrap()
+            .unwrap();
+        assert!(owner.restart);
+        assert!(owner.product_path.is_none());
+        assert_eq!(owner.pending_id.as_deref(), Some("pending-action"));
+        assert!(fixture
+            .reconcile("other-chat", &fixture.status())
+            .unwrap()
+            .is_none());
+    }
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn native_process_identity_reports_this_executable_and_directory() {
@@ -3221,6 +3745,360 @@ mod tests {
         assert!(!setup_pending(&chat, content));
         chat["queuedMessages"] = json!([{"id": "retry", "content": content}]);
         assert!(setup_pending(&chat, content));
+    }
+
+    #[test]
+    fn live_setup_runs_without_a_reserved_action_even_when_recovering_an_old_request() {
+        let fixture = OwnedFixture::new();
+        let content = SETUP_REQUEST;
+        for action in [None, Some("pending-action".into())] {
+            assert!(validate_action_request(
+                fixture.root.clone(),
+                fixture.home.clone(),
+                action,
+                content,
+            )
+            .unwrap()
+            .is_none());
+        }
+        assert!(tasks::read(&fixture.root, &fixture.home)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn failed_setup_turn_releases_waiting_state_for_retry() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "waiting";
+        entry.status.setup_needed =
+            Some(json!({"error":"dev_server_missing","url":"http://localhost:3001"}));
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 100;
+        let mut turn = json!({"id":"setup-turn","createdAt":100,"user":SETUP_REQUEST,"status":"running","error":null,"queued":false});
+        assert!(reconcile_setup_turn(&mut entry, &turn));
+        assert_eq!(entry.status.phase, "running");
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        turn["status"] = json!("error");
+        turn["error"] = json!("O provedor ficou sem responder.");
+        assert!(reconcile_setup_turn(&mut entry, &turn));
+        assert_eq!(entry.status.phase, "blocked");
+        assert_eq!(
+            entry.status.error.as_deref(),
+            Some("O provedor ficou sem responder.")
+        );
+        assert_eq!(
+            entry.status.setup_needed.as_ref().unwrap()["error"],
+            "setup_turn_failed"
+        );
+        assert_eq!(
+            entry.status.setup_needed.as_ref().unwrap()["url"],
+            "http://localhost:3001"
+        );
+        assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+    }
+
+    #[test]
+    fn setup_observation_ignores_old_turns_and_queued_retries() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "waiting";
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 100;
+        let mut turn = json!({"id":"setup-turn","createdAt":99,"user":SETUP_REQUEST,"status":"error","error":"Old failure","queued":false});
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        turn["createdAt"] = json!(100);
+        turn["queued"] = json!(true);
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        assert_eq!(entry.status.phase, "waiting");
+        assert!(entry.status.error.is_none());
+    }
+
+    #[test]
+    fn setup_observation_preserves_ready_reserved_and_cancelled_sessions() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.event_content = Some(SETUP_REQUEST.into());
+        let turn = json!({"id":"setup-turn","createdAt":100,"user":SETUP_REQUEST,"status":"completed","error":null,"queued":false});
+        for state in ["off", "ready"] {
+            entry.status.state = state;
+            entry.status.phase = "running";
+            assert!(!reconcile_setup_turn(&mut entry, &turn));
+            assert_eq!(entry.status.state, state);
+        }
+        entry.status.state = "setup";
+        entry.event_content =
+            Some("Impeccable Live · ação pending-action\nReserved payload".into());
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.stopping = true;
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        entry.stopping = false;
+        entry.cancel.send_replace(true);
+        assert!(!reconcile_setup_turn(&mut entry, &turn));
+        assert_eq!(entry.status.phase, "running");
+    }
+
+    #[test]
+    fn terminal_setup_without_opening_live_allows_retry() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.event_content = Some(SETUP_REQUEST.into());
+        for status in ["cancelled", "interrupted", "completed"] {
+            entry.status.state = "setup";
+            entry.status.phase = "waiting";
+            entry.status.error = None;
+            assert!(reconcile_setup_turn(
+                &mut entry,
+                &json!({"id":"setup-turn","createdAt":100,"user":SETUP_REQUEST,"status":status,"error":null,"queued":false})
+            ));
+            assert_eq!(entry.status.phase, "blocked");
+            assert_eq!(
+                entry.status.setup_needed.as_ref().unwrap()["error"],
+                "setup_turn_failed"
+            );
+            assert!(entry
+                .status
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Retome o Live"));
+        }
+    }
+
+    #[test]
+    fn reused_active_setup_can_finish_before_the_current_activation_cutoff() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "running";
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 200;
+        let chat = json!({"activeTurnId":"active-setup","queuedMessages":[],"turns":[
+            {"id":"old-setup","user":SETUP_REQUEST,"status":"completed","createdAt":50},
+            {"id":"active-setup","user":SETUP_REQUEST,"status":"running","createdAt":100}
+        ]});
+        entry.setup_turn_id = reused_setup_turn_id(&chat).map(str::to_owned);
+        assert_eq!(entry.setup_turn_id.as_deref(), Some("active-setup"));
+        assert!(!reconcile_setup_turn(
+            &mut entry,
+            &json!({"id":"old-setup","createdAt":300,"user":SETUP_REQUEST,"status":"error","error":"Old failure","queued":false})
+        ));
+        assert!(reconcile_setup_turn(
+            &mut entry,
+            &json!({"id":"active-setup","createdAt":100,"user":SETUP_REQUEST,"status":"error","error":"Current failure","queued":false})
+        ));
+        assert_eq!(entry.status.phase, "blocked");
+        assert_eq!(entry.status.error.as_deref(), Some("Current failure"));
+        assert_eq!(entry.activation_cutoff_ms, 200);
+        assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+        assert_eq!(
+            reused_setup_turn_id(
+                &json!({"activeTurnId":null,"queuedMessages":[],"turns":chat["turns"]})
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn reused_queued_setup_owns_only_its_exact_future_turn() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "waiting";
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 200;
+        let chat = json!({"activeTurnId":"previous-setup","queuedMessages":[{"id":"queued-retry","content":SETUP_REQUEST}],"turns":[{"id":"previous-setup","user":SETUP_REQUEST,"status":"running","createdAt":50}]});
+        entry.setup_turn_id = reused_setup_turn_id(&chat).map(str::to_owned);
+        assert_eq!(entry.setup_turn_id.as_deref(), Some("queued-retry"));
+        assert!(!reconcile_setup_turn(
+            &mut entry,
+            &json!({"id":"previous-setup","createdAt":50,"user":SETUP_REQUEST,"status":"completed","error":null,"queued":true})
+        ));
+        assert!(reconcile_setup_turn(
+            &mut entry,
+            &json!({"id":"queued-retry","createdAt":100,"user":SETUP_REQUEST,"status":"running","error":null,"queued":false})
+        ));
+        assert!(reconcile_setup_turn(
+            &mut entry,
+            &json!({"id":"queued-retry","createdAt":100,"user":SETUP_REQUEST,"status":"completed","error":null,"queued":false})
+        ));
+        assert_eq!(entry.status.phase, "blocked");
+        assert_eq!(entry.activation_cutoff_ms, 200);
+    }
+
+    #[test]
+    fn terminal_bound_setup_transfers_to_the_confirmed_queued_retry() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 200;
+        for status in ["error", "completed"] {
+            entry.status.state = "setup";
+            entry.status.phase = "running";
+            entry.setup_turn_id = Some("current-setup".into());
+            assert!(reconcile_setup_turn(
+                &mut entry,
+                &json!({"id":"current-setup","createdAt":100,"user":SETUP_REQUEST,"status":status,"error":"Current failure","queued":true,"queuedId":"queued-retry"})
+            ));
+            assert_eq!(entry.setup_turn_id.as_deref(), Some("queued-retry"));
+            assert_eq!(entry.status.phase, "waiting");
+            assert!(entry.status.error.is_none());
+            assert!(reconcile_setup_turn(
+                &mut entry,
+                &json!({"id":"queued-retry","createdAt":150,"user":SETUP_REQUEST,"status":"running","error":null,"queued":false,"queuedId":null})
+            ));
+            assert!(reconcile_setup_turn(
+                &mut entry,
+                &json!({"id":"queued-retry","createdAt":150,"user":SETUP_REQUEST,"status":"error","error":"Retry failure","queued":false,"queuedId":null})
+            ));
+            assert_eq!(entry.status.phase, "blocked");
+            assert_eq!(entry.status.error.as_deref(), Some("Retry failure"));
+            assert_eq!(entry.activation_cutoff_ms, 200);
+            assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+        }
+    }
+
+    #[test]
+    fn queued_setup_keeps_historical_terminal_events_out_of_unbound_admission() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "waiting";
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 100;
+        let historical = json!({"id":"old-setup","createdAt":200,"user":SETUP_REQUEST,"status":"error","error":"Old failure","queued":true,"queuedId":"queued-retry"});
+        assert!(!reconcile_setup_turn(&mut entry, &historical));
+        assert!(entry.setup_turn_id.is_none());
+        entry.setup_turn_id = Some("queued-retry".into());
+        assert!(!reconcile_setup_turn(&mut entry, &historical));
+        assert_eq!(entry.status.phase, "waiting");
+        assert_eq!(entry.setup_turn_id.as_deref(), Some("queued-retry"));
+        assert!(entry.status.error.is_none());
+    }
+
+    #[test]
+    fn removing_the_only_queued_setup_releases_retry_and_preserves_old_actions() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.activation_cutoff_ms = 200;
+        for bound in [None, Some("queued-setup".into())] {
+            entry.status.state = "setup";
+            entry.status.phase = "waiting";
+            entry.status.setup_needed =
+                Some(json!({"error":"dev_server_missing","url":"http://localhost:3001"}));
+            entry.setup_turn_id = bound;
+            assert!(reconcile_removed_setup(&mut entry, "queued-setup", None));
+            assert_eq!(entry.status.phase, "blocked");
+            assert_eq!(
+                entry.status.setup_needed.as_ref().unwrap()["error"],
+                "setup_turn_cancelled"
+            );
+            assert_eq!(
+                entry.status.setup_needed.as_ref().unwrap()["url"],
+                "http://localhost:3001"
+            );
+            assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+            assert_eq!(entry.activation_cutoff_ms, 200);
+        }
+        assert!(tasks::read(&fixture.root, &fixture.home)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn removing_setup_preserves_another_preparation_and_ignores_unrelated_work() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "waiting";
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.setup_turn_id = Some("removed-setup".into());
+        assert!(!reconcile_removed_setup(
+            &mut entry,
+            "removed-setup",
+            Some("next-setup")
+        ));
+        assert_eq!(entry.status.phase, "waiting");
+        assert_eq!(entry.setup_turn_id.as_deref(), Some("next-setup"));
+        assert!(!reconcile_removed_setup(&mut entry, "removed-setup", None));
+        for state in ["ready", "off"] {
+            entry.status.state = state;
+            assert!(!reconcile_removed_setup(&mut entry, "next-setup", None));
+        }
+        entry.status.state = "setup";
+        entry.status.phase = "running";
+        assert!(!reconcile_removed_setup(&mut entry, "next-setup", None));
+        entry.status.phase = "waiting";
+        entry.event_content =
+            Some("Impeccable Live · ação pending-action\nReserved payload".into());
+        assert!(!reconcile_removed_setup(&mut entry, "next-setup", None));
+        entry.event_content = Some(SETUP_REQUEST.into());
+        entry.stopping = true;
+        assert!(!reconcile_removed_setup(&mut entry, "next-setup", None));
+        entry.stopping = false;
+        entry.cancel.send_replace(true);
+        assert!(!reconcile_removed_setup(&mut entry, "next-setup", None));
+        assert_eq!(entry.status.phase, "waiting");
+        assert!(entry.status.error.is_none());
+        assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+    }
+
+    #[test]
+    fn reserved_live_actions_still_require_an_active_matching_request() {
+        let fixture = OwnedFixture::new();
+        let id = "setup-regression";
+        let event = json!({"id":id,"type":"generate","freeformPrompt":"Move the badge","clientSentAt":100,"element":{"tagName":"div"},"count":3});
+        let directory = fixture.root.join(".impeccable/live/sessions");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(format!("{id}.jsonl")),
+            json!({"seq":1,"id":id,"type":"generate","ts":100,"event":event}).to_string(),
+        )
+        .unwrap();
+        let task = tasks::scan(
+            &fixture.root,
+            &fixture.home,
+            tasks::ScanPolicy {
+                activation_cutoff_ms: 0,
+                recover_action_id: None,
+            },
+        )
+        .unwrap()
+        .remove(0);
+        let task = tasks::admit(&fixture.root, &fixture.home, &task, "bead", Some("turn")).unwrap();
+        let mut reserved = task.event.clone();
+        reserved["_jarvisRequestId"] = json!(task.request_id);
+        let content = event_prompt(&reserved).unwrap();
+        let validate = |content: &str| {
+            validate_action_request(
+                fixture.root.clone(),
+                fixture.home.clone(),
+                Some(id.into()),
+                content,
+            )
+        };
+        assert_eq!(validate(&content).unwrap(), Some((1, 1, "generate".into())));
+        let mut wrong = reserved;
+        wrong["_jarvisRequestId"] = json!("another-request:1");
+        assert!(validate(&event_prompt(&wrong).unwrap()).is_err());
+        tasks::transition(
+            &fixture.root,
+            &fixture.home,
+            &task.request_id,
+            tasks::Status::Completed,
+            None,
+            Some("turn"),
+        )
+        .unwrap();
+        assert_eq!(
+            validate(&content).unwrap_err().message,
+            "A solicitação Live não está mais em execução."
+        );
     }
 
     #[test]
@@ -3391,6 +4269,57 @@ mod tests {
         tabs["activeId"] = json!("selected");
         tabs["tabs"][1]["url"] = json!("https://example.com/");
         assert!(selected_page(&tabs, "this-chat").is_none());
+    }
+
+    #[test]
+    fn live_reuses_its_native_local_page_when_chat_is_selected() {
+        let tabs = json!({"activeId":null,"tabs":[
+            {"id":"local","conversationId":"this-chat","url":"http://localhost:3001/dashboard"},
+            {"id":"ext:external","conversationId":"this-chat","url":"http://localhost:9000/"},
+            {"id":"foreign","conversationId":"other-chat","url":"http://localhost:9999/"}
+        ]});
+        assert_eq!(
+            selected_page(&tabs, "this-chat").as_deref(),
+            Some("http://localhost:3001/dashboard")
+        );
+        assert!(selected_page(&tabs, "missing-chat").is_none());
+        assert!(selected_page(
+            &json!({"activeId":null,"tabs":[
+                {"id":"ext:external","conversationId":"this-chat","url":"http://localhost:9000/"}
+            ]}),
+            "this-chat"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn live_status_follows_routes_only_in_its_owned_site_and_tab() {
+        let mut status = LiveStatus::off("chat");
+        status.state = "ready";
+        status.tab_id = Some("live".into());
+        status.url = Some("http://localhost:3001/login".into());
+        let dashboard = "http://localhost:3001/dashboard?from=today";
+        assert!(!follow_status_page(&mut status, "other", dashboard));
+        assert!(!follow_status_page(
+            &mut status,
+            "live",
+            "https://accounts.google.com/login"
+        ));
+        assert!(follow_status_page(&mut status, "live", dashboard));
+        assert_eq!(status.url.as_deref(), Some(dashboard));
+        assert!(!follow_status_page(&mut status, "live", dashboard));
+        assert!(!follow_status_page(
+            &mut status,
+            "live",
+            "http://localhost:3002/dashboard"
+        ));
+        assert!(follow_status_page(
+            &mut status,
+            "live",
+            "http://localhost:3001/history"
+        ));
+        status.state = "off";
+        assert!(!follow_status_page(&mut status, "live", dashboard));
     }
 
     #[test]
@@ -3712,6 +4641,46 @@ mod tests {
     }
 
     #[test]
+    fn newer_browser_choice_interrupts_only_its_exact_generation_turn() {
+        let event =
+            json!({"type":"generate","id":"s","_jarvisRequestId":"s:1","_jarvisPendingEventSeq":1});
+        let content = event_prompt(&event).unwrap();
+        let mut task = tasks::Task {
+            request_id: "s:1".into(),
+            action_id: "s".into(),
+            revision: 2,
+            content: "Move the badge".into(),
+            event: json!({"type":"accept","id":"s","variantId":"2","_jarvisPendingEventSeq":3}),
+            status: tasks::Status::Pending,
+            bead_id: Some("same-bead".into()),
+            turn_id: Some("generation-turn".into()),
+            created_at: 110,
+        };
+        let chat = json!({"activeTurnId":"generation-turn","turns":[{"id":"generation-turn","user":content}]});
+        assert!(superseding_choice(&[task.clone()], &content));
+        assert_eq!(
+            superseded_turn(&chat, &[task.clone()], &content),
+            Some("generation-turn")
+        );
+        // Another user request or a later phase with the same action ID is not cancelled.
+        let other = json!({"activeTurnId":"other-turn","turns":[{"id":"other-turn","user":"Continue my other request"}]});
+        assert_eq!(superseded_turn(&other, &[task.clone()], &content), None);
+        let choice_content = event_prompt(&task.event).unwrap();
+        let accepted = json!({"activeTurnId":"choice-turn","turns":[{"id":"choice-turn","user":choice_content}]});
+        assert_eq!(superseded_turn(&accepted, &[task.clone()], &content), None);
+        assert!(!superseding_choice(&[task.clone()], &choice_content));
+        task.request_id = "s:4".into();
+        assert!(!superseding_choice(&[task.clone()], &content));
+        task.request_id = "s:1".into();
+        task.event["_jarvisPendingEventSeq"] = json!(1);
+        assert!(!superseding_choice(&[task.clone()], &content));
+        task.event["_jarvisPendingEventSeq"] = json!(3);
+        task.status = tasks::Status::Cancelled;
+        assert!(!superseding_choice(&[task], &content));
+        assert!(!superseding_choice(&[], "ordinary user message"));
+    }
+
+    #[test]
     fn event_delivery_is_explicit_bounded_and_does_not_start_an_idle_poll_loop() {
         let prompt =
             event_prompt(&json!({"type":"generate","id":"session-1","element":{"text":"Product"}}))
@@ -3723,7 +4692,9 @@ mod tests {
         assert!(
             prompt.contains("preserve a instrução atual da fila abaixo, inclusive suas edições")
         );
-        assert!(prompt.len() < 1000);
+        assert!(prompt.contains("uma captura focada"));
+        assert!(prompt.contains("pare a comparação imediatamente"));
+        assert!(prompt.len() < 1500);
         assert!(event_prompt(&json!({"type":"generate"})).is_err());
         assert!(event_prompt(&json!({"id":"s","data":"x".repeat(80_001)})).is_err());
         assert!(event_prompt(&json!({"id":"../another-session"})).is_err());
@@ -3740,6 +4711,34 @@ mod tests {
         let discard = event_prompt(&json!({"id":"s","type":"discard"})).unwrap();
         assert!(discard.contains("live-accept --id desta ação --discard"));
         assert!(discard.contains("live-complete --id desta ação --discarded"));
+    }
+
+    #[test]
+    fn confirmed_choice_does_not_replay_cleanup_from_an_old_receipt() {
+        let event = json!({"id":"s","type":"accept","variantId":"1","_acceptResult":{"handled":true,"alreadyApplied":true,"carbonize":true},"_completionAck":{"ok":true,"final":true}});
+        assert!(!needs_agent(&event).unwrap());
+    }
+
+    #[test]
+    fn accepted_choice_only_requests_source_integration_in_its_owned_tab() {
+        let event = json!({"id":"s","type":"accept","variantId":"1","_acceptResult":{"handled":true,"carbonize":true,"file":"src/sidebar.tsx"},"_completionAck":{"ok":false,"error":"source_dirty"},"_jarvisLiveTabId":"native-live-tab"});
+        assert!(needs_agent(&event).unwrap());
+        let prompt = event_prompt(&event).unwrap();
+        assert!(prompt.contains("NÃO repita o aceite nem gere alternativas"));
+        assert!(prompt.contains("encerre imediatamente"));
+        assert!(prompt.contains("native-live-tab"));
+        assert!(prompt.contains("não oferece evaluate, devtools nem network"));
+        assert!(!prompt.contains("ainda NÃO executou live-accept"));
+    }
+
+    #[test]
+    fn attempted_discard_only_requests_original_source_restoration() {
+        let event = json!({"id":"s","type":"discard","_acceptResult":{"handled":false,"file":"src/sidebar.tsx"}});
+        assert!(needs_agent(&event).unwrap());
+        let prompt = event_prompt(&event).unwrap();
+        assert!(prompt.contains("NÃO repita o descarte"));
+        assert!(prompt.contains("live-complete --id desta ação --discarded"));
+        assert!(!prompt.contains("ainda NÃO executou o descarte"));
     }
 
     #[test]
@@ -3893,7 +4892,9 @@ mod tests {
                 helper_owned: true,
                 helper_identity: None,
                 design_path: None,
+                product_path: None,
                 event_content: None,
+                setup_turn_id: None,
                 pending_id: None,
                 stopping: false,
                 owner_lock: None,

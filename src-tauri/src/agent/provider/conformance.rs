@@ -453,32 +453,56 @@ fn legacy_cli_orphan_results_cannot_break_primary_or_secondary_provider_requests
 
 #[test]
 fn malformed_or_incomplete_streams_converge_to_structured_protocol_errors() {
+    use crate::diagnostics::ProviderProtocolReason;
+
     let failures = [
-        completed(&json!({"status":"incomplete","output":[]})),
-        antigravity::fixture_response(
-            &[json!({"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}})],
-            "gemini-fixture",
+        (completed(&json!({"status":"incomplete","output":[]})), None),
+        (
+            antigravity::fixture_response(
+                &[json!({"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}})],
+                "gemini-fixture",
+            ),
+            Some(ProviderProtocolReason::MissingCompletion),
         ),
-        custom::fixture_response(
-            Protocol::OpenaiResponses,
-            &[json!({"status":"completed","output":[{"type":"unknown"}]})],
+        (
+            custom::fixture_response(
+                Protocol::OpenaiResponses,
+                &[json!({"status":"completed","output":[{"type":"unknown"}]})],
+            ),
+            None,
         ),
-        custom::fixture_response(
-            Protocol::OpenaiCompletions,
-            &[json!({"choices":[{"index":1,"delta":{"content":"wrong choice"}}]})],
+        (
+            custom::fixture_response(
+                Protocol::OpenaiCompletions,
+                &[json!({"choices":[{"index":1,"delta":{"content":"wrong choice"}}]})],
+            ),
+            None,
         ),
-        custom::fixture_response(
-            Protocol::AnthropicMessages,
-            &[
-                json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}}),
-            ],
+        (
+            custom::fixture_response(
+                Protocol::AnthropicMessages,
+                &[
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}}),
+                ],
+            ),
+            None,
         ),
     ];
-    for failure in failures {
+    for (failure, reason) in failures {
         let error = failure.unwrap_err();
         assert_eq!(error.code, "provider_protocol");
         assert!(retry::retryable(&error));
-        assert!(error.provider_metadata.is_none());
+        assert_eq!(
+            error
+                .provider_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.protocol_reason),
+            reason
+        );
+        if let Some(metadata) = error.provider_metadata {
+            assert_eq!(metadata.http_status, None);
+            assert_eq!(metadata.request_id, None);
+        }
     }
 }
 

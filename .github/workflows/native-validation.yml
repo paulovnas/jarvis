@@ -48,9 +48,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, windows-2022, ubuntu-22.04]
+        runner: [macos-15, windows-2022, ubuntu-24.04]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CI: 'true'
       CARGO_TERM_COLOR: always
@@ -68,7 +68,23 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libasound2-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev gnome-keyring dbus-x11
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config libasound2-dev libgtk-4-dev libx11-dev libxcomposite-dev libxdamage-dev libxrandr-dev libnss3-dev libgbm-dev libxdo-dev libssl-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev gnome-keyring dbus-x11
+      - name: Preparar Ninja no macOS
+        if: runner.os == 'macOS'
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ninja
+          fi
+          ninja --version
+      - name: Verificar Ninja no Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            throw "Ninja não está disponível na imagem Windows."
+          }
+          ninja --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Preparar Rust
         run: |
           rustup toolchain install stable --profile minimal
@@ -77,12 +93,22 @@ jobs:
         with:
           workspaces: src-tauri
           cache-on-failure: true
+      - name: Restaurar Chromium e ferramentas fixadas
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cache/jarvis/cef/151.8.1
+            ~/.cache/jarvis/cef-exporter/151.8.1/bin
+            ~/.cache/jarvis/cef-exporter/151.8.1/.crates*.json
+          key: jarvis-cef-${{ runner.os }}-${{ runner.arch }}-151.8.1-tauri-9d1a5b176e337c8395362a4e7c99bac99b36a1d1
+      - name: Preparar Chromium para compilação e testes nativos
+        run: bun scripts/prepare-cef-ci.ts
       - name: Testar integrações nativas
         # libtest accepts several OR filters after --; generic agent/provider suites stay local.
         # Offline Core and background-process regressions run here; live-download fixtures remain ignored.
         run: >-
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib -- system:: secrets:: secrets_linux:: updater::
-          core::install:: core::audiovisual:: background::
+          core::install:: core::audiovisual:: core::browser_runtime:: background::
           agent::execution_sandbox:: agent::shell:: agent::command_sessions:: agent::processes:: agent::terminals::
           mcp::executable:: mcp::stdio:: claude:: companion:: --test-threads=1
       - name: Validar cofre Linux isolado

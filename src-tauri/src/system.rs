@@ -437,7 +437,28 @@ impl SystemState {
             .clone())
     }
     fn snapshot(&self) -> Result<Snapshot, String> {
+        self.snapshot_with_shells(crate::agent::shell::interactive_shells)
+    }
+
+    fn snapshot_with_shells(
+        &self,
+        terminal_shells: impl FnOnce() -> Vec<String>,
+    ) -> Result<Snapshot, String> {
         let preferences = self.preferences()?;
+        let (sleep_inhibited, sleep_error) = {
+            let sleep = self
+                .sleep
+                .lock()
+                .map_err(|_| "Estado de repouso indisponível.")?;
+            (sleep.0, sleep.1.clone())
+        };
+        let notification_error = self
+            .notification_error
+            .lock()
+            .map_err(|_| "Notificações indisponíveis.")?
+            .clone();
+        // Platform/font/shell probes may perform slow filesystem I/O. The
+        // preference and status mutexes must already be released here.
         let available_terminal_fonts = available_terminal_fonts().to_vec();
         let terminal_font_error = terminal_font_error(
             preferences.terminal.font_family.as_deref(),
@@ -448,20 +469,12 @@ impl SystemState {
                 Ok(path) => (Some(path.to_string_lossy().into_owned()), None),
                 Err(error) => (None, Some(error)),
             };
-        let sleep = self
-            .sleep
-            .lock()
-            .map_err(|_| "Estado de repouso indisponível.")?;
         Ok(Snapshot {
             preferences,
-            sleep_inhibited: sleep.0,
-            sleep_error: sleep.1.clone(),
-            notification_error: self
-                .notification_error
-                .lock()
-                .map_err(|_| "Notificações indisponíveis.")?
-                .clone(),
-            available_terminal_shells: crate::agent::shell::interactive_shells(),
+            sleep_inhibited,
+            sleep_error,
+            notification_error,
+            available_terminal_shells: terminal_shells(),
             available_terminal_fonts,
             resolved_terminal_shell,
             terminal_error,

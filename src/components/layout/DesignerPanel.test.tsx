@@ -150,6 +150,18 @@ it("keeps errors and attention recovery available without starting work when the
   expect(within(screen.getByRole("region", { name: "Alterações pendentes" })).getByRole("button", { name: /Retomar alteração/ })).toBeEnabled();
 });
 
+it.each(["waiting", "running"] as const)("shows %s setup preparation without inviting another Live retry", phase => {
+  const state = session();
+  state.live.status = { ...state.live.status, state: "setup", phase, actionId: null, activity: "Preparando a página local", setupNeeded: { error: "page_unavailable" } };
+  render(<DesignerPanel session={state} />);
+  const progress = screen.getByRole("status", { name: "Estado do Designer" });
+  expect(progress).toHaveTextContent(phase === "waiting" ? "Aguardando agente" : "Em andamento");
+  expect(progress).toHaveTextContent("Preparando a página local");
+  expect(progress).not.toHaveTextContent("Precisa de atenção");
+  expect(screen.queryByRole("button", { name: "Retomar Live" })).not.toBeInTheDocument();
+  expect(state.onResume).not.toHaveBeenCalled();
+});
+
 it("uses a structural loading state and useful empty guidance", () => {
   const state = session(); state.live.loaded = false;
   const view = render(<DesignerPanel session={state} />);

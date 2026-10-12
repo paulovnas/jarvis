@@ -126,41 +126,62 @@ fn chat_choices(path: &Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError> 
     let mut seen = BTreeSet::new();
     let mut latest: Option<(String, TurnOptions)> = None;
     let mut queue: BTreeMap<String, TurnOptions> = BTreeMap::new();
-    journal::scan(path, 0, |_, _, record| {
-        match record.r#type.as_str() {
-            "turn_checkpoint" => {
-                let turn = &record.data["turn"];
-                let id = turn["id"]
-                    .as_str()
-                    .ok_or_else(AgentError::storage)?
-                    .to_owned();
-                queue.remove(&id);
-                if seen.insert(id.clone()) || latest.as_ref().is_some_and(|(last, _)| last == &id) {
-                    let options = serde_json::from_value(turn["options"].clone())
-                        .map_err(|_| AgentError::storage())?;
-                    latest = Some((id, options));
+    #[derive(Deserialize)]
+    struct Entry {
+        id: String,
+        options: TurnOptions,
+    }
+    #[derive(Deserialize)]
+    struct TurnEntry {
+        id: String,
+        #[serde(default)]
+        options: serde_json::Value,
+    }
+    #[derive(Deserialize)]
+    struct TurnData {
+        turn: TurnEntry,
+    }
+    #[derive(Deserialize)]
+    struct Metadata<T> {
+        data: T,
+    }
+    journal::scan_selected(
+        path,
+        &["turn_checkpoint", "queue_checkpoint"],
+        |kind, bytes| {
+            match kind {
+                "turn_checkpoint" => {
+                    let Metadata {
+                        data:
+                            TurnData {
+                                turn: TurnEntry { id, options },
+                            },
+                    } = serde_json::from_slice(bytes).map_err(|_| AgentError::storage())?;
+                    queue.remove(&id);
+                    if seen.insert(id.clone())
+                        || latest.as_ref().is_some_and(|(last, _)| last == &id)
+                    {
+                        let options =
+                            serde_json::from_value(options).map_err(|_| AgentError::storage())?;
+                        latest = Some((id, options));
+                    }
                 }
+                "queue_checkpoint" => {
+                    let Metadata { data: entries }: Metadata<Vec<Entry>> =
+                        serde_json::from_slice(bytes).map_err(|_| AgentError::storage())?;
+                    if entries.len() > 20 {
+                        return Err(AgentError::storage());
+                    }
+                    queue = entries
+                        .into_iter()
+                        .map(|entry| (entry.id, entry.options))
+                        .collect();
+                }
+                _ => {}
             }
-            "queue_checkpoint" => {
-                #[derive(Deserialize)]
-                struct Entry {
-                    id: String,
-                    options: TurnOptions,
-                }
-                let entries: Vec<Entry> =
-                    serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                if entries.len() > 20 {
-                    return Err(AgentError::storage());
-                }
-                queue = entries
-                    .into_iter()
-                    .map(|entry| (entry.id, entry.options))
-                    .collect();
-            }
-            _ => {}
-        }
-        Ok(())
-    })
+            Ok(())
+        },
+    )
     .map_err(storage)?;
     Ok(latest
         .into_iter()
@@ -169,12 +190,91 @@ fn chat_choices(path: &Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError> 
         .collect())
 }
 
-pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, ProviderError> {
-    let mut references = Vec::new();
-    if let Some(choice) = crate::system::backup_preferences(home)
+struct Conversation {
+    id: String,
+    project: String,
+    title: String,
+    project_name: String,
+    choices: Vec<(TurnOptions, bool)>,
+}
+
+fn conversations(db: &Connection) -> Result<Vec<Conversation>, ProviderError> {
+    let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.project_id<>?1 ORDER BY c.id").map_err(storage)?;
+    let rows = statement
+        .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
+            Ok(Conversation {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                title: row.get(2)?,
+                project_name: row.get(3)?,
+                choices: Vec::new(),
+            })
+        })
         .map_err(storage)?
-        .chat_title_model
-    {
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(storage)?;
+    Ok(rows)
+}
+
+struct InventorySources {
+    title: Option<ModelChoice>,
+    profiles: workflow::settings::ModelSettings,
+    catalog: workflow::catalog::Catalog,
+    conversations: Vec<Conversation>,
+}
+
+impl InventorySources {
+    fn read(
+        home: &Path,
+        mut conversations: Vec<Conversation>,
+        mut read_choices: impl FnMut(&Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError>,
+    ) -> Result<Self, ProviderError> {
+        let title = crate::system::backup_preferences(home)
+            .map_err(storage)?
+            .chat_title_model;
+        let profiles = workflow::settings::read(home).map_err(storage)?;
+        let catalog = workflow::catalog::read(home).map_err(storage)?;
+        for conversation in &mut conversations {
+            // Deleted local histories have no reusable model choice to migrate.
+            if crate::data_dir::root(home)
+                .join("sessions")
+                .join(&conversation.project)
+                .exists()
+            {
+                let path =
+                    library::session_path(home, &conversation.project, &conversation.id, false)
+                        .map_err(storage)?;
+                conversation.choices = read_choices(&path)?;
+            }
+        }
+        Ok(Self {
+            title,
+            profiles,
+            catalog,
+            conversations,
+        })
+    }
+}
+
+pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, ProviderError> {
+    inventory_from_sources(
+        db,
+        InventorySources::read(home, conversations(db)?, chat_choices)?,
+    )
+}
+
+fn inventory_from_sources(
+    db: &Connection,
+    sources: InventorySources,
+) -> Result<Vec<Reference>, ProviderError> {
+    let InventorySources {
+        title,
+        profiles,
+        catalog,
+        conversations,
+    } = sources;
+    let mut references = Vec::new();
+    if let Some(choice) = title {
         references.push(reference(
             db,
             crate::system::CHAT_TITLE_MODEL_KEY.into(),
@@ -226,7 +326,6 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             )?);
         }
     }
-    let profiles = workflow::settings::read(home).map_err(storage)?;
     for (key, choice) in &profiles {
         let (flow, role) = key
             .split_once('/')
@@ -254,7 +353,6 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             choice.clone(),
         )?);
     }
-    let catalog = workflow::catalog::read(home).map_err(storage)?;
     for agent in &catalog.agents {
         if let Some(choice) = &agent.model {
             let mut details = vec!["Agente customizado".into()];
@@ -302,29 +400,15 @@ pub(crate) fn inventory(db: &Connection, home: &Path) -> Result<Vec<Reference>, 
             serde_json::from_str(&encoded).map_err(storage)?,
         )?);
     }
-    let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.project_id<>?1 ORDER BY c.id").map_err(storage)?;
-    let rows = statement
-        .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })
-        .map_err(storage)?;
-    for row in rows {
-        let (id, project, title, project_name) = row.map_err(storage)?;
-        // Deleted local histories have no reusable model choice to migrate.
-        if !crate::data_dir::root(home)
-            .join("sessions")
-            .join(&project)
-            .exists()
-        {
-            continue;
-        }
-        let path = library::session_path(home, &project, &id, false).map_err(storage)?;
-        for (options, queued) in chat_choices(&path)? {
+    for Conversation {
+        id,
+        title,
+        project_name,
+        choices,
+        ..
+    } in conversations
+    {
+        for (options, queued) in choices {
             if workflow::settings::chat::read(db, &id)
                 .map_err(storage)?
                 .contains_key(&workflow::settings::chat::selection_key(&options).map_err(storage)?)
@@ -654,16 +738,40 @@ pub async fn get_provider_model_references(
 ) -> Result<Inventory, ProviderError> {
     let home = app.path().home_dir().map_err(storage)?;
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        state.with_connection(&home, |db| {
-            Ok(Inventory {
-                references: inventory(db, &home)?,
-                bindings: model_bindings::list(db).map_err(storage)?,
+    tauri::async_runtime::spawn_blocking(move || model_references(&state, &home, chat_choices))
+        .await
+        .map_err(storage)?
+}
+
+fn model_references(
+    state: &AppState,
+    home: &Path,
+    read_choices: impl FnMut(&Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError>,
+) -> Result<Inventory, ProviderError> {
+    let rows = state.with_connection(home, |db| conversations(db))?;
+    // Journals can contain hundreds of megabytes. Never retain the shared
+    // database guard while reading them, preferences or agent catalogs.
+    let mut sources = InventorySources::read(home, rows, read_choices)?;
+    state.with_connection(home, |db| {
+        let mut choices: BTreeMap<_, _> = sources
+            .conversations
+            .into_iter()
+            .map(|row| ((row.id, row.project), row.choices))
+            .collect();
+        sources.conversations = conversations(db)?
+            .into_iter()
+            .map(|mut row| {
+                row.choices = choices
+                    .remove(&(row.id.clone(), row.project.clone()))
+                    .unwrap_or_default();
+                row
             })
+            .collect();
+        Ok(Inventory {
+            references: inventory_from_sources(db, sources)?,
+            bindings: model_bindings::list(db).map_err(storage)?,
         })
     })
-    .await
-    .map_err(storage)?
 }
 
 pub async fn remove(

@@ -10,6 +10,9 @@ const PATCH_BYTES: &[u8] = include_bytes!("../../../../scripts/impeccable-native
 const DESIGN_PATCH_PATH: &str = "scripts/impeccable-native/canonical-design.patch";
 const DESIGN_PATCH_BYTES: &[u8] =
     include_bytes!("../../../../scripts/impeccable-native/canonical-design.patch");
+const PRODUCT_PATCH_PATH: &str = "scripts/impeccable-native/canonical-product.patch";
+const PRODUCT_PATCH_BYTES: &[u8] =
+    include_bytes!("../../../../scripts/impeccable-native/canonical-product.patch");
 const ACCEPT_PATCH_PATH: &str = "scripts/impeccable-native/accept-write.patch";
 const ACCEPT_PATCH_BYTES: &[u8] =
     include_bytes!("../../../../scripts/impeccable-native/accept-write.patch");
@@ -53,6 +56,10 @@ fn patches() -> Vec<Patch> {
         Patch {
             path: DESIGN_PATCH_PATH.into(),
             sha256: format!("{:x}", Sha256::digest(DESIGN_PATCH_BYTES)),
+        },
+        Patch {
+            path: PRODUCT_PATCH_PATH.into(),
+            sha256: format!("{:x}", Sha256::digest(PRODUCT_PATCH_BYTES)),
         },
         Patch {
             path: ACCEPT_PATCH_PATH.into(),
@@ -109,9 +116,36 @@ mod tests {
         changed.target = "other-host".into();
         assert!(verify(&changed, &original.engine_sha256).is_err());
         changed = original.clone();
-        changed.engine_version = "0.1.15".into();
+        changed.engine_version = format!("{ENGINE_VERSION}-untrusted");
         assert!(verify(&changed, &original.engine_sha256).is_err());
         assert!(verify(&original, &"b".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn native_product_routing_requires_the_exact_patch_and_application_order() {
+        let original = receipt();
+        assert_eq!(
+            original
+                .patches
+                .iter()
+                .map(|patch| patch.path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                PATCH_PATH,
+                DESIGN_PATCH_PATH,
+                PRODUCT_PATCH_PATH,
+                ACCEPT_PATCH_PATH
+            ]
+        );
+        let mut changed = original.clone();
+        changed.patches.remove(2);
+        assert!(verify(&changed, &original.engine_sha256).is_err());
+        changed = original.clone();
+        changed.patches.swap(2, 3);
+        assert!(verify(&changed, &original.engine_sha256).is_err());
+        changed = original.clone();
+        changed.patches[2].sha256 = "b".repeat(64);
+        assert!(verify(&changed, &original.engine_sha256).is_err());
     }
 
     #[test]

@@ -31,6 +31,7 @@ pub(in crate::agent) struct Bridge<'a> {
     pub prompt: String,
     pub delivered_wire: usize,
     pub request_scope: String,
+    pub accepted_live: bool,
 }
 
 impl<'a> Bridge<'a> {
@@ -329,6 +330,7 @@ impl<'a> Bridge<'a> {
             prompt,
             delivered_wire: 0,
             request_scope: crate::claude::new_session_id().map_err(super::runtime_error)?,
+            accepted_live: false,
         })
     }
 
@@ -1247,6 +1249,7 @@ pub(in crate::agent) mod tests {
             prompt: String::new(),
             delivered_wire: 0,
             request_scope: "gateway-test".into(),
+            accepted_live: false,
         }
     }
 

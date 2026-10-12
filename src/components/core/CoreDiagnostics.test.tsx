@@ -25,6 +25,19 @@ function controller(complete = true): CoreController {
   };
 }
 
+it("shows bundled Chromium checks separately from package repair actions", () => {
+  const core = controller();
+  core.snapshot!.browserRuntime = { version: "151.8.1", state: "unavailable", diagnostics: [{ label: "Processos auxiliares do Chromium", passed: false, message: "Processos auxiliares ausentes no aplicativo." }] };
+  render(<CoreDiagnostics core={core} onClose={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: "Navegador Chromium" })).toBeVisible();
+  expect(screen.getByText("Core funcional · ação pendente")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent("Processos auxiliares ausentes no aplicativo.");
+  expect(screen.getByText("Atualize ou reinstale o Jarvis para recuperar o navegador integrado.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /(?:Instalar|Reparar|Reinstalar).*Chromium/ })).not.toBeInTheDocument();
+  expect(core.repair).not.toHaveBeenCalled();
+  expect(core.install).not.toHaveBeenCalled();
+});
+
 it("directs bundled component recovery to the app instead of installing or repairing an external Core", () => {
   const core = controller(); const item = core.snapshot!.items[3];
   item.bundled = true; item.healthError = "Arquivo nativo ausente"; core.snapshot!.ready = false;

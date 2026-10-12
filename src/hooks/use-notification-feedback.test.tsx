@@ -61,3 +61,22 @@ it("ignores an old initial preference read after a newer delivery error", async 
   await act(async () => resolve(snapshot("Erro antigo").payload));
   expect(mock.error).toHaveBeenCalledTimes(1);
 });
+
+it("coalesces foreground events while a preference read is pending", async () => {
+  let resolve!: (value: unknown) => void;
+  mock.invoke.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const { unmount } = renderHook(useNotificationFeedback);
+  await waitFor(() => expect(mock.invoke).toHaveBeenCalledOnce());
+  act(() => {
+    for (let index = 0; index < 100; index += 1) {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+  expect(mock.invoke).toHaveBeenCalledOnce();
+  await act(async () => resolve(snapshot(null).payload));
+  expect(mock.invoke).toHaveBeenCalledTimes(2);
+  unmount();
+  act(() => window.dispatchEvent(new Event("focus")));
+  expect(mock.invoke).toHaveBeenCalledTimes(2);
+});

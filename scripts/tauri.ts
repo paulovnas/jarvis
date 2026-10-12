@@ -1,19 +1,16 @@
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareImpeccable } from "./prepare-impeccable";
+import { ensureCefTauriCli } from "./tauri-cef-cli";
 import {
   developmentArguments,
   localSigningIdentity,
   projectIdentifier,
-  signedDevArguments,
   signingCommand,
   usesDevelopmentProfile,
 } from "./macos-signing";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-const require = createRequire(import.meta.url);
 let args = process.argv.slice(2);
 
 try {
@@ -32,16 +29,13 @@ try {
     // Scope the certificate to this invocation, including Tauri's bundler and Cargo children.
     process.env.APPLE_SIGNING_IDENTITY = identity.hash;
     process.env.JARVIS_SIGNING_IDENTIFIER = projectIdentifier(projectRoot, development);
-    if (command === "dev") {
-      process.env.JARVIS_DEV_APP_BUNDLE = "1";
-      args = signedDevArguments(args, projectRoot);
-    }
+    // The pinned CEF CLI builds, bundles and signs the complete development app,
+    // including Chromium helpers. The old Cargo runner would create an incomplete bundle.
+    process.env.JARVIS_CEF_RUNTIME = "1";
     console.info("Jarvis: assinatura macOS estável ativada.");
   }
-  // Native addons do not reliably observe Bun's process.env mutations. Launch a fresh
-  // process with an explicit environment so Rust's bundler and Cargo inherit signing.
-  const cli = path.join(path.dirname(require.resolve("@tauri-apps/cli/package.json")), "tauri.js");
-  const child = spawn(process.execPath, [cli, ...args], { stdio: "inherit", env: { ...process.env } });
+  const cli = await ensureCefTauriCli(projectRoot);
+  const child = spawn(cli, args, { stdio: "inherit", env: { ...process.env } });
   const interrupt = () => { child.kill("SIGINT"); };
   const terminate = () => { child.kill("SIGTERM"); };
   process.on("SIGINT", interrupt);

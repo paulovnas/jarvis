@@ -46,6 +46,17 @@ beforeEach(() => {
   });
 });
 
+it("inspects the integrated Chromium network without requiring an external browser", async () => {
+  const tab = { id: "native-tab", conversationId: "chat-1", title: "Projeto integrado", url: "http://localhost:3001/", loading: false };
+  stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };
+  const user = userEvent.setup();
+  render(<Workspace />);
+  await user.click(await screen.findByRole("button", { name: "Mostrar rede" }));
+  expect(await screen.findByText("https://example.com/api")).toBeVisible();
+  expect(mocked).toHaveBeenCalledWith("browser_command", { conversationId: "chat-1", request: { action: "network", id: tab.id, filter: "", offset: 0, limit: 25 } });
+  expect(screen.queryByRole("region", { name: "Página no navegador externo" })).not.toBeInTheDocument();
+});
+
 it("keeps external tabs external after changing the default and inspects network without creating a webview", async () => {
   const tab = { id: "ext:epoch:1", conversationId: "chat-1", title: "Projeto externo", url: "https://example.com", loading: false };
   stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };

@@ -562,6 +562,117 @@ pub(super) fn scan(
     Ok(scan_snapshot(path, start, visit)?.end)
 }
 
+/// Read selected record metadata without materializing conversation payloads.
+/// Framing, checksums, symlink rejection and incomplete-tail handling match
+/// the ordinary journal scanner; callers deserialize only the fields they need.
+pub(super) fn scan_selected(
+    path: &Path,
+    kinds: &[&str],
+    mut visit: impl FnMut(&str, &[u8]) -> Result<(), AgentError>,
+) -> Result<u64, AgentError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Envelope {
+        r#type: String,
+        version: u8,
+        #[serde(rename = "data")]
+        _data: serde::de::IgnoredAny,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ChunkEnvelope {
+        r#type: String,
+        version: u8,
+        data: RecordChunk,
+    }
+    fn envelope(bytes: &[u8]) -> Result<Envelope, AgentError> {
+        serde_json::from_slice(bytes).map_err(|_| {
+            AgentError::new(
+                "invalid_history",
+                "O histórico contém um registro inválido. O arquivo original foi preservado.",
+            )
+        })
+    }
+    let lock = journal_lock(path)?;
+    {
+        let _guard = lock.write().map_err(|_| AgentError::internal())?;
+        recover_swap(path)?;
+    }
+    let _guard = lock.read().map_err(|_| AgentError::internal())?;
+    let mut reader = BufReader::new(open(path, false)?);
+    let Some(header) = read_line(&mut reader)? else {
+        return Ok(0);
+    };
+    let mut offset = header.len() as u64;
+    while let Some(line) = read_line(&mut reader)? {
+        let mut length = line.len();
+        let mut record = envelope(&line)?;
+        let bytes = if record.version == 1 {
+            line
+        } else {
+            let mut line = line;
+            let mut bytes = Vec::new();
+            let mut expected = None;
+            for index in 0usize.. {
+                if record.version != 2 || record.r#type != "record_chunk" {
+                    return Err(AgentError::storage());
+                }
+                let chunk: ChunkEnvelope =
+                    serde_json::from_slice(&line).map_err(|_| AgentError::storage())?;
+                if chunk.version != 2 || chunk.r#type != "record_chunk" {
+                    return Err(AgentError::storage());
+                }
+                let chunk = chunk.data;
+                let (count, digest) = *expected.get_or_insert((chunk.count, chunk.digest));
+                if count < 2
+                    || chunk.index != index
+                    || chunk.count != count
+                    || chunk.digest != digest
+                {
+                    return Err(AgentError::storage());
+                }
+                let payload = BASE64
+                    .decode(&chunk.payload)
+                    .map_err(|_| AgentError::storage())?;
+                if payload.is_empty()
+                    || payload.len() > CHUNK_BYTES
+                    || (index + 1 < count && payload.len() != CHUNK_BYTES)
+                {
+                    return Err(AgentError::storage());
+                }
+                bytes.extend(payload);
+                if index + 1 == count {
+                    let actual: [u8; 32] = Sha256::digest(&bytes).into();
+                    if actual != digest {
+                        return Err(AgentError::storage());
+                    }
+                    record = envelope(&bytes)?;
+                    if record.version != 1 {
+                        return Err(AgentError::storage());
+                    }
+                    break;
+                }
+                // Preserve the uncommitted chunk prefix after an interrupted append.
+                let Some(next) = read_line(&mut reader)? else {
+                    return Ok(offset);
+                };
+                length = length
+                    .checked_add(next.len())
+                    .ok_or_else(AgentError::storage)?;
+                line = next;
+                record = envelope(&line)?;
+            }
+            bytes
+        };
+        // IgnoredAny validates JSON but never allocates tool output/image trees.
+        if kinds.contains(&record.r#type.as_str()) {
+            visit(&record.r#type, &bytes)?;
+        }
+        offset += length as u64;
+    }
+    Ok(offset)
+}
+
 pub(super) fn scan_snapshot(
     path: &Path,
     start: u64,
@@ -1689,6 +1800,41 @@ mod tests {
     }
 
     #[test]
+    fn selected_metadata_reads_valid_chunks_without_deserializing_conversation_payloads() {
+        #[derive(Deserialize)]
+        struct Options {
+            options: TurnOptions,
+        }
+        #[derive(Deserialize)]
+        struct TurnMetadata {
+            turn: Options,
+        }
+        #[derive(Deserialize)]
+        struct Metadata {
+            data: TurnMetadata,
+        }
+        let fixture = Fixture::new();
+        let path = fixture.root.join("selected-metadata.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        let stored = long_turn();
+        append_event(&path, "tool_checkpoint", &stored).unwrap();
+        append(&path, &stored).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        let mut choices = Vec::new();
+        let end = scan_selected(&path, &["turn_checkpoint"], |kind, bytes| {
+            assert_eq!(kind, "turn_checkpoint");
+            let metadata: Metadata = serde_json::from_slice(bytes).unwrap();
+            choices.push(metadata.data.turn.options);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].model, stored.turn.options.model);
+        assert_eq!(end, bytes.len() as u64);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
     fn incomplete_chunks_recover_at_the_previous_logical_record() {
         let fixture = Fixture::new();
         let mut before = turn();
@@ -1712,6 +1858,11 @@ mod tests {
                 .write_all(&framed[..boundary])
                 .unwrap();
             let original = fs::read(&path).unwrap();
+            assert_eq!(
+                scan_selected(&path, &["turn_checkpoint"], |_, _| Ok(())).unwrap(),
+                valid_end
+            );
+            assert_eq!(fs::read(&path).unwrap(), original);
             assert_eq!(scan(&path, 0, |_, _, _| Ok(())).unwrap(), valid_end);
             assert_eq!(load(&path).unwrap()[0].wire, before.wire);
             assert_eq!(fs::metadata(&path).unwrap().len(), valid_end);
@@ -1753,6 +1904,8 @@ mod tests {
                 bytes.extend(encode_record(&record).unwrap());
             }
             fs::write(&path, &bytes).unwrap();
+            assert!(scan_selected(&path, &["turn_checkpoint"], |_, _| Ok(())).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
             assert!(load(&path).is_err());
             assert!(compact(&path).is_err());
             assert_eq!(fs::read(&path).unwrap(), bytes);

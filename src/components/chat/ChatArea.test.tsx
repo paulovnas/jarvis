@@ -84,7 +84,13 @@ describe("Persistent live conversation", () => {
     const start = await screen.findByRole("button", { name: "Ativar Impeccable Live" });
     await waitFor(() => expect(start).toBeEnabled());
     await user.click(start);
-    expect(await screen.findByRole("tab", { name: "Projeto · Live" })).toHaveAttribute("aria-selected", "true");
+    const liveTab = await screen.findByRole("tab", { name: "Projeto · Live" });
+    expect(liveTab).toHaveAttribute("aria-selected", "true");
+    expect(within(liveTab).getByText("Live")).toBeVisible();
+    const closeLive = screen.getByRole("button", { name: "Fechar navegador Projeto · Live" });
+    expect(closeLive).toBeDisabled();
+    await user.click(closeLive);
+    expect(call.mock.calls.some(([command, args]) => command === "browser_command" && (args as { request: { action: string } }).request.action === "close")).toBe(false);
     expect(await screen.findByRole("textbox", { name: "Endereço do navegador" })).toHaveValue("http://localhost:5173/");
     await user.click(screen.getByRole("tab", { name: "Chat" }));
     expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho preservado");

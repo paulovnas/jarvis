@@ -81,17 +81,10 @@ fn save_screenshot(
     Ok(())
 }
 
-fn preference(app: &tauri::AppHandle) -> Result<BrowserMode, AgentError> {
-    app.state::<crate::system::SystemState>()
-        .browser_preferences()
-        .map(|preferences| preferences.mode)
-        .map_err(|message| error(&message))
-}
-
-fn external_request(request: &BrowserRequest, mode: BrowserMode) -> bool {
+fn external_request(request: &BrowserRequest) -> bool {
     match request.id.as_deref() {
         Some(id) => id.starts_with("ext:"),
-        None => request.action == "discover" || mode == BrowserMode::Extension,
+        None => request.action == "discover",
     }
 }
 
@@ -225,40 +218,11 @@ fn validate(request: &mut BrowserRequest) -> Result<(), AgentError> {
 
 fn validate_backend(request: &BrowserRequest, external: bool) -> Result<(), AgentError> {
     if !external
-        && (matches!(
-            request.action.as_str(),
-            "discover" | "attach" | "network" | "response_body" | "evaluate" | "devtools" | "wait"
-        ) || request.new_window == Some(true)
-            || request.locator.is_some()
-            || request.frame_id.is_some()
-            || request.timeout_ms.is_some()
-            || request.state.is_some())
+        && (matches!(request.action.as_str(), "discover" | "attach")
+            || request.new_window == Some(true))
     {
-        return Err(error("Este recurso usa a extensão Chromium. Selecione uma aba externa ou configure a extensão em Configurações > Navegador."));
+        return Err(error("Este recurso requer uma aba externa vinculada pela extensão. Use a aba integrada para a navegação normal; vincule uma aba externa somente quando o usuário solicitar sua inspeção."));
     }
-    Ok(())
-}
-
-fn paginate_native_snapshot(
-    result: &mut Value,
-    offset: Option<u32>,
-    limit: Option<u16>,
-) -> Result<(), AgentError> {
-    let elements = result["elements"]
-        .as_array_mut()
-        .ok_or_else(|| error("O navegador não retornou os elementos da página."))?;
-    let total = elements.len();
-    let offset = offset.unwrap_or(0);
-    let limit = limit.unwrap_or(100);
-    *elements = elements
-        .iter()
-        .skip(offset as usize)
-        .take(usize::from(limit))
-        .cloned()
-        .collect();
-    result["total"] = json!(total);
-    result["offset"] = json!(offset);
-    result["limit"] = json!(limit);
     Ok(())
 }
 
@@ -279,22 +243,14 @@ fn validate_snapshot(snapshot: &Snapshot, conversation: &str) -> Result<(), Agen
     Ok(())
 }
 
-fn merge(
-    mut native: Snapshot,
-    external: Snapshot,
-    mode: BrowserMode,
-    selected: Option<&Option<String>>,
-) -> Snapshot {
-    let preferred = match mode {
-        BrowserMode::Embedded => native.active_id.clone(),
-        BrowserMode::Extension => external.active_id.clone(),
-    };
+fn merge(mut native: Snapshot, external: Snapshot, selected: Option<&Option<String>>) -> Snapshot {
+    let preferred = native.active_id.clone();
     native.tabs.extend(external.tabs);
     native.active_id = selected
         .cloned()
         .unwrap_or(preferred)
         .filter(|id| native.tabs.iter().any(|tab| tab.id == *id));
-    native.backend = mode;
+    native.backend = BrowserMode::Embedded;
     native.extension_error = external.extension_error;
     native
 }
@@ -303,7 +259,6 @@ pub(super) async fn snapshot(
     app: &tauri::AppHandle,
     conversation: &str,
 ) -> Result<Snapshot, AgentError> {
-    let mode = preference(app)?;
     let state = app.state::<BrowserState>();
     let native = state.snapshot(app, conversation)?;
     let mut external = state
@@ -313,7 +268,7 @@ pub(super) async fn snapshot(
         .get(conversation)
         .cloned()
         .unwrap_or_default();
-    if mode == BrowserMode::Extension || extension::is_connected(app) {
+    if extension::is_connected(app) {
         match extension::request(app, conversation, json!({"action":"list"})).await {
             Ok(value) => {
                 let snapshot: Snapshot = serde_json::from_value(value)
@@ -333,7 +288,7 @@ pub(super) async fn snapshot(
             Some("A extensão está desconectada. Abra o navegador para reconectar.".into());
     }
     let selected = state.selected.lock().map_err(|_| AgentError::internal())?;
-    Ok(merge(native, external, mode, selected.get(conversation)))
+    Ok(merge(native, external, selected.get(conversation)))
 }
 
 pub(super) async fn command(
@@ -353,8 +308,9 @@ pub(super) async fn command(
         changed(app, conversation);
         return Ok(json!({"selected":true}));
     }
-    // Resolve once: changing preferences cannot redirect an operation already in progress.
-    let external = external_request(&request, preference(app)?);
+    // An explicit tab keeps its backend. New tabs always belong to the integrated
+    // browser, regardless of legacy preferences or a connected extension.
+    let external = external_request(&request);
     validate_backend(&request, external)?;
     if request.action == "list" {
         return Ok(json!(snapshot(app, conversation).await?));
@@ -379,7 +335,6 @@ pub(super) async fn command(
     };
     let action = request.action.clone();
     let requested_id = request.id.clone();
-    let pagination = (request.offset, request.limit);
     let mut result = if external {
         let value = serde_json::to_value(&request).map_err(|_| AgentError::internal())?;
         let result = extension::request(app, conversation, value).await?;
@@ -402,9 +357,6 @@ pub(super) async fn command(
     } else {
         super::command(app, conversation, request).await?
     };
-    if !external && action == "snapshot" && (pagination.0.is_some() || pagination.1.is_some()) {
-        paginate_native_snapshot(&mut result, pagination.0, pagination.1)?;
-    }
     if let Some((home, conversation, root, destination, path)) = save {
         result = tauri::async_runtime::spawn_blocking(move || {
             save_screenshot(
@@ -593,19 +545,23 @@ mod tests {
     }
 
     #[test]
-    fn existing_tab_keeps_its_backend_after_preference_changes() {
+    fn new_tabs_stay_integrated_and_external_inspection_requires_an_explicit_target() {
         let mut request = BrowserRequest {
             action: "click".into(),
             id: Some("ext:epoch:7".into()),
             ..BrowserRequest::default()
         };
-        assert!(external_request(&request, BrowserMode::Embedded));
+        assert!(external_request(&request));
         request.id = Some("native-tab".into());
-        assert!(!external_request(&request, BrowserMode::Extension));
+        assert!(!external_request(&request));
         request.id = None;
         request.action = "open".into();
-        assert!(external_request(&request, BrowserMode::Extension));
-        assert!(!external_request(&request, BrowserMode::Embedded));
+        assert!(!external_request(&request));
+        request.action = "discover".into();
+        assert!(external_request(&request));
+        request.action = "attach".into();
+        request.id = Some("ext:epoch:7".into());
+        assert!(external_request(&request));
     }
 
     #[test]
@@ -709,7 +665,8 @@ mod tests {
     }
 
     #[test]
-    fn extension_fields_cannot_be_ignored_by_native_tabs_or_other_actions() {
+    fn integrated_chromium_accepts_locator_wait_and_frame_contracts_but_rejects_inapplicable_fields(
+    ) {
         for payload in [
             json!({"action":"click","id":"native-tab","locator":{"text":"Save"}}),
             json!({"action":"click","id":"native-tab","element":"element-1","timeoutMs":0}),
@@ -718,9 +675,9 @@ mod tests {
         ] {
             let mut request: BrowserRequest = serde_json::from_value(payload).unwrap();
             validate(&mut request).unwrap();
-            assert!(validate_backend(&request, false).is_err());
+            validate_backend(&request, false).unwrap();
             request.id = Some("ext:epoch:7".into());
-            validate_backend(&request, external_request(&request, BrowserMode::Embedded)).unwrap();
+            validate_backend(&request, external_request(&request)).unwrap();
         }
         for payload in [
             json!({"action":"console","id":"ext:epoch:7","frameId":"frame-1"}),
@@ -733,33 +690,6 @@ mod tests {
             let mut request: BrowserRequest = serde_json::from_value(payload.clone()).unwrap();
             assert!(validate(&mut request).is_err(), "accepted {payload}");
         }
-    }
-
-    #[test]
-    fn native_snapshot_pagination_preserves_page_evidence_and_current_element_ids() {
-        let mut request: BrowserRequest = serde_json::from_value(
-            json!({"action":"snapshot","id":"live-tab","offset":1,"limit":1}),
-        )
-        .unwrap();
-        validate(&mut request).unwrap();
-        assert!(!external_request(&request, BrowserMode::Extension));
-        validate_backend(&request, false).unwrap();
-        let full = json!({"url":"http://localhost:3001/login","text":"One feature panel","elements":[{"id":"doc:1:1","name":"Login"},{"id":"doc:1:2","name":"Accept"},{"id":"doc:1:3","name":"Discard"}]});
-        let mut page = full.clone();
-        paginate_native_snapshot(&mut page, request.offset, request.limit).unwrap();
-        assert_eq!(page["elements"], json!([{"id":"doc:1:2","name":"Accept"}]));
-        assert_eq!(page["text"], full["text"]);
-        assert_eq!(page["url"], full["url"]);
-        assert_eq!(page["total"], 3);
-        assert_eq!(page["offset"], 1);
-        assert_eq!(page["limit"], 1);
-        let mut beyond = full.clone();
-        paginate_native_snapshot(&mut beyond, Some(u32::MAX), Some(20)).unwrap();
-        assert_eq!(beyond["elements"], json!([]));
-        assert_eq!(beyond["total"], 3);
-        let mut first = full;
-        paginate_native_snapshot(&mut first, None, Some(20)).unwrap();
-        assert_eq!(first["elements"].as_array().unwrap().len(), 3);
     }
 
     #[test]
@@ -784,22 +714,15 @@ mod tests {
         let external: Snapshot = serde_json::from_value(json!({"tabs":[{"id":"ext:epoch:7","conversationId":"one","title":"External","url":"https://example.com","loading":false}],"activeId":"ext:epoch:7","backend":"extension"})).unwrap();
         assert!(validate_snapshot(&external, "other").is_err());
         validate_snapshot(&external, "one").unwrap();
-        let hidden = merge(
-            native.clone(),
-            external.clone(),
-            BrowserMode::Extension,
-            Some(&None),
-        );
+        let defaulted = merge(native.clone(), external.clone(), None);
+        assert_eq!(defaulted.active_id.as_deref(), Some("native"));
+        assert_eq!(defaulted.backend, BrowserMode::Embedded);
+        let hidden = merge(native.clone(), external.clone(), Some(&None));
         assert_eq!(
             hidden.active_id, None,
             "selecting Chat must stay selected after a browser refresh"
         );
-        let merged = merge(
-            native,
-            external,
-            BrowserMode::Embedded,
-            Some(&Some("ext:epoch:7".into())),
-        );
+        let merged = merge(native, external, Some(&Some("ext:epoch:7".into())));
         assert_eq!(merged.tabs.len(), 2);
         assert_eq!(merged.active_id.as_deref(), Some("ext:epoch:7"));
         assert_eq!(merged.backend, BrowserMode::Embedded);
