@@ -13,6 +13,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallItem } from "./types";
 import { QuestionHistory } from "./QuestionHistory";
 import { isTaskReminder } from "./tool-activity";
+import { computerInputTools } from "@/core/computer-use";
 import { Hint } from "@/components/ui/hint";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
@@ -110,6 +111,16 @@ const tools = {
   browser_press: { label: "Tecla na página", icon: Globe },
   browser_scroll: { label: "Rolar página", icon: Globe },
   browser_close: { label: "Fechar navegador", icon: Globe },
+  computer_status: { label: "Computador · Estado", icon: Eye },
+  computer_list_apps: { label: "Computador · Aplicativos", icon: Search },
+  computer_select: { label: "Computador · Selecionar janela", icon: Eye },
+  computer_observe: { label: "Computador · Observar janela", icon: Eye },
+  computer_click: { label: "Computador · Clique", icon: Wrench },
+  computer_type: { label: "Computador · Digitação", icon: Wrench },
+  computer_press: { label: "Computador · Tecla", icon: Wrench },
+  computer_scroll: { label: "Computador · Rolagem", icon: Wrench },
+  computer_drag: { label: "Computador · Arrasto", icon: Wrench },
+  computer_stop: { label: "Computador · Interromper", icon: TriangleAlert },
   http_requests: { label: "HTTP · Requisições e ambientes", icon: Globe },
   http_save_request: { label: "HTTP · Preparar requisição", icon: FilePenLine },
   http_send: { label: "HTTP · Executar requisição", icon: Globe },
@@ -155,12 +166,12 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
   const label = projectImage ? "Imagem do projeto" : current.name === "video_audio" && current.args?.action === "narrate" ? "Gerar narração" : current.name === "video_audio" && current.args?.action === "music" ? "Gerar música" : presentation.label;
   const detail = current.name === "read_skill" ? current.output?.match(/^Skill: (.+)/)?.[1] ?? current.args?.path
     : current.name.startsWith("graft_") ? current.args?.query ?? current.args?.file ?? current.args?.symbol ?? current.args?.pattern ?? current.args?.in
-      : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url ?? (current.name.startsWith("video_") ? current.args?.tool ?? current.args?.topic : undefined);
+      : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url ?? current.args?.targetId ?? (current.name.startsWith("video_") ? current.args?.tool ?? current.args?.topic : undefined);
   const searchResult = current.name === "web_search" && current.output ? readWebSearchResult(current.output) : null;
   const visionResult = current.name === "vision" && current.output ? readVisionResult(current.output) : null;
   const warning = isTaskReminder(current);
   const status = warning ? "Atenção" : { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[current.status];
-  const mutation = ["write", "edit", "apply_patch"].includes(current.name);
+  const mutation = ["write", "edit", "apply_patch"].includes(current.name) || computerInputTools.includes(current.name);
   const requestDetails = () => {
     if (!deferred || !detailContext || loading) return;
     setLoading(true); setLoadError(null);

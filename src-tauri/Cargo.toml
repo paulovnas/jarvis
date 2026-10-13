@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-browser-probe = []
+browser-probe = ["tauri-runtime-cef/browser-probe"]
 
 [[example]]
 name = "browser-probe"
@@ -83,6 +83,9 @@ objc2-user-notifications = "0.3"
 block2 = "0.6"
 objc2-app-kit = "0.3"
 dispatch2 = "0.3"
+objc2-application-services = { version = "0.3", default-features = false, features = ["std", "objc2", "libc", "HIServices", "AXError", "AXUIElement", "AXValue"] }
+objc2-core-foundation = "0.3"
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "objc2", "libc", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "CGSession", "CGImage", "CGGeometry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }

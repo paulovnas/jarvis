@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn settings_can_read_computer_permissions_without_authorizing_or_controlling_apps() {
+    for command in ["get_computer_use_status", "request_computer_permission"] {
+        assert!(command_allowed("settings", command));
+        for label in ["about", "companion", "browser-1", "remote", "other"] {
+            assert!(!command_allowed(label, command));
+        }
+    }
+    for command in [
+        "list_computer_apps",
+        "authorize_computer_app",
+        "revoke_computer_app",
+        "stop_computer_use",
+    ] {
+        assert!(!command_allowed("settings", command));
+    }
+}
+
+#[test]
 fn only_fixed_local_surfaces_can_be_requested() {
     assert_eq!(
         serde_json::from_str::<AuxiliaryWindowKind>("\"settings\"").unwrap(),

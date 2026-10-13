@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, Bot, Languages, MessageSquareText, Monitor, Moon, Send, TimerReset } from "lucide-react";
+import { Bell, Bot, Languages, MessageSquareText, Monitor, Moon, Send, Sparkles, TimerReset } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -73,68 +73,77 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
   };
   const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError ?? snapshot?.companionError;
   return <section aria-labelledby="system-settings-title" className="space-y-3">
-    <h2 id="system-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Monitor className="size-3.5" />Sistema</h2>
-    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <Card role="status" aria-label="Carregando preferências do sistema" size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">{[0, 1, 2, 3].map((key) => <div key={key} className={`space-y-3 p-4 ${key > 0 ? "border-t border-border" : ""} ${key % 2 === 1 ? "lg:border-l" : ""} ${key === 1 ? "lg:border-t-0" : ""}`}><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-3/4" /><Skeleton className="h-7 w-48" /></div>)}</Card> : <>
-      <Card role="region" aria-label="Preferências do sistema" size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Label htmlFor="response-language" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Languages className="size-3.5 text-onedark-purple" />Idioma dos agentes</Label>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
+    <h2 id="system-settings-title" className="settings-section-title"><Monitor aria-hidden="true" className="size-4" />Sistema</h2>
+    {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <Card role="status" aria-label="Carregando preferências do sistema" size="sm" className="settings-group">{[0, 1, 2, 3, 4, 5, 6].map((key) => <div key={key} className="settings-row"><div className="settings-row-copy space-y-2"><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-3/4" /></div><Skeleton className="h-8 w-56 max-w-full" /></div>)}</Card> : <>
+      <Card role="region" aria-label="Preferências do sistema" size="sm" className="settings-group">
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="response-language" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Languages aria-hidden="true" className="size-4 text-muted-foreground" />Idioma dos agentes</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
           </div>
-          <div className="w-full shrink-0 xl:w-auto">
+          <div className="settings-row-control w-full sm:w-64">
             <Select value={snapshot.preferences.responseLanguage} disabled={busy} onValueChange={value => { if (value && value in responseLanguages) void save({ responseLanguage: value as SystemPreferences["responseLanguage"] }); }}>
-              <SelectTrigger id="response-language" size="sm" className="w-full cursor-pointer text-xs xl:w-52"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
+              <SelectTrigger id="response-language" size="sm" className="w-full cursor-pointer text-sm"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
               <SelectContent>{Object.entries(responseLanguages).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Label htmlFor="prevent-sleep" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Moon className="size-3.5 text-onedark-yellow" />Impedir repouso</Label>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Evita o repouso durante tarefas ou enquanto o Jarvis estiver aberto.</p>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="prevent-sleep" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Moon aria-hidden="true" className="size-4 text-muted-foreground" />Impedir repouso</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Evita o repouso durante tarefas ou enquanto o Jarvis estiver aberto.</p>
           </div>
-          <div className="w-full shrink-0 xl:w-auto">
+          <div className="settings-row-control w-full sm:w-80">
             <Select value={snapshot.preferences.preventSleep} disabled={busy} onValueChange={value => { if (value && value in sleepModes) void save({ preventSleep: value as SystemPreferences["preventSleep"] }); }}>
-              <SelectTrigger id="prevent-sleep" size="sm" className="w-full cursor-pointer text-xs xl:w-64"><SelectValue>{sleepModes[snapshot.preferences.preventSleep]}</SelectValue></SelectTrigger>
+              <SelectTrigger id="prevent-sleep" size="sm" className="w-full cursor-pointer text-sm"><SelectValue>{sleepModes[snapshot.preferences.preventSleep]}</SelectValue></SelectTrigger>
               <SelectContent>{Object.entries(sleepModes).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Label htmlFor="system-notifications" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Bell className="size-3.5 text-primary" />Notificações do sistema</Label>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Avisos sobre conclusões, perguntas pendentes e erros.</p>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="system-notifications" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Bell aria-hidden="true" className="size-4 text-muted-foreground" />Notificações do sistema</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Avisos sobre conclusões, perguntas pendentes e erros.</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="settings-row-control gap-2">
             <Switch id="system-notifications" size="sm" checked={snapshot.preferences.notifications} disabled={busy} onCheckedChange={notifications => void save({ notifications })} className="shrink-0 cursor-pointer" />
             <Button size="sm" variant="ghost" disabled={busy || !snapshot.preferences.notifications} onClick={() => void test()} className="cursor-pointer gap-1.5 text-xs"><Send className="size-3" />Testar</Button>
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-l xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Label htmlFor="ask-user-timeout" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><TimerReset className="size-3.5 text-onedark-green" />Resposta automática</Label>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Aplica a opção recomendada quando uma pergunta ficar sem resposta.</p>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="ask-user-timeout" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><TimerReset aria-hidden="true" className="size-4 text-muted-foreground" />Resposta automática</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Aplica a opção recomendada quando uma pergunta ficar sem resposta.</p>
           </div>
-          <div className="relative w-full shrink-0 xl:w-36">
+          <div className="settings-row-control relative w-36">
             <Input id="ask-user-timeout" aria-label="Tempo para resposta recomendada" type="number" min={1} max={3600} step={1} inputMode="numeric" value={timeoutDraft} disabled={busy} onChange={event => setTimeoutDraft(event.target.value)} onBlur={commitQuestionTimeout} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="h-7 pr-16 font-mono text-xs tabular-nums" />
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] text-muted-foreground">segundos</span>
           </div>
         </div>
-        {snapshot.companionSupported && <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-xs font-medium"><Bot className="size-3.5 text-onedark-cyan" />Assistente na área de trabalho</Label>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste o robô para reposicionar.</p>
+        {snapshot.companionSupported && <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Bot aria-hidden="true" className="size-4 text-muted-foreground" />Assistente na área de trabalho</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste o robô para reposicionar.</p>
           </div>
-          <Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" />
+          <div className="settings-row-control"><Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" /></div>
         </div>}
-        <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <p className="flex items-center gap-2 text-xs font-medium"><MessageSquareText className="size-3.5 text-primary" />Títulos das conversas</p>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Escolha um modelo de um provedor conectado só para gerar títulos, sem alterar o modelo dos agentes.</p>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code, usa um título local sem abrir outra sessão.</p>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <p className="flex items-center gap-2 text-sm font-medium"><MessageSquareText aria-hidden="true" className="size-4 text-muted-foreground" />Títulos das conversas</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha um modelo de um provedor conectado só para gerar títulos, sem alterar o modelo dos agentes.</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Automático segue o modelo da conversa; com Claude Code, usa um título local sem abrir outra sessão.</p>
           </div>
-          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2">
+          <div className="settings-row-control min-w-0 flex-wrap gap-2">
             <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.chatTitleModel)} disabled={busy} ariaLabel="Modelo para títulos das conversas" showProviderIdentity clearLabel="Automático" onClear={() => void save({ chatTitleModel: null })} onSelect={selection => void save({ chatTitleModel: executionChoice(selection) })} />
+          </div>
+        </div>
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <p className="flex items-center gap-2 text-sm font-medium"><Sparkles aria-hidden="true" className="size-4 text-muted-foreground" />Refinar prompt</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha o modelo e o nível de raciocínio usados para refinar seus rascunhos com CO-STAR, sem alterar o modelo do chat.</p>
+          </div>
+          <div className="settings-row-control min-w-0 flex-wrap gap-2">
+            <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.promptRefinementModel)} disabled={busy} ariaLabel="Modelo para refinar prompts" showProviderIdentity clearLabel="Não configurado" onClear={() => void save({ promptRefinementModel: null })} onSelect={selection => void save({ promptRefinementModel: executionChoice(selection) })} />
           </div>
         </div>
       </Card>

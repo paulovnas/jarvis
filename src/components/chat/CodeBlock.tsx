@@ -17,7 +17,7 @@ export function CodeBlock({ code, language = "" }: { code: string; language?: st
     try { await writeClipboardText(code); setCopied(true); }
     catch { toast.error("Não foi possível copiar o código"); }
   }
-  return <section className="chat-code-block my-3 min-w-0 overflow-hidden rounded-lg border border-white/10 bg-card shadow-[inset_0_1px_0_#ffffff0a]" aria-label={`Código ${language || "texto"}`}>
+  return <section className="chat-code-block my-3 min-w-0 overflow-hidden rounded-lg border border-border bg-card" aria-label={`Código ${language || "texto"}`}>
     <header className="flex items-center justify-between gap-3 border-b border-white/5 px-3 py-1.5">
       <span className="font-mono text-[10px] text-muted-foreground">{language || "texto"}</span>
       <Button variant="ghost" size="sm" className="h-6 cursor-pointer gap-1.5 px-2 text-[10px] text-muted-foreground" onClick={() => void copy()} onBlur={() => setCopied(false)} aria-label="Copiar código">{copied ? <Check className="size-3 text-onedark-green" /> : <Copy className="size-3" />}{copied ? "Copiado" : "Copiar"}</Button>

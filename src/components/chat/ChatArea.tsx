@@ -28,6 +28,7 @@ import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
 import { Hint } from "@/components/ui/hint";
 import { ActiveExecutionStatus } from "./ActiveExecutionStatus";
+import { ComputerUseSession } from "./ComputerUseSession";
 import { useVideoReady } from "@/hooks/use-video-ready";
 import { useImpeccableLive } from "@/hooks/use-impeccable-live";
 import type { DesignerSession } from "@/components/layout/DesignerPanel";
@@ -118,16 +119,15 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {chat.error && <Alert className="mb-3"><AlertTitle>Atualizações da conversa indisponíveis</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><p>{chat.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={chat.retry}>Tentar novamente</Button></AlertDescription></Alert>}
     {activeTurn && <ActiveExecutionStatus turn={activeTurn} waitingForUser={!!attention} />}
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
-    {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.tool.id} request={snapshot.pendingApproval} projectPath={context.project.path} onAnswer={chat.approve} />}
+    {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.tool.id} request={snapshot.pendingApproval} projectPath={context.project.path} conversationId={context.conversation.id} onAnswer={chat.approve} />}
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={`${snapshot.pendingAuthoring.turnId}:${snapshot.pendingAuthoring.toolId}`} request={snapshot.pendingAuthoring} onAnswer={(approved, note, values) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note, values)} />}
     <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer designLive={designLive} liveUrl={browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId)?.url} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} historySnapshot={snapshot} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <ChatComposer computerControl={<ComputerUseSession key={context.conversation.id} conversationId={context.conversation.id} onStop={chat.stop} />} designLive={designLive} liveUrl={browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId)?.url} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} historySnapshot={snapshot} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
   return <FileWorkspace files={files} browser={browser} http={http} liveTabId={designLive.active ? designLive.status.tabId : null} browserBanner={liveBanner} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
-      <div aria-hidden="true" className="new-conversation-glow pointer-events-none absolute left-1/2 top-1/2 h-64 w-[min(90%,56rem)] -translate-x-1/2 -translate-y-1/2" />
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
         {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} retryChoice={retryChoice} projectId={context.project.id} onLatestVisibility={onLatestVisibility} />}
       </div>
@@ -156,9 +156,9 @@ export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefre
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);
   const conversation = library?.conversations.find(item => item.id === id);
   return <main aria-label="Conversa" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-    <header className="flex h-[72px] shrink-0 items-center gap-3 border-b border-border px-3">
+    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
       {leftToggle}
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-card text-primary shadow-[inset_0_1px_0_#ffffff0d]"><FolderGit2 aria-hidden="true" className="size-4" /></div>
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"><FolderGit2 aria-hidden="true" className="size-4" /></div>
       <div className="min-w-0 flex-1">
         <Hint content={project?.path}><p className="mb-1 truncate font-mono text-[10px] text-muted-foreground">{workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p></Hint>
         {conversation && <h1 className="truncate text-sm font-medium">{conversation.title}</h1>}

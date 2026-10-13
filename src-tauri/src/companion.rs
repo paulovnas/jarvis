@@ -15,6 +15,7 @@ const COMPACT_WIDTH: f64 = 288.0;
 const COMPACT_HEIGHT: f64 = 32.0;
 const ISLAND_WIDTH: f64 = 640.0;
 const ISLAND_HEIGHT: f64 = 160.0;
+const ISLAND_MAX_HEIGHT: f64 = 600.0;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,7 +114,7 @@ fn placement(
     };
     let x = i64::from(anchor.x).clamp(i64::from(screen.x), x_max);
     let y = i64::from(screen.y);
-    let (width, height) = match mode {
+    let (surface_width, surface_height) = match mode {
         Presentation::Compact => (compact_width, compact_height),
         Presentation::Bubble => (
             (ISLAND_WIDTH * scale).round() as u32,
@@ -134,10 +135,28 @@ fn placement(
     let left = x - i64::from(screen.x);
     let right = x_max - x;
     let on_right = left >= right;
-    // The compact island is the stable anchor. Larger views grow around its
-    // center, and closing returns to the same saved position on every display.
-    let width = width.min(screen.width).max(compact_width);
-    let height = height.min(screen.height).max(compact_height);
+    let surface_width = surface_width.min(screen.width).max(compact_width);
+    let surface_height = surface_height.min(screen.height).max(compact_height);
+    // CEF keeps one canvas while the island animates inside it, like Coucou's native panel.
+    #[cfg(target_os = "macos")]
+    let (width, height) = (
+        ((ISLAND_WIDTH * scale).round() as u32)
+            .min(screen.width)
+            .max(compact_width),
+        ((ISLAND_MAX_HEIGHT.max(
+            ISLAND_HEIGHT
+                + if screen.notch_width > 0.0 {
+                    COMPACT_HEIGHT.max(screen.notch_height)
+                } else {
+                    0.0
+                },
+        ) * scale)
+            .round() as u32)
+            .min(screen.height)
+            .max(compact_height),
+    );
+    #[cfg(not(target_os = "macos"))]
+    let (width, height) = (surface_width, surface_height);
     let position = PhysicalPosition::new(
         (x - i64::from((width - compact_width) / 2)).clamp(
             i64::from(screen.x),
@@ -167,10 +186,14 @@ fn placement(
             compact_y: f64::from(y as i32 - position.y) / scale,
             compact_width: f64::from(compact_width) / scale,
             compact_height: f64::from(compact_height) / scale,
-            surface_x: 0.0,
+            surface_x: if mode == Presentation::Compact {
+                f64::from(x as i32 - position.x) / scale
+            } else {
+                0.0
+            },
             surface_y: 0.0,
-            surface_width: f64::from(width) / scale,
-            surface_height: f64::from(height) / scale,
+            surface_width: f64::from(surface_width) / scale,
+            surface_height: f64::from(surface_height) / scale,
             notch_width: screen.notch_width,
             notch_height: screen.notch_height,
             header_height: f64::from(compact_height) / scale,
@@ -198,7 +221,7 @@ fn restore_anchor(
 
 fn requested_height(height: Option<f64>) -> Result<u32, String> {
     let height = height.unwrap_or(ISLAND_HEIGHT);
-    if !height.is_finite() || !(ISLAND_HEIGHT..=600.0).contains(&height) {
+    if !height.is_finite() || !(ISLAND_HEIGHT..=ISLAND_MAX_HEIGHT).contains(&height) {
         return Err("Altura da ilha inválida.".into());
     }
     Ok(height.round() as u32)
@@ -1230,7 +1253,9 @@ mod macos {
             state.applying_geometry.store(true, Ordering::SeqCst);
             let result = (|| {
                 if let Ok(panel) = panel(window.app_handle(), mtm) {
-                    panel.setFrame_display(frame, true);
+                    if panel.frame() != frame {
+                        panel.setFrame_display(frame, true);
+                    }
                     if !placement.geometry.expanded && panel.isKeyWindow() {
                         panel.resignKeyWindow();
                     }
@@ -1238,7 +1263,10 @@ mod macos {
                 let pointer = window.ns_window().map_err(|e| e.to_string())?;
                 // SAFETY: Keep Tao's hidden monitor/geometry metadata in sync on AppKit's thread.
                 unsafe {
-                    (&*pointer.cast::<NSWindow>()).setFrame_display(frame, false);
+                    let native = &*pointer.cast::<NSWindow>();
+                    if native.frame() != frame {
+                        native.setFrame_display(frame, false);
+                    }
                 }
                 Ok(())
             })();
@@ -1794,6 +1822,85 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn opening_views_keeps_the_native_canvas_and_compact_anchor() {
+        for screen in [
+            Screen {
+                x: -1920,
+                y: 24,
+                width: 1920,
+                height: 1080,
+                scale: 2.0,
+                ..Screen::default()
+            },
+            Screen {
+                x: -1512,
+                y: -982,
+                width: 1512,
+                height: 982,
+                scale: 1.0,
+                fixed: true,
+                notch_width: 210.0,
+                notch_height: 38.0,
+            },
+            Screen {
+                x: 0,
+                y: 40,
+                width: 320,
+                height: 440,
+                scale: 1.0,
+                ..Screen::default()
+            },
+        ] {
+            for anchor in [
+                None,
+                Some(CompanionPosition {
+                    x: screen.x,
+                    y: screen.y,
+                }),
+            ] {
+                let compact = placement(anchor, &[screen], Presentation::Compact).unwrap();
+                for mode in [
+                    Presentation::Bubble,
+                    Presentation::Island(160),
+                    Presentation::Island(400),
+                    Presentation::Island(600),
+                    Presentation::Compact,
+                ] {
+                    let view = placement(Some(compact.anchor), &[screen], mode).unwrap();
+                    assert_eq!(
+                        view.size, compact.size,
+                        "opening must not resize the CEF canvas"
+                    );
+                    assert_eq!(
+                        view.position, compact.position,
+                        "opening must not move the canvas"
+                    );
+                    assert_eq!(compact_origin(&view, screen.scale), compact.anchor);
+                    assert!(view.geometry.surface_x >= 0.0 && view.geometry.surface_y >= 0.0);
+                    assert!(
+                        view.geometry.surface_x + view.geometry.surface_width
+                            <= view.geometry.width
+                    );
+                    assert!(
+                        view.geometry.surface_y + view.geometry.surface_height
+                            <= view.geometry.height
+                    );
+                }
+                assert_eq!(compact.geometry.surface_x, compact.geometry.compact_x);
+                assert_eq!(
+                    compact.geometry.surface_width,
+                    compact.geometry.compact_width
+                );
+                assert_eq!(
+                    compact.geometry.surface_height,
+                    compact.geometry.compact_height
+                );
+            }
+        }
+    }
+
     #[test]
     fn companion_navigation_stays_in_the_local_application() {
         for url in [
@@ -1824,8 +1931,8 @@ mod tests {
             };
             let compact = placement(None, &[screen], Presentation::Compact).unwrap();
             assert_eq!(compact.position.y, 0);
-            assert_eq!(compact.geometry.width, COMPACT_WIDTH);
-            assert_eq!(compact.geometry.height, COMPACT_HEIGHT);
+            assert_eq!(compact.geometry.compact_width, COMPACT_WIDTH);
+            assert_eq!(compact.geometry.compact_height, COMPACT_HEIGHT);
             let expanded =
                 placement(Some(compact.anchor), &[screen], Presentation::Island(160)).unwrap();
             assert_eq!(expanded.position.y, 0);
@@ -1956,7 +2063,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(restored.anchor, CompanionPosition { x: 0, y: 40 });
-        assert_eq!(restored.geometry.width, COMPACT_WIDTH);
+        assert_eq!(restored.geometry.compact_width, COMPACT_WIDTH);
         assert!(placement(None, &[], Presentation::Compact).is_none());
     }
 
@@ -2061,8 +2168,8 @@ mod tests {
         };
         let anchor = CompanionPosition { x: 256, y: 40 };
         let island = placement(Some(anchor), &[screen], Presentation::Island(400)).unwrap();
-        assert_eq!(island.geometry.width, 640.0);
-        assert_eq!(island.geometry.height, 400.0);
+        assert_eq!(island.geometry.surface_width, 640.0);
+        assert_eq!(island.geometry.surface_height, 400.0);
         assert_eq!(island.position, PhysicalPosition::new(80, 40));
         assert_eq!(compact_origin(&island, 1.0), anchor);
         let compact = placement(Some(island.anchor), &[screen], Presentation::Compact).unwrap();
@@ -2133,7 +2240,10 @@ mod tests {
             Some(CompanionPosition { x: 3000, y: 9000 }),
         ] {
             let compact = placement(anchor, &[screen], Presentation::Compact).unwrap();
-            assert_eq!(compact.position, PhysicalPosition::new(-913, -982));
+            assert_eq!(
+                compact_origin(&compact, 1.0),
+                CompanionPosition { x: -913, y: -982 }
+            );
             assert_eq!(compact.geometry.compact_width, 314.0);
             assert_eq!(compact.geometry.compact_height, 38.0);
             assert_eq!(compact.geometry.notch_width, 210.0);

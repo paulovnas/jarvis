@@ -8,6 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { ApprovalDecision, PendingApproval } from "@/core/chat";
+import { computerUseError } from "@/core/computer-use";
+import { useComputerUse } from "@/hooks/use-computer-use";
+import { RowsSkeleton } from "@/components/layout/LoadingSkeletons";
 
 type Grant = NonNullable<ApprovalDecision["grant"]>;
 type GrantScope = Grant["scope"];
@@ -100,11 +103,56 @@ function formattedCommand(request: PendingApproval) {
   return command.invocations.map(invocation => invocation.argv.join(" ")).join(" | ");
 }
 
-export function ToolApproval({ request, projectPath, onAnswer }: {
+type ToolApprovalProps = {
   request: PendingApproval;
   projectPath: string;
+  conversationId?: string;
   onAnswer: (decision: ApprovalDecision) => Promise<boolean>;
-}) {
+};
+
+const COMPUTER_OPERATIONS: Record<string, string> = { computer_click: "Clique", computer_type: "Digitação", computer_press: "Tecla", computer_scroll: "Rolagem", computer_drag: "Arrasto" };
+const COMPUTER_ARGUMENT_LABELS: Record<string, string> = {
+  targetId: "Alvo autorizado", observationId: "Observação que orienta a ação", element: "Controle da janela", text: "Texto a digitar",
+  key: "Tecla", x: "Posição horizontal", y: "Posição vertical", deltaX: "Rolagem horizontal", deltaY: "Rolagem vertical", from: "Origem do arrasto", to: "Destino do arrasto",
+};
+
+export function ToolApproval(props: ToolApprovalProps) {
+  return props.request.tool.name.startsWith("computer_") ? <ComputerInputApproval {...props} /> : <ExecutionToolApproval {...props} />;
+}
+
+function ComputerInputApproval({ request, conversationId, onAnswer }: ToolApprovalProps) {
+  const computer = useComputerUse(conversationId ?? null, !!conversationId);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const snapshot = computer.snapshot;
+  const target = snapshot?.targets.find(item => item.id === request.tool.args.targetId);
+  const unavailable = !conversationId ? "O alvo desta ação não está disponível para revisão."
+    : snapshot?.stopped ? "A sessão de controle está interrompida."
+      : snapshot && (!target || !snapshot.capabilities.supported) ? "O alvo desta ação não está disponível para revisão."
+        : target && target.access !== "control" ? "O aplicativo não está autorizado para controle nesta conversa."
+          : snapshot && (!snapshot.capabilities.accessibility || !snapshot.capabilities.inputPosting) ? "As permissões do macOS para controlar o aplicativo não estão concedidas."
+            : typeof request.tool.args.observationId !== "string" || !request.tool.args.observationId ? "A observação desta ação não está disponível para revisão." : null;
+  const answer = async (approved: boolean) => {
+    if (pending || approved && (!target || unavailable || computer.error)) return;
+    setPending(true); setError(null);
+    try { if (!await onAnswer({ approved, grant: null })) setPending(false); }
+    catch (cause) { setError(computerUseError(cause)); setPending(false); }
+  };
+  return <Card role="region" aria-label="Autorização de ferramenta" className="mb-3" size="sm">
+    <CardHeader><CardTitle>Autorizar interação no aplicativo?</CardTitle><CardDescription>Somente esta ação no aplicativo autorizado desta conversa.</CardDescription></CardHeader>
+    <CardContent className="space-y-3">
+      {!snapshot && !computer.error && conversationId && <RowsSkeleton label="Verificando alvo da interação" count={2} />}
+      {target && <div className="rounded-md border border-border px-3 py-2"><p className="text-sm font-medium">{target.appName}</p><p className="mt-0.5 text-xs text-muted-foreground">{target.windowTitle || "Janela sem título"}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{target.id}</p></div>}
+      <p className="text-xs font-medium">Ação solicitada: {COMPUTER_OPERATIONS[request.tool.name] ?? request.tool.name}</p>
+      {request.policy?.reason && <p className="text-xs leading-5 text-muted-foreground">{request.policy.reason}</p>}
+      {Object.entries(request.tool.args).map(([key, value]) => <div key={key} className="space-y-1"><p className="text-xs text-muted-foreground">{COMPUTER_ARGUMENT_LABELS[key] ?? key}</p><pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-background p-2 font-mono text-xs">{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre></div>)}
+      {(error || computer.error || unavailable) && <p role="alert" className="text-xs text-destructive">{error ?? computer.error ?? unavailable}</p>}
+    </CardContent>
+    <CardFooter className="flex-wrap justify-end gap-2"><Button variant="ghost" size="sm" className="cursor-pointer" disabled={!!computer.busy || pending || !conversationId} onClick={() => void computer.refresh()}>Atualizar alvo</Button><Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => void answer(false)}>Recusar</Button><Button className="cursor-pointer" disabled={pending || !target || !!unavailable || !!computer.error} onClick={() => void answer(true)}>Autorizar uma vez</Button></CardFooter>
+  </Card>;
+}
+
+function ExecutionToolApproval({ request, projectPath, onAnswer }: ToolApprovalProps) {
   const [pending, setPending] = useState(false);
   const [reuse, setReuse] = useState(false);
   const [scope, setScope] = useState<GrantScope>("conversation");

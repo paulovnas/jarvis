@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyLibrary, populatedLibrary } from "@/test/library-fixtures";
 import { emptyChat, savedTurn } from "@/test/chat-fixtures";
 import { httpDraft, httpSnapshot } from "@/test/http-fixtures";
+import { computerApp, computerSnapshot, computerTarget } from "@/test/computer-fixtures";
 import type { LibrarySnapshot } from "@/core/library";
 import type { PendingAuthoring } from "@/core/authoring";
 import { readChat, type ChatSnapshot, type TurnOptions } from "@/core/chat";
@@ -64,6 +65,23 @@ describe("Persistent live conversation", () => {
       const set = listeners.get(name) ?? new Set(); set.add(callback); listeners.set(name, set);
       return () => { set.delete(callback); };
     });
+  });
+  it("keeps native computer control in the composer popover and stops the active agent with it", async () => {
+    const user = userEvent.setup();
+    const running = { ...emptyChat(), activeTurnId: "native-turn", turns: [{ ...savedTurn(), id: "native-turn", status: "running" as const }] };
+    call.mockImplementation(async command => command === "get_computer_use_status"
+      ? computerSnapshot({ grants: [{ id: "grant-1", identity: computerApp.identity, access: "control" }], targets: [computerTarget], activity: { operationId: "native-observation", targetId: computerTarget.id, tool: "computer_observe", phase: "observing", message: "Observando aplicativo.", timestamp: 10 } })
+      : command === "stop_computer_use" ? computerSnapshot({ stopped: true }) : running);
+    render(<TestChat />);
+    const computerButton = await screen.findByRole("button", { name: "Usar computador" });
+    const composer = screen.getByRole("contentinfo", { name: "Área de composição" });
+    expect(within(composer).getByRole("button", { name: "Usar computador" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Interromper uso do computador" })).not.toBeInTheDocument();
+    await user.click(computerButton);
+    await user.click(await screen.findByRole("button", { name: "Interromper uso do computador" }));
+    expect(call).toHaveBeenCalledWith("stop_computer_use", { conversationId: "c1" });
+    expect(call).toHaveBeenCalledWith("cancel_agent_turn", { conversationId: "c1", turnId: "native-turn" });
+    expect(await screen.findByText("Uso do computador interrompido")).toBeVisible();
   });
   it("opens Live in the chat's native browser tabs and closes the session without submitting the draft", async () => {
     const user = userEvent.setup();

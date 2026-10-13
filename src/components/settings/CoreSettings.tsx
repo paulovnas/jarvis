@@ -30,7 +30,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
   const [diagnostics, setDiagnostics] = useState(false);
   const [reinstall, setReinstall] = useState<CoreId | null>(null);
   const [expanded, setExpanded] = useState<CoreId | null>(null);
-  if (!snapshot && !error) return <div className="space-y-3"><Skeleton className="h-5 w-24" /><Card className="instrument-panel gap-0 py-0"><CardContent className="p-0"><RowsSkeleton label="Carregando Core" count={ACTIVE_CORE_IDS.length} /></CardContent></Card></div>;
+  if (!snapshot && !error) return <div className="space-y-3"><Skeleton className="h-5 w-24" /><Card className="settings-group"><CardContent className="p-0"><RowsSkeleton label="Carregando Core" count={ACTIVE_CORE_IDS.length} /></CardContent></Card></div>;
   if (!snapshot) return <div role="alert" className="space-y-3"><p className="text-sm text-destructive">{error}</p><Button variant="outline" onClick={() => void refresh()}>Tentar novamente</Button></div>;
   const items = snapshot.items.filter(item => activeCore(item.id));
   const essential = items.filter(item => !optionalCore(item.id));
@@ -42,8 +42,8 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
       <div className="flex items-center gap-1"><Button size="sm" variant="ghost" aria-label="Diagnóstico e Reparo" onClick={() => setDiagnostics(true)}><Wrench className="size-3.5" />Diagnóstico</Button>
 <Hint content="Verificar atualizações"><Button size="icon-sm" variant="ghost" aria-label="Verificar atualizações do Core" disabled={snapshot.checking || busy} onClick={() => void check()}><RefreshCw className={`size-3.5 ${snapshot.checking ? "animate-spin" : ""}`} /></Button></Hint></div>
     </div>
-    <Card className="instrument-panel gap-0 py-0"><CardContent className="divide-y divide-border p-0">{snapshot.browserRuntime && <BrowserRuntimeRow runtime={snapshot.browserRuntime} />}{items.map(item => {
-      const { icon: Icon, summary, description, color } = CORE_DETAILS[item.id];
+    <Card className="settings-group"><CardContent className="divide-y divide-border p-0">{snapshot.browserRuntime && <BrowserRuntimeRow runtime={snapshot.browserRuntime} />}{items.map(item => {
+      const { icon: Icon, summary, description } = CORE_DETAILS[item.id];
       const optional = optionalCore(item.id);
       const action = item.installed ? "Atualizar" : "Instalar";
       const usable = item.installed && item.configured && !item.healthError;
@@ -52,7 +52,7 @@ export function CorePanel({ core, setup = false }: { core: CoreController; setup
       const open = expanded === item.id;
       return <Collapsible key={item.id} open={open} onOpenChange={next => setExpanded(next ? item.id : null)} className="min-w-0 px-4 py-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Icon aria-hidden="true" className={`size-4 shrink-0 ${color}`} />
+          <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1 basis-48">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><h3 className="text-sm font-medium">{item.name}</h3>{item.bundled && <Badge variant="outline" className="text-[10px]">Nativo</Badge>}{item.installedVersion && <span className="font-mono text-[10px] text-muted-foreground">v{item.installedVersion}</span>}{!item.bundled && item.updateAvailable && <span className="font-mono text-[10px] text-primary">→ {item.latestVersion}</span>}</div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{summary}</p>

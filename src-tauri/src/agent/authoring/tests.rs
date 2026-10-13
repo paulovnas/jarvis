@@ -183,6 +183,7 @@ async fn hook_changes_wait_for_yolo_approval_and_apply_once_or_preserve_rejectio
                     session: &session,
                     tool: &call,
                     options: &selected,
+                    computer: None,
                     policy: None,
                     sandbox: None,
                     project_id: None,

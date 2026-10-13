@@ -120,41 +120,39 @@ export function ChatCleanupSettings() {
   const journalPercent = journalsProgress?.totalFiles
     ? journalsProgress.processedFiles / journalsProgress.totalFiles * 100
     : null;
-  return <section aria-labelledby="cleanup-title" className="mt-7 space-y-3 border-t border-border pt-6">
-    <h2 id="cleanup-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive className="size-3.5" />Limpeza</h2>
-    <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
+  return <section aria-labelledby="cleanup-title" className="mt-8 space-y-3">
+    <h2 id="cleanup-title" className="settings-section-title"><Archive aria-hidden="true" className="size-4" />Limpeza</h2>
+    <Card size="sm" className="settings-group">
     <section aria-label="Limpeza de conversas" className="flex min-w-0 flex-col gap-3 p-4">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"><Trash2 className="size-3.5" /></span>
-        <div className="min-w-0"><h3 className="text-xs font-medium">Conversas antigas</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Revise históricos inativos antes da exclusão definitiva.</p></div>
-      </div>
-      <div role="group" aria-label="Controles de limpeza" className="mt-auto grid w-fit grid-cols-[8rem_auto] items-stretch gap-x-2 gap-y-1.5">
-        <Label htmlFor="cleanup-period" className="col-start-1 row-start-1 text-[10px] text-muted-foreground">Sem atividade há mais de</Label>
+      <div className="settings-row border-0! p-0!">
+        <div className="settings-row-copy"><h3 className="flex items-center gap-2 text-sm font-medium"><Trash2 aria-hidden="true" className="size-4 text-muted-foreground" />Conversas antigas</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Revise históricos inativos antes da exclusão definitiva.</p></div>
+        <div role="group" aria-label="Controles de limpeza" className="settings-row-control grid! w-fit grid-cols-[8rem_auto] items-stretch! gap-x-2 gap-y-1.5">
+        <Label htmlFor="cleanup-period" className="col-start-1 row-start-1 text-xs text-muted-foreground">Sem atividade há mais de</Label>
           <Select value={days} onValueChange={value => { if (value) { setDays(value); setPreview(null); } }} disabled={loading || deleting}>
             <SelectTrigger id="cleanup-period" size="sm" className="col-start-1 row-start-2 w-full cursor-pointer text-xs"><SelectValue>{days} dias</SelectValue></SelectTrigger>
             <SelectContent>{[7, 14, 30, 90].map(value => <SelectItem key={value} value={String(value)} className="cursor-pointer text-xs">{value} dias</SelectItem>)}</SelectContent>
           </Select>
         <Button variant="outline" size="sm" disabled={loading || deleting} onClick={() => { void analyze(); }} className="col-start-2 row-start-2 h-full cursor-pointer gap-2"><Trash2 className="size-3.5" />Revisar limpeza</Button>
       </div>
-      <p className="text-[10px] leading-4 text-muted-foreground">A conversa mais recente de cada projeto será mantida.</p>
+      </div>
+      <p className="text-xs leading-5 text-muted-foreground">A conversa mais recente de cada projeto será mantida.</p>
       {loading && <div role="status" aria-label="Analisando históricos" className="flex gap-3"><Skeleton className="h-4 w-1/2" /><Skeleton className="h-4 w-20" /></div>}
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       {preview?.conversations.length === 0 && <p role="status" className="text-xs text-muted-foreground">Nenhuma conversa disponível para limpeza.{preview.protected > 0 && ` ${preview.protected} protegidas ou indisponíveis.`}</p>}
     </section>
-    <section role="region" aria-label="Cache de recursos" className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary"><Database className="size-3.5 text-onedark-yellow" /></span>
-        <div className="min-w-0"><h3 className="text-xs font-medium">Cache do Marketplace</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Repositórios reutilizados nas consultas e atualizações de skills.</p></div>
+    <section role="region" aria-label="Cache de recursos" className="flex min-w-0 flex-col gap-3 p-4">
+      <div className="settings-row border-0! p-0!">
+        <div className="settings-row-copy"><h3 className="flex items-center gap-2 text-sm font-medium"><Database aria-hidden="true" className="size-4 text-muted-foreground" />Cache do Marketplace</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Repositórios reutilizados nas consultas e atualizações de skills.</p></div>
+        {!cacheLoading && cache && <div className="settings-row-control flex-wrap gap-x-3 gap-y-2"><span className="font-mono text-sm tabular-nums text-foreground">{size(cache.bytes)}</span><span className="text-xs text-muted-foreground">{cache.repositories} {cache.repositories === 1 ? "repositório" : "repositórios"}{cache.residues > 0 && ` · ${cache.residues} ${cache.residues === 1 ? "resíduo antigo" : "resíduos antigos"}`}</span><Button variant="outline" size="sm" disabled={cacheClearing || !cache.bytes} onClick={() => setConfirmCache(true)} className="cursor-pointer gap-2"><Trash2 className="size-3.5" />Limpar cache</Button></div>}
       </div>
       {cacheLoading && <div role="status" aria-label="Analisando cache de recursos" className="flex gap-3"><Skeleton className="h-4 w-28" /><Skeleton className="h-4 w-48" /></div>}
-      {!cacheLoading && cache && <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-3"><span className="font-mono text-sm tabular-nums text-foreground">{size(cache.bytes)}</span><span className="text-[10px] text-muted-foreground">{cache.repositories} {cache.repositories === 1 ? "repositório" : "repositórios"}{cache.residues > 0 && ` · ${cache.residues} ${cache.residues === 1 ? "resíduo antigo" : "resíduos antigos"}`}</span><Button variant="outline" size="sm" disabled={cacheClearing || !cache.bytes} onClick={() => setConfirmCache(true)} className="ml-auto cursor-pointer gap-2"><Trash2 className="size-3.5" />Limpar cache</Button></div>}
       {cacheError && <div className="flex flex-wrap items-center justify-between gap-2"><p role="alert" className="text-xs text-destructive">{cacheError}</p><Button variant="ghost" size="sm" disabled={cacheLoading || cacheClearing} onClick={() => { void refreshCache(); }} className="cursor-pointer">Tentar novamente</Button></div>}
-      <p className="text-[10px] leading-4 text-muted-foreground">Skills e configurações são preservadas. Downloads interrompidos também são removidos ao iniciar o Jarvis.</p>
+      <p className="text-xs leading-5 text-muted-foreground">Skills e configurações são preservadas. Downloads interrompidos também são removidos ao iniciar o Jarvis.</p>
     </section>
-    <section role="region" aria-label="Otimização dos históricos" className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:col-span-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary"><HardDrive className="size-3.5 text-onedark-cyan" /></span><div className="min-w-0"><h3 className="text-xs font-medium">Históricos de conversas e agentes</h3><p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Compacta revisões antigas sem alterar o estado atual das conversas.</p></div></div>
-        <Button variant="outline" size="sm" disabled={journalsLoading || journalsOptimizing || !journals?.candidates} onClick={() => { void optimize(); }} className="cursor-pointer gap-2"><Sparkles className="size-3.5" />{journalsOptimizing ? "Otimizando…" : "Otimizar históricos"}</Button>
+    <section role="region" aria-label="Otimização dos históricos" className="flex min-w-0 flex-col gap-3 p-4">
+      <div className="settings-row border-0! p-0!">
+        <div className="settings-row-copy"><h3 className="flex items-center gap-2 text-sm font-medium"><HardDrive aria-hidden="true" className="size-4 text-muted-foreground" />Históricos de conversas e agentes</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Compacta revisões antigas sem alterar o estado atual das conversas.</p></div>
+        <div className="settings-row-control"><Button variant="outline" size="sm" disabled={journalsLoading || journalsOptimizing || !journals?.candidates} onClick={() => { void optimize(); }} className="cursor-pointer gap-2"><Sparkles className="size-3.5" />{journalsOptimizing ? "Otimizando…" : "Otimizar históricos"}</Button></div>
       </div>
       {journalsLoading && <div role="status" aria-label="Analisando arquivos de histórico" className="grid gap-3 border-y border-border py-3 sm:grid-cols-3"><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div>}
       {!journalsLoading && journals && <dl className="grid gap-3 border-y border-border py-3 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-border">

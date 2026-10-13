@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
+import { computerSnapshot } from "@/test/computer-fixtures";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const { invokeMock, usageMock, mcpListMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn(), mcpListMock: vi.fn() }));
@@ -21,6 +22,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     : command === "get_claude_runtime" ? Promise.resolve({ installed: false, authenticated: false, version: null, models: [], error: null })
     : command === "get_journal_maintenance_status" ? Promise.resolve({ files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 })
     : command === "get_core_status" || command === "check_core_updates" ? Promise.resolve(coreFixture())
+    : command === "get_computer_use_status" ? Promise.resolve(computerSnapshot())
     : args === undefined ? invokeMock(command) : invokeMock(command, args),
 }));
 
@@ -66,6 +68,15 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("opens computer setup directly on Tools and focuses its permission section", async () => {
+    render(<SettingsDialog standalone open initialSection="computer" onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: /Ferramentas/ })).toHaveAttribute("aria-selected", "true");
+    const section = screen.getByRole("region", { name: "Uso do computador" });
+    await waitFor(() => expect(section).toHaveFocus());
+    await screen.findByRole("heading", { name: "Core" });
+    const tools = screen.getByRole("tabpanel", { name: "Ferramentas" });
+    expect(within(tools).getAllByRole("heading")[0]).toHaveAccessibleName("Uso do computador");
+  });
   it("keeps settings open on outside clicks and Escape, and closes explicitly", async () => {
     invokeMock.mockResolvedValue([]);
     const user = userEvent.setup();
@@ -108,6 +119,23 @@ describe("SettingsDialog provider accounts", () => {
     render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
     expect(screen.getByRole("tab", { name: "Geral" })).toHaveAttribute("aria-selected", "true");
     expect(invokeMock).not.toHaveBeenCalledWith("save_desktop_layout", expect.anything());
+  });
+
+  it("keeps native settings navigation reachable by keyboard while its content changes", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    const navigation = screen.getByRole("tablist", { name: "Configurações" });
+    const general = within(navigation).getByRole("tab", { name: "Geral" });
+    await user.click(general);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(within(navigation).getByRole("tab", { name: "Terminal" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Terminal" })).toBeVisible();
+    expect(navigation).toBeVisible();
+    await user.keyboard("{ArrowUp}{Enter}");
+    expect(general).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Geral", level: 2 })).toBeVisible();
+    expect(within(navigation).getAllByRole("tab")).toHaveLength(12);
   });
 
   it("resets a native hook draft on reopening", async () => {
@@ -478,6 +506,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(within(screen.getByRole("tabpanel", { name: "Geral" })).queryByRole("heading", { name: "Core" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Ferramentas" }));
     expect(await within(screen.getByRole("tabpanel", { name: "Ferramentas" })).findByRole("heading", { name: "Core" })).toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel", { name: "Ferramentas" })).getByRole("heading", { name: "Uso do computador" })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: /Skills/ }));
     expect(await screen.findByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("tab", { name: /Skills/ })).toHaveTextContent("0"));
@@ -542,6 +571,30 @@ describe("SettingsDialog provider accounts", () => {
     expect(screen.getAllByTestId("provider-account-claude-code")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Adicionar conta" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("Desligado");
+  });
+
+  it("keeps each provider tool independent and navigation available beside the shared tool panels", async () => {
+    const connected = account("openai-codex-pesquisa", {
+      models: [{ id: "gpt-5.6-luna", name: "Luna", reasoningLevels: [], defaultReasoningLevel: null }],
+    });
+    invokeMock.mockImplementation((command: string, args?: unknown) => Promise.resolve(command === "list_provider_accounts" ? [connected] : args));
+    const user = userEvent.setup();
+    render(<SettingsDialog standalone open onOpenChange={vi.fn()} />);
+    const navigation = screen.getByRole("tablist", { name: "Configurações" });
+    await user.click(within(navigation).getByRole("tab", { name: /Provedores/ }));
+    const tools = await screen.findByRole("region", { name: "Ferramentas" });
+    const search = await within(tools).findByRole("combobox", { name: "Provedor de Web Search" });
+    await user.click(search);
+    await user.click(await screen.findByRole("option", { name: connected.alias }));
+    await waitFor(() => expect(search).toHaveTextContent(connected.alias));
+    expect(within(tools).getByRole("combobox", { name: "Modelo de Web Search" })).toHaveTextContent("Luna");
+    expect(within(tools).getByRole("combobox", { name: "Provedor de Vision" })).toHaveTextContent("Desligado");
+    expect(within(tools).getByRole("combobox", { name: "Provedor de Gerar imagens" })).toHaveTextContent("Desligado");
+    expect(invokeMock).not.toHaveBeenCalledWith("set_vision_config", expect.anything());
+    expect(invokeMock).not.toHaveBeenCalledWith("set_image_generation_config", expect.anything());
+    await user.click(within(navigation).getByRole("tab", { name: "Geral" }));
+    expect(screen.getByRole("tabpanel", { name: "Geral" })).toBeVisible();
+    expect(navigation).toBeVisible();
   });
 
   it("mostra os dados da assinatura e os modelos ao abrir a modal do card", async () => {

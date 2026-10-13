@@ -1,0 +1,660 @@
+{
+  "date": "2026-10-12",
+  "target": "/Applications/ChatGPT.app",
+  "rea_version": "6.4.0",
+  "local_bundle": {
+    "path": "/Users/enesolucoes/Documents/Pessoal/jarvis/docs/research/chatgpt-computer-use-2026-10-12/rea-evidence.json",
+    "bytes": 86301546,
+    "sha256": "525387253aca9253637908a53761dd4a14abf705ae7fce090a2f584f3ad6ce6c",
+    "records": 26,
+    "unknowns": 7
+  },
+  "local_snapshot": {
+    "path": "/Users/enesolucoes/Documents/Pessoal/jarvis/docs/research/chatgpt-computer-use-2026-10-12/rea-analysis.snapshot.json",
+    "bytes": 10956304,
+    "sha256": "36fe9dfdefb349667f8ebf3ca79062ddfee67ccbea00d62effcc30d34100fbd5",
+    "kind": "provider-neutral REA snapshot; not a verified Hopper database"
+  },
+  "inputs": [
+    {
+      "path": "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+      "bytes": 71008,
+      "sha256": "2053a78d225a1492d0cb6896cfd83254af06c3277547e83d4d23fef88f00426e"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+      "bytes": 567757587,
+      "sha256": "75e397e2280dde93b70a85aa926f4282c728eacc84dfeb15ba7fb6ddd84628af"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+      "bytes": 1385120,
+      "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+    },
+    {
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+      "bytes": 24583472,
+      "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+    }
+  ],
+  "inventory": {
+    "manifest": {
+      "edge_count": 26507,
+      "graph_sha256": "7ea5682c219e282e80dd7c7a02a0a21cf9850efcf804047abc9b8bb36247716f",
+      "manifest_id": "agm_34087f439d60122846c4d5f4c7aa0750dd9693ec4e31f2541eb0db75dbd61d65",
+      "node_count": 24064,
+      "occurrence_count": 26533,
+      "root_artifact_id": "art_628262bb985c6bae8b499db7d1f7f031d3cea81d7fc7f168b688b11c4ef4d285",
+      "root_format": "directory",
+      "root_sha256": "11987fdc3b01ea720a9351d433fcf738587e26ec3beb8ccb513c21cc99a9bb73"
+    },
+    "nodes": 24064,
+    "occurrences": 26533,
+    "edges": 26507,
+    "integrity_policy": "record-and-continue",
+    "contradictions": [
+      {
+        "contradiction_id": "aic_bf414e80f0e64dba5e20c3fde36e2a60ab7ccf018ff9b7e9fa63599d73bb049e",
+        "declared_sha256": "5f2f66c4fe19493bba7ca2e0c322ed256e39f66d4a58865875431c2ddd4d58a1",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "6096151ba2644b594b0e0f3098e898c6a564b57371658f9fd80327bfa641d313",
+        "occurrence_id": "occ_2830c501e8e732db108736956a4e74a363a6c1e7641c8152ea0b1dfac2a36f6b",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/dist/native/darwin/permissions.node contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_a45bb20a28978acd844f561404b098915546fa2bed1d1d7d6b402d5acfbc14b0",
+        "declared_sha256": "fe82d0604b43c4b315552b872fc8b1fffef707cbf1fc1872a2ec7771dd528aec",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "c2ab9253b2a28c7432a96a902db586022c9e63e00cb6167c1ba239cfc1a603bb",
+        "occurrence_id": "occ_9d3fa3dd70f9d143a576ac16a0397c955df9a21c44f38ccade74449131e0b46b",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/node_modules/node-hid/prebuilds/HID-darwin-arm64/node-napi-v4.node contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_86905da890e63603cbb4c4bc53b816fe58783dafbd9380e48c437080aaecd96e",
+        "declared_sha256": "e8f5177df50677df2a91dfe14ace2bdf16fade5c4d7dfa3d5b14427715d581b5",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "d008d2382a4b1a2a075236e0a0033af9f577d0097276aeead54528afe95199bf",
+        "occurrence_id": "occ_5e350b5af1169d12b1cd833088a7c55a0596adac7ea348ffe8df488dc84ff0d6",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/node_modules/serialport/node_modules/@serialport/bindings-cpp/prebuilds/darwin-x64+arm64/node.napi.node contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_a7fe9134ca60cfe8402aaf5c709a8f299579c4da8811d367ebd6d62ed1b58448",
+        "declared_sha256": "6950997eb8bdf526b9adc03c399a1a25f6094853d08080fe434f548dd9264840",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "496adcb40ddc270a199d1487d52dc2f4c045232383b578573c45339b35c992ba",
+        "occurrence_id": "occ_bd71b1e83e5b876c3253f63b974b78d9ec70d1f48cbfe11a8f213bc5098dae1c",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/better-sqlite3/build/Release/better_sqlite3.node contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_76c98ed60d2de9714c5b830d9226bd20b13d8e39e793982d3ca95b438a6303d3",
+        "declared_sha256": "b2a1f11eae293f57343fad57dd7cb083dd21133ebf7d1f80516454fc7ccef482",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "ca650475865ca364b79e7a9ac1322fb43928153247ff3f162b3be9fb57442d9e",
+        "occurrence_id": "occ_65cc795e72211084629096a40cfb2ecf2eea75b5654dba48dd0425b07600a880",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/node-pty/build/Release/pty.node contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_179c48fab7f46141810b6779f8449ec324c791a12852d058105d0e0a88bd139d",
+        "declared_sha256": "ae14b33937b65b07cb77c4f336aba7d155661034494a53cf6aa64b5b6fdaa652",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "416adfd09884a610954a283b25d29ebda5bb2f885e2836a29cc48a37335bd7b1",
+        "occurrence_id": "occ_24023bf761aaab4b6f4f608370904fadc503f4389f7d90a850422f4f897ec63e",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/node-pty/build/Release/spawn-helper contradicts observed bytes."
+      },
+      {
+        "contradiction_id": "aic_b9c3d884b9a6a0d13adcb8693249c88c7b61644cf311c2f5248b7d52848b1975",
+        "declared_sha256": "1399b5ce9d3a541befa6f0586058901f3573c492857a037cef222b42c96c8c12",
+        "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+        "observed_sha256": "41260424760b7209483d215c7549bfe6faae143f64dcbccda7477ecee5547815",
+        "occurrence_id": "occ_01b5e2f350e729da5f9dafcdf92041eaf1b383bd0675b9f8f9eca37a2f39c6e3",
+        "statement": "Declared integrity for Contents/Resources/app.asar/node_modules/objc-js/prebuilds/darwin-arm64/node.napi.armv8.node contradicts observed bytes."
+      }
+    ]
+  },
+  "rea_records": [
+    {
+      "evidence_id": "ev_16e5e9ad98add3ef2f006e3817ace6df788715b6b01498ce7a3e289b7e837f96",
+      "operation": "search_strings",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+        "name": "sky.node"
+      },
+      "limitations": [
+        "Results depend on Hopper's completed static analysis.",
+        "Regex mode uses ECMAScript Unicode semantics in a supervised worker with a five-second matching deadline. Cancellation or deadline failure stops matching without blocking Hopper; literal mode retains native casefold semantics.",
+        "String values cover native typed objects. Hopper may split long literals into adjacent unterminated fragments; string searches match each object independently.",
+        "Undecodable typed objects retain native display text with an explicit decoding unknown; these values do not establish decoded source literals.",
+        "Reported string encodings are inferred from typed bytes and native display; the original source's intended encoding is unknown."
+      ]
+    },
+    {
+      "evidence_id": "ev_2ac66ed834a728ec93dfbef85c75a7576af095c894136c046ab2974d747b5b75",
+      "operation": "inspect_macho",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+        "name": "SkyComputerUseService"
+      },
+      "limitations": [
+        "Imports and exports combine dyld_info and nm; stripped or toolchain-hidden symbols may be absent.",
+        "vtool output is retained as provenance but only otool build metadata is normalized."
+      ]
+    },
+    {
+      "evidence_id": "ev_2dfe35da0a07fab57c8360b16de962248ff2af97ea46f8df9eaa778aef27e792",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_2e4ab2b6864e992b6e18aaf78b8afe7feb057420d2a926adfa2b6e403c01083b",
+      "operation": "inspect_analysis_view",
+      "authority": "shipped-artifact",
+      "confidence": "derived",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "9c018e39f30d3658daf84f452091edb1c40d25b8183655e61299b682bfcc42b1"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac",
+        "name": "mac"
+      },
+      "limitations": [
+        "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
+        "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+        "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+        "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
+        "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
+        "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
+        "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+        "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
+        "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
+        "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
+        "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+        "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+        "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+        "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+        "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
+        "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+      ]
+    },
+    {
+      "evidence_id": "ev_371c72a6db63ac40c0bfbb0bd0472e9d19ea99c3afbcc12b4d8eed63a7515b7b",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_420f86a3f2c3d6628f9fc7f44f0b8039cfb409a28f344578e89fc44bb1c3efed",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_49bc75d47413c72fd45730106ded6c3377f0651baa70105ec8494e64f7898056",
+      "operation": "analyze_javascript_application",
+      "authority": "shipped-artifact",
+      "confidence": "derived",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "9c018e39f30d3658daf84f452091edb1c40d25b8183655e61299b682bfcc42b1"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac",
+        "name": "mac"
+      },
+      "limitations": [
+        "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+        "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+        "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+        "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+        "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+      ]
+    },
+    {
+      "evidence_id": "ev_4b6aa507f839e729884cee97dcf294500773932d3f52e7f32d9142e3e786eade",
+      "operation": "inspect_signature",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+        "name": "SkyComputerUseService"
+      },
+      "limitations": [
+        "Entitlements and designated requirements require separate bounded commands.",
+        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined."
+      ]
+    },
+    {
+      "evidence_id": "ev_4f9dd575e0e57bcd7ec5ad9740463d861ad0a8d8dd81a797364557726a294cd3",
+      "operation": "extract_artifact",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "11987fdc3b01ea720a9351d433fcf738587e26ec3beb8ccb513c21cc99a9bb73"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app",
+        "name": "ChatGPT.app"
+      },
+      "limitations": [
+        "All regular files in the active artifact were materialized; nested archive contents remain represented by their containing file."
+      ]
+    },
+    {
+      "evidence_id": "ev_5afd957de2f3039f39c98adc8edd649323d958d973c958c328d2f3d984b95ad5",
+      "operation": "analyze_function",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+        "name": "sky.node"
+      },
+      "limitations": [
+        "Results depend on Hopper's completed static analysis.",
+        "String values cover native typed objects. Hopper may split long literals into adjacent unterminated fragments; string searches match each object independently.",
+        "Undecodable typed objects retain native display text with an explicit decoding unknown; these values do not establish decoded source literals.",
+        "Reported string encodings are inferred from typed bytes and native display; the original source's intended encoding is unknown."
+      ]
+    },
+    {
+      "evidence_id": "ev_70fee48e02cb55a5faa2a9e960b27927c5bb0feb24ba9dcc76f318a81292ee00",
+      "operation": "inventory_artifact",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "11987fdc3b01ea720a9351d433fcf738587e26ec3beb8ccb513c21cc99a9bb73"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app",
+        "name": "ChatGPT.app"
+      },
+      "limitations": [
+        "7 integrity contradiction(s) were recorded; mismatched content is observed-untrusted."
+      ]
+    },
+    {
+      "evidence_id": "ev_76059ad6522cad3723e93fecbdd7d2151a53953ad24ea9289814f4aff239c3a4",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_7f6b556fa07391d8c6510e678eddd4c01fb7e9cad1f6112d5e647faaa08bf3bd",
+      "operation": "inspect_plist",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "2053a78d225a1492d0cb6896cfd83254af06c3277547e83d4d23fef88f00426e"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+        "name": "ChatGPT"
+      },
+      "limitations": []
+    },
+    {
+      "evidence_id": "ev_80db31ecc9768c4cc3587cac6d9891945fa47cfd192e24efa7674ba263db615e",
+      "operation": "binary_overview",
+      "authority": "shipped-artifact",
+      "confidence": "derived",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+        "name": "sky.node"
+      },
+      "limitations": [
+        "Derived by an REA composed workflow."
+      ]
+    },
+    {
+      "evidence_id": "ev_848901b4a1e2cb6ddf7f5d01c69ca5465c7d4f6470c00c7716573dbc8473f990",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_855122aac1af3b488fb5d77c191a4cc7b67251c36af75fb82a0398f9a7371492",
+      "operation": "inspect_plist",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+        "name": "SkyComputerUseService"
+      },
+      "limitations": []
+    },
+    {
+      "evidence_id": "ev_8a598f64e1e5ce14dd35a96f8cd951fa0876aed53263bbbca31fc3587c2caf1f",
+      "operation": "inspect_plist",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+        "name": "SkyComputerUseService"
+      },
+      "limitations": []
+    },
+    {
+      "evidence_id": "ev_a4e91a49cd072d5473f3e444c58819aa5fa7c5c5a4143e546459e4182f8dc5a9",
+      "operation": "inspect_analysis_view",
+      "authority": "shipped-artifact",
+      "confidence": "derived",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "9c018e39f30d3658daf84f452091edb1c40d25b8183655e61299b682bfcc42b1"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac",
+        "name": "mac"
+      },
+      "limitations": [
+        "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
+        "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+        "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+        "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
+        "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
+        "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
+        "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+        "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
+        "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
+        "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
+        "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+        "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+        "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+        "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+        "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
+        "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+      ]
+    },
+    {
+      "evidence_id": "ev_c83d04c8de6606afd48e524cf68475cc6e90ac295d2090b94d1c786e1799316c",
+      "operation": "inspect_plist",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+        "name": "SkyComputerUseService"
+      },
+      "limitations": []
+    },
+    {
+      "evidence_id": "ev_cdc0982d0431df6af646c81a54d4ce4194f7be270e352c16d307fae80b34a3ee",
+      "operation": "inspect_artifact",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "11987fdc3b01ea720a9351d433fcf738587e26ec3beb8ccb513c21cc99a9bb73"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app",
+        "name": "ChatGPT.app"
+      },
+      "limitations": [
+        "7 integrity contradiction(s) were recorded; mismatched content is observed-untrusted.",
+        "Inspection derives bounded static hypotheses and next probes; it does not execute the artifact or claim format-specific semantics."
+      ]
+    },
+    {
+      "evidence_id": "ev_d37a3b5fd2b92483214bd24d36f460c9101447a5e18d221e4a9eb5511bb5b3b4",
+      "operation": "inspect_analysis_view",
+      "authority": "shipped-artifact",
+      "confidence": "derived",
+      "subject": {
+        "architecture": null,
+        "digest": {
+          "sha256": "9c018e39f30d3658daf84f452091edb1c40d25b8183655e61299b682bfcc42b1"
+        },
+        "format": "directory",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac",
+        "name": "mac"
+      },
+      "limitations": [
+        "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
+        "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+        "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+        "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
+        "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
+        "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
+        "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+        "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
+        "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
+        "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
+        "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+        "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+        "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+        "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+        "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
+        "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+      ]
+    },
+    {
+      "evidence_id": "ev_e06a9334ab56c50ccb7b68ecd6bd295525e2f2e036a46c0be89c93549f34b3af",
+      "operation": "inspect_macho",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+        "name": "sky.node"
+      },
+      "limitations": [
+        "Imports and exports combine dyld_info and nm; stripped or toolchain-hidden symbols may be absent.",
+        "vtool output is retained as provenance but only otool build metadata is normalized."
+      ]
+    },
+    {
+      "evidence_id": "ev_e44b66bdd1765658b1bf744d85d70c093d2be42621ba8d8c8c5888167f03c15f",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_f16f08c778f7b3a65bb0760dd1b3034f5a8bb985b6db3762c27ade2ef773a100",
+      "operation": "record_unknown",
+      "authority": "analyst-inference",
+      "confidence": "derived",
+      "subject": null,
+      "limitations": [
+        "Artifact identity is unavailable for this observation.",
+        "Registry mutation evidence records analyst intent, not proof of the answer."
+      ]
+    },
+    {
+      "evidence_id": "ev_f4bf96c6a88bbb34bea2b5894af33a123df81c75ecbabf4ec592b706863b44f2",
+      "operation": "inspect_signature",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "2053a78d225a1492d0cb6896cfd83254af06c3277547e83d4d23fef88f00426e"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+        "name": "ChatGPT"
+      },
+      "limitations": [
+        "Entitlements and designated requirements require separate bounded commands.",
+        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined."
+      ]
+    },
+    {
+      "evidence_id": "ev_f6b588b6b6d713d611776d4e67e52a275e49c63c139e22beb0174c81afde7c78",
+      "operation": "search_procedures",
+      "authority": "shipped-artifact",
+      "confidence": "observed",
+      "subject": {
+        "architecture": "arm64",
+        "digest": {
+          "sha256": "0f64109efdecbc9734a201ee0ac25c8e7f6a69878194b55231b44fa1fe4476a7"
+        },
+        "format": "mach-o",
+        "local_path": "/Applications/ChatGPT.app/Contents/Resources/native/sky.node",
+        "name": "sky.node"
+      },
+      "limitations": [
+        "Results depend on Hopper's completed static analysis.",
+        "Regex mode uses ECMAScript Unicode semantics in a supervised worker with a five-second matching deadline. Cancellation or deadline failure stops matching without blocking Hopper; literal mode retains native casefold semantics."
+      ]
+    }
+  ],
+  "unknowns": [
+    {
+      "unknown_id": "unk_1a9a71ef81fded65cff6e4928fcb1b709407296774b323bf795abd0c24a93659",
+      "domain": "asar-integrity-provenance",
+      "question": "Why do seven ASAR-declared hashes differ from the installed unpacked native files even though codesign --verify --deep --strict accepts the installed application?",
+      "status": "open",
+      "required_authority": "shipped-artifact"
+    },
+    {
+      "unknown_id": "unk_4fcd6e76fe526c4074503ddc4ce0ea4636062a173fca43fdd88ba9ce1c138fcb",
+      "domain": "runtime-lifecycle",
+      "question": "Do macOS permission acquisition, user intervention, cancellation, late replies and service restart enforce the statically declared behavior on this host?",
+      "status": "open",
+      "required_authority": "controlled-replay"
+    },
+    {
+      "unknown_id": "unk_7a3a5a346363bfde0e2c5d8beafcecf9bdff140147a6466939018718829c58fd",
+      "domain": "native-enforcement",
+      "question": "Which complete native branches authenticate IPC senders, revalidate target/action policy, preserve clipboard, and reject interrupted actions before dispatch?",
+      "status": "open",
+      "required_authority": "shipped-artifact"
+    },
+    {
+      "unknown_id": "unk_b489a7d0a2a5ba64f1aab7bd00dbb161ab3007b3be3ab861de7593edfe3eab6b",
+      "domain": "locked-computer",
+      "question": "What do the installer, authorization plug-in and guardian actually install and enforce during locked-computer use?",
+      "status": "open",
+      "required_authority": "shipped-artifact"
+    },
+    {
+      "unknown_id": "unk_c8ab99d3c87e24396bddb03944971175080dd35d9b513d4a787bbc5325b3a90a",
+      "domain": "repl-isolation",
+      "question": "What is the actual trusted/untrusted evaluator, filesystem/process/network authority and failure isolation inside the shipped native node_repl executable?",
+      "status": "open",
+      "required_authority": "shipped-artifact"
+    },
+    {
+      "unknown_id": "unk_d323b8a2af4261705389ac9b73a4621a5b5cf7d5ca786b6687f916205ac919eb",
+      "domain": "capture-geometry",
+      "question": "How do capture pixels, AX bounds, virtual cursor coordinates and input coordinates remain coherent across Retina scaling, window moves and multiple displays?",
+      "status": "open",
+      "required_authority": "controlled-replay"
+    },
+    {
+      "unknown_id": "unk_e044f63270869e13b99e387a4caf937b6c9d8776f0d89659d0f23fc1f6c18dc7",
+      "domain": "server-and-privacy",
+      "question": "Which account/model/server policy enables Computer Use and what capture contents or action metadata leave the whole product beyond the inspected telemetry module?",
+      "status": "open",
+      "required_authority": "external-service"
+    }
+  ],
+  "supplemental_static_tools": {
+    "llvm_version": [
+      "Apple LLVM version 21.0.0",
+      "  Optimized build.",
+      "",
+      ""
+    ],
+    "codesign": {
+      "command": [
+        "codesign",
+        "--verify",
+        "--deep",
+        "--strict",
+        "/Applications/ChatGPT.app"
+      ],
+      "exit_code": 0,
+      "output": "empty",
+      "limitation": "Acceptance of installed code signing does not explain ASAR metadata contradictions or prove runtime safety."
+    }
+  }
+}

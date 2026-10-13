@@ -20,23 +20,10 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 
 .new-conversation-stage {
   grid-template-rows: minmax(0, 1fr) minmax(0, 0rem) auto minmax(0, 0fr);
-  transition: grid-template-rows 620ms cubic-bezier(0.65, 0, 0.35, 1);
+  transition: grid-template-rows 260ms ease;
 }
 .new-conversation-stage[data-empty="true"] {
   grid-template-rows: minmax(0, 1fr) minmax(0, 11.5rem) auto minmax(0, 1fr);
-}
-.new-conversation-glow {
-  background:
-    radial-gradient(circle at 18% 50%, color-mix(in srgb, var(--color-onedark-blue) 44%, transparent), transparent 40%),
-    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--color-onedark-purple) 34%, transparent), transparent 44%),
-    radial-gradient(circle at 82% 56%, color-mix(in srgb, var(--color-onedark-cyan) 42%, transparent), transparent 40%);
-  filter: blur(42px);
-  opacity: 0;
-  transition: opacity 720ms ease-in, filter 720ms ease-in;
-}
-.new-conversation-stage[data-empty="true"] .new-conversation-glow {
-  opacity: 0.48;
-  animation: new-conversation-breathe 7s ease-in-out infinite;
 }
 .new-conversation-brand-slot {
   display: flex;
@@ -45,27 +32,19 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 }
 .new-conversation-brand {
   opacity: 0;
-  filter: blur(3px);
-  transform: translateY(-32px) scale(0.97);
-  transition:
-    opacity 360ms cubic-bezier(0.55, 0, 1, 0.45),
-    filter 420ms cubic-bezier(0.55, 0, 1, 0.45),
-    transform 520ms cubic-bezier(0.55, 0, 1, 0.45);
-}
-.new-conversation-brand img {
-  filter: drop-shadow(0 12px 28px color-mix(in srgb, var(--color-onedark-cyan) 24%, transparent));
+  transform: translateY(-8px);
+  transition: opacity 180ms ease, transform 260ms ease;
 }
 .new-conversation-stage[data-empty="true"] .new-conversation-brand {
   opacity: 1;
-  filter: blur(0);
-  transform: translateY(0) scale(1);
+  transform: translateY(0);
 }
 .conversation-transcript-slot {
   opacity: 1;
   transform: translateY(0);
   transition:
-    opacity 360ms ease-out 140ms,
-    transform 520ms cubic-bezier(0.16, 1, 0.3, 1) 80ms;
+    opacity 180ms ease-out,
+    transform 260ms ease;
 }
 .new-conversation-stage[data-empty="true"] .conversation-transcript-slot {
   pointer-events: none;
@@ -74,22 +53,16 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 }
 .conversation-composer-slot {
   max-width: 56rem;
-  transition: max-width 620ms cubic-bezier(0.65, 0, 0.35, 1);
+  transition: max-width 260ms ease;
 }
 .new-conversation-stage[data-empty="true"] .conversation-composer-slot {
   max-width: 48rem;
 }
-@keyframes new-conversation-breathe {
-  0%, 100% { transform: translate(-50%, -50%) scale(0.96); }
-  50% { transform: translate(-50%, -50%) scale(1.04); }
-}
 @media (prefers-reduced-motion: reduce) {
   .new-conversation-stage,
-  .new-conversation-glow,
   .new-conversation-brand,
   .conversation-transcript-slot,
   .conversation-composer-slot { transition: none; }
-  .new-conversation-stage[data-empty="true"] .new-conversation-glow { animation: none; }
 }
 
 .core-install-progress[data-indeterminate] [data-slot="progress-indicator"] {
@@ -117,14 +90,19 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 
 /* Settings navigation stays outside the panel scrollport. */
 .settings-navigation [role="tab"] {
-  height: 38px;
-  padding-inline: 8px;
+  min-height: 36px;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--sidebar-foreground);
+  transition: background-color 120ms ease;
 }
 .settings-navigation [role="tab"][data-active] {
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 14%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 38%, transparent);
-  box-shadow: inset 0 1px 0 var(--border);
+  color: var(--foreground);
+  background: var(--sidebar-accent);
+  box-shadow: none;
 }
 
 .skill-editor[data-empty="true"]::before {
@@ -152,7 +130,7 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 .markdown-editor-prose code { border-radius: 4px; background: var(--muted); padding: 0.1em 0.3em; font-family: var(--font-mono); font-size: 0.9em; }
 .markdown-editor-prose pre { overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); border-radius: 6px; background: var(--sidebar); padding: 0.8em 1em; }
 .markdown-editor-prose pre code { background: none; padding: 0; }
-.markdown-editor-prose a { color: var(--primary); text-decoration: underline; cursor: text; }
+.markdown-editor-prose a { color: var(--color-onedark-blue); text-decoration: underline; cursor: pointer; }
 .markdown-editor-prose hr { margin: 1.5em 0; border-color: var(--border); }
 .markdown-editor-prose img { max-width: 100%; height: auto; border-radius: 6px; }
 .markdown-editor-prose table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 1em 0; }
@@ -172,8 +150,8 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-heading: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
     --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -209,200 +187,118 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
-    --radius-xl: var(--radius);
-    --radius-2xl: var(--radius);
-    --radius-3xl: var(--radius);
-    --radius-4xl: var(--radius);
-    /* Semantic accents retained from the original One Dark palette. */
+    --radius-xl: calc(var(--radius) * 1.2);
+    --radius-2xl: calc(var(--radius) * 1.6);
+    --radius-3xl: calc(var(--radius) * 2);
+    --radius-4xl: calc(var(--radius) * 2.4);
+    /* Keep semantic aliases while changing the application visual language. */
     --color-onedark-bg: var(--background);
     --color-onedark-dark: var(--card);
     --color-onedark-gutter: var(--sidebar);
     --color-onedark-panel: var(--secondary);
     --color-onedark-border: var(--border);
-    --color-onedark-blue: #61afef;
-    --color-onedark-green: #98c379;
-    --color-onedark-cyan: #56b6c2;
-    --color-onedark-yellow: #e5c07b;
-    --color-onedark-purple: #c678dd;
-    --color-onedark-red: #e06c75;
+    --color-onedark-blue: var(--tone-blue);
+    --color-onedark-green: var(--tone-green);
+    --color-onedark-cyan: var(--tone-cyan);
+    --color-onedark-yellow: var(--tone-yellow);
+    --color-onedark-purple: var(--tone-purple);
+    --color-onedark-red: var(--tone-red);
     --color-onedark-text: var(--foreground);
     --color-onedark-muted: var(--muted-foreground);
 }
 
-@property --chat-glow-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
-
-.chat-composer[data-working="true"]::before,
-.chat-composer[data-working="true"]::after,
-.agent-execution[data-status="running"]::before,
-.agent-execution[data-status="running"]::after,
-.direct-task[data-working="true"]::before,
-.direct-task[data-working="true"]::after {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  z-index: 1;
-  border-radius: inherit;
-  padding: 2px;
-  pointer-events: none;
-  background: conic-gradient(from var(--chat-glow-angle, 0deg),
-    var(--color-onedark-blue), var(--color-onedark-cyan),
-    var(--color-onedark-green), var(--color-onedark-yellow),
-    var(--color-onedark-red), var(--color-onedark-purple), var(--color-onedark-blue));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  animation: chat-glow-turn 5s linear infinite;
-}
-
-.chat-composer[data-working="true"]::before,
-.agent-execution[data-status="running"]::before,
-.direct-task[data-working="true"]::before {
-  opacity: 0.55;
-  filter: blur(4px);
-}
-
-@keyframes chat-glow-turn {
-  to { --chat-glow-angle: 360deg; }
-}
-
-.bootstrap-screen::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: .16;
-  background-image:
-    linear-gradient(rgb(255 255 255 / 4%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: radial-gradient(circle at center, black, transparent 76%);
-}
-
-.bootstrap-ambient {
-  background:
-    radial-gradient(circle at 34% 42%, color-mix(in srgb, var(--color-onedark-cyan) 14%, transparent), transparent 34%),
-    radial-gradient(circle at 68% 56%, color-mix(in srgb, var(--color-onedark-purple) 11%, transparent), transparent 32%);
-  animation: bootstrap-breathe 4.8s ease-in-out infinite alternate;
-}
-
-.bootstrap-mark {
-  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--color-onedark-cyan) 36%, transparent));
-}
-
-.bootstrap-step-active {
-  box-shadow: 0 0 16px color-mix(in srgb, var(--color-onedark-cyan) 18%, transparent);
-  animation: bootstrap-step-pulse 1.7s ease-in-out infinite;
-}
-
-@keyframes bootstrap-breathe {
-  from { opacity: .65; transform: scale(.98); }
-  to { opacity: 1; transform: scale(1.04); }
-}
-
-@keyframes bootstrap-step-pulse {
-  0%, 100% { opacity: .72; }
-  50% { opacity: 1; }
-}
-
 .context-meter[data-compacting="true"] [data-slot="progress-track"] {
-  background: conic-gradient(from var(--chat-glow-angle, 0deg),
-    var(--color-onedark-blue), var(--color-onedark-cyan),
-    var(--color-onedark-green), var(--color-onedark-yellow),
-    var(--color-onedark-red), var(--color-onedark-purple), var(--color-onedark-blue));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--color-onedark-cyan) 55%, transparent);
-  animation: chat-glow-turn 5s linear infinite;
+  background: var(--primary);
 }
 .context-meter[data-compacting="true"] [data-slot="progress-indicator"] { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-composer[data-working="true"]::before,
-  .chat-composer[data-working="true"]::after,
-  .agent-execution[data-status="running"]::before,
-  .agent-execution[data-status="running"]::after,
-  .direct-task[data-working="true"]::before,
-  .direct-task[data-working="true"]::after,
-  .context-meter[data-compacting="true"] [data-slot="progress-track"],
-  .bootstrap-ambient,
-  .bootstrap-step-active,
   [data-slot="spinner"] {
     animation: none;
   }
 }
 
 :root {
-    --background: #fafafa;
-    --foreground: #383a42;
+    --background: #f5f5f5;
+    --foreground: #242526;
     --card: #ffffff;
-    --card-foreground: #383a42;
+    --card-foreground: #242526;
     --popover: #ffffff;
-    --popover-foreground: #383a42;
-    --primary: #4078f2;
+    --popover-foreground: #242526;
+    --primary: #0071e3;
     --primary-foreground: #ffffff;
-    --secondary: #f0f0f1;
-    --secondary-foreground: #383a42;
-    --muted: #f0f0f1;
-    --muted-foreground: #a0a1a7;
-    --accent: #e5e5e6;
-    --accent-foreground: #383a42;
-    --destructive: #e45649;
-    --border: #e5e5e6;
-    --input: #e5e5e6;
-    --ring: #4078f2;
+    --secondary: #e9e9e9;
+    --secondary-foreground: #242526;
+    --muted: #ededed;
+    --muted-foreground: #626569;
+    --accent: #e3e3e3;
+    --accent-foreground: #242526;
+    --destructive: #c6404b;
+    --border: rgb(0 0 0 / 12%);
+    --input: rgb(0 0 0 / 16%);
+    --ring: #0071e3;
     --chart-1: #4078f2;
     --chart-2: #50a14f;
     --chart-3: #0184bc;
     --chart-4: #c18401;
     --chart-5: #a626a4;
-    --radius: 0.5rem;
-    --sidebar: #f0f0f1;
-    --sidebar-foreground: #383a42;
-    --sidebar-primary: #4078f2;
+    --radius: 0.625rem;
+    --sidebar: #ededed;
+    --sidebar-foreground: #343637;
+    --sidebar-primary: #0071e3;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #e5e5e6;
-    --sidebar-accent-foreground: #383a42;
-    --sidebar-border: #e5e5e6;
-    --sidebar-ring: #4078f2;
+    --sidebar-accent: #d7d9db;
+    --sidebar-accent-foreground: #242526;
+    --sidebar-border: rgb(0 0 0 / 12%);
+    --sidebar-ring: #0071e3;
+    --tone-blue: #0066cc;
+    --tone-green: #287b38;
+    --tone-cyan: #087b85;
+    --tone-yellow: #826314;
+    --tone-purple: #8751b0;
+    --tone-red: #b82d3a;
+    --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 3%);
 }
 
 .dark {
-    /* Precision Industrial: graphite chassis, raised anodized surfaces. */
-    --background: #181b20;
-    --foreground: #d7dce5;
-    --card: #20242b;
-    --card-foreground: #d7dce5;
-    --popover: #20242b;
-    --popover-foreground: #d7dce5;
-    --primary: #61afef;
-    --primary-foreground: #1e2227;
-    --secondary: #292e37;
-    --secondary-foreground: #d7dce5;
-    --muted: #20242b;
-    --muted-foreground: #969eac;
-    --accent: #303640;
-    --accent-foreground: #eef1f6;
-    --destructive: #e06c75;
+    --background: #242526;
+    --foreground: #ededed;
+    --card: #2b2d2e;
+    --card-foreground: #ededed;
+    --popover: #303233;
+    --popover-foreground: #ededed;
+    --primary: #0071e3;
+    --primary-foreground: #ffffff;
+    --secondary: #343637;
+    --secondary-foreground: #ededed;
+    --muted: #2b2d2e;
+    --muted-foreground: #b0b3b7;
+    --accent: #393b3d;
+    --accent-foreground: #ffffff;
+    --destructive: #c6404b;
     --border: rgb(255 255 255 / 9%);
     --input: rgb(255 255 255 / 12%);
-    --ring: #61afef;
+    --ring: #69b0ff;
     --chart-1: #61afef;
     --chart-2: #98c379;
     --chart-3: #56b6c2;
     --chart-4: #e5c07b;
     --chart-5: #c678dd;
-    --sidebar: #14171b;
-    --sidebar-foreground: #c3cad5;
-    --sidebar-primary: #61afef;
-    --sidebar-primary-foreground: #1e2227;
-    --sidebar-accent: #252c36;
-    --sidebar-accent-foreground: #eef1f6;
+    --sidebar: #282a2b;
+    --sidebar-foreground: #d6d8da;
+    --sidebar-primary: #0071e3;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #404345;
+    --sidebar-accent-foreground: #ffffff;
     --sidebar-border: rgb(255 255 255 / 9%);
-    --sidebar-ring: #61afef;
-    --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 7%);
+    --sidebar-ring: #69b0ff;
+    --tone-blue: #69b0ff;
+    --tone-green: #84d18a;
+    --tone-cyan: #75d5de;
+    --tone-yellow: #edc46a;
+    --tone-purple: #d5a6f3;
+    --tone-red: #ff9096;
+    --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 3%);
 }
 
 /* Application design layer; registry primitives remain untouched. */
@@ -415,46 +311,47 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 .dark [data-slot="select-content"], .dark [data-slot="dropdown-menu-content"] {
   --tw-inset-shadow: var(--edge-highlight);
 }
-.dark [data-slot="badge"] { border-radius: 4px; }
 .desktop-shell [data-sidebar="menu-button"][data-active] {
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-  box-shadow: inset 2px 0 var(--primary);
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  box-shadow: none;
 }
 @layer components {
   .micro-label {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: .12em;
-    text-transform: uppercase;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
     line-height: 1.5;
   }
   .instrument-panel {
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-xl);
     background: var(--card);
-    box-shadow: var(--edge-highlight), 0 4px 16px rgb(0 0 0 / 8%);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
   }
-  .dark [data-slot="card"],
+  .dark [data-slot="card"] { box-shadow: 0 1px 2px rgb(0 0 0 / 8%); }
   .dark [data-slot="dialog-content"],
   .dark [data-slot="alert-dialog-content"],
   .dark [data-slot="dropdown-menu-content"],
   .dark [data-slot="dropdown-menu-sub-content"],
   .dark [data-slot="select-content"] {
-    box-shadow: var(--edge-highlight), 0 8px 24px rgb(0 0 0 / 14%);
+    box-shadow: 0 10px 30px rgb(0 0 0 / 25%);
   }
   .dark [data-slot="badge"] {
-    border-radius: 4px;
+    border-radius: 5px;
     font-size: 10px;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
   }
   .desktop-shell [data-sidebar="menu-button"] {
-    border-radius: 6px;
-    font-size: 12px;
+    border-radius: 7px;
+    font-size: 13px;
   }
   .desktop-shell [data-sidebar="menu-button"][data-active] {
-    background: color-mix(in srgb, var(--primary) 10%, transparent);
-    box-shadow: inset 2px 0 var(--primary);
+    background: var(--sidebar-accent);
+    color: var(--sidebar-accent-foreground);
+    box-shadow: none;
   }
   .panel-separator { transition: background-color 140ms ease; }
   .tool-slot {
@@ -469,19 +366,40 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
   }
   .tool-slot > [data-slot="collapsible-trigger"] { border-radius: 4px; }
   .chat-composer {
-    box-shadow: var(--edge-highlight), 0 8px 32px rgb(0 0 0 / 22%);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 14%);
   }
   .inspector-section > [data-slot="collapsible-trigger"] {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: .08em;
-    text-transform: uppercase;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
   }
   .assistant-prose > :first-child { margin-top: 0; }
   .assistant-prose > :last-child { margin-bottom: 0; }
   .composer-controls { flex-wrap: wrap; row-gap: 4px; }
   .composer-options { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
   .composer-model { min-width: 0; max-width: 230px; }
+}
+
+/* Consumer groups override registry spacing without editing the primitives. */
+  .settings-page { width: 100%; max-width: 1200px; margin-inline: auto; }
+  .settings-card-grid { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: start; gap: 12px; }
+  .settings-card-grid-wide { grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); }
+  .settings-section-title { display: flex; align-items: center; gap: 8px; margin-top: 28px; margin-bottom: 10px; font-size: 14px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+  .settings-section-title:first-child { margin-top: 0; }
+  .settings-group { gap: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
+  .settings-group > * + * { border-top: 1px solid var(--border); }
+  .settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 14px 16px; }
+  .settings-row-copy { flex: 1 1 240px; min-width: 0; font-size: 13px; line-height: 1.5; }
+  .settings-row-control { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 100%; margin-left: auto; }
+  .settings-panel [data-slot="card-title"] { font-size: 14px; font-weight: 600; }
+  .settings-panel :is([data-slot="input"], [data-slot="select-trigger"]) { font-size: 13px; }
+  .settings-panel [data-slot="card-description"] { font-size: 12px; line-height: 1.5; }
+  .settings-panel [data-slot="skeleton"] { background-color: var(--secondary); }
+/* Filled controls and colored text need separate contrast against charcoal surfaces. */
+@layer utilities {
+  .text-primary { color: var(--tone-blue); }
+  .text-destructive { color: var(--tone-red); }
 }
 
 @layer base {
@@ -521,7 +439,7 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
   }
 }
 
-/* Code is a compact hardware slot; horizontal overflow stays inside the block. */
+/* Keep horizontal code overflow inside its block. */
 .chat-code-block .code-content {
   margin: 0;
   padding: 1rem;
@@ -533,14 +451,4 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
   line-height: 1.7;
 }
 .chat-code-block .hljs { padding: 0; background: transparent; }
-.reasoning-shimmer {
-  color: transparent;
-  background: linear-gradient(100deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%);
-  background-size: 250% 100%;
-  background-clip: text;
-  animation: reasoning-shimmer 2.5s linear infinite;
-}
-@keyframes reasoning-shimmer { from { background-position: 150% 0; } to { background-position: -100% 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .reasoning-shimmer { animation: none; background: none; color: var(--muted-foreground); }
-}
+.reasoning-shimmer { color: var(--muted-foreground); }

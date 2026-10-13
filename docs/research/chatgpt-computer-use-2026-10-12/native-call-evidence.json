@@ -1,0 +1,932 @@
+{
+  "target": {
+    "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+    "bytes": 24583472,
+    "sha256": "ac8bfe406d01a7cb43f7550c080587ae3a5f404f82fa6dcc399bf72a85cd765d"
+  },
+  "authority": "shipped-artifact; supplemental static LLVM analysis, not additional REA Evidence IDs",
+  "correlated_rea_evidence": "ev_2ac66ed834a728ec93dfbef85c75a7576af095c894136c046ab2974d747b5b75",
+  "tool": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/llvm-objdump",
+  "tool_version": [
+    "Apple LLVM version 21.0.0",
+    "  Optimized build."
+  ],
+  "command_template": [
+    "-d",
+    "--no-show-raw-insn",
+    "--start-address=<start>",
+    "--stop-address=<stop>",
+    "<target>"
+  ],
+  "callee_mapping": "Numeric VM address matched to REA dyld exports; imported stubs additionally mapped with llvm-objdump --macho --indirect-symbols. Swift labels decoded by xcrun swift-demangle --compact.",
+  "limitations": [
+    "Ranges are half-open static VM address regions, not proven whole function bodies.",
+    "Swift async continuations and indirect dispatch remain unresolved.",
+    "Disassembler nearest-symbol annotations are ignored; shared-address aliases are retained.",
+    "Static edges establish shipped calls, not a particular branch executed at runtime."
+  ],
+  "regions": [
+    {
+      "id": "N01",
+      "start": "0x100154d90",
+      "stop": "0x100155a00",
+      "assembly_sha256": "f69534d1221af484f30751751c5269e9f79fe8363331c369b223dd922cccc624",
+      "instruction_count": 796,
+      "selected_calls": [
+        {
+          "from": "0x100154e4c",
+          "to": "0x100260850",
+          "kind": "bl",
+          "symbols": [
+            "_$sSo11NSWorkspaceC14SystemSoftwareE24resolveApplicationTarget3forAC0eF0VSS_tKF"
+          ],
+          "demangled": "(extension in SystemSoftware):__C.NSWorkspace.resolveApplicationTarget(for: Swift.String) throws -> SystemSoftware.ApplicationTarget"
+        },
+        {
+          "from": "0x100154e7c",
+          "to": "0x100255ed0",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware17BundleIdentifiersO28isForbiddenComputerUseTargetySbSSFZ"
+          ],
+          "demangled": "static SystemSoftware.BundleIdentifiers.isForbiddenComputerUseTarget(Swift.String) -> Swift.Bool"
+        },
+        {
+          "from": "0x10015585c",
+          "to": "0x10073e43c",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport25SyntheticAppFocusEnforcerC3pidACs5Int32V_tcfc"
+          ],
+          "demangled": "AccessibilitySupport.SyntheticAppFocusEnforcer.init(pid: Swift.Int32) -> AccessibilitySupport.SyntheticAppFocusEnforcer"
+        },
+        {
+          "from": "0x10015592c",
+          "to": "0x1000714f8",
+          "kind": "bl",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC27createVirtualCursorIfNeededAA0abG0CyF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.createVirtualCursorIfNeeded() -> ComputerUse.ComputerUseCursor"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s17ComputerUseClient0aB26IPCAppPerformActionRequestV0aB0E6handle13senderContextAA0aB15IPCActionResultVAD0ab9IPCSenderJ0VSg_tYaKF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N02",
+      "start": "0x10015d598",
+      "stop": "0x10015e600",
+      "assembly_sha256": "8f21a442f7a69be36c5653e48bf39f7153eb0fbc41be970f6880ac4a7038ebd0",
+      "instruction_count": 1050,
+      "selected_calls": [
+        {
+          "from": "0x10015da08",
+          "to": "0x100074880",
+          "kind": "bl",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC8activateyyF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.activate() -> ()"
+        },
+        {
+          "from": "0x10015dcbc",
+          "to": "0x100074394",
+          "kind": "b",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC29updateSkyshotSettlingIfNeeded16disableAXDiffingAC0F7CaptureVSb_tYaKF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.updateSkyshotSettlingIfNeeded(disableAXDiffing: Swift.Bool) async throws -> ComputerUse.ComputerUseAppController.SkyshotCapture"
+        },
+        {
+          "from": "0x10015de68",
+          "to": "0x1000a9288",
+          "kind": "bl",
+          "symbols": [
+            "_$s11ComputerUse0aB18AppInstanceManagerC49clearUserInterruptedInterventionAfterStateRequery3forySS_tF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppInstanceManager.clearUserInterruptedInterventionAfterStateRequery(for: Swift.String) -> ()"
+        },
+        {
+          "from": "0x10015e4c4",
+          "to": "0x1000714f8",
+          "kind": "bl",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC27createVirtualCursorIfNeededAA0abG0CyF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.createVirtualCursorIfNeeded() -> ComputerUse.ComputerUseCursor"
+        },
+        {
+          "from": "0x10015e5c4",
+          "to": "0x10015d598",
+          "kind": "b",
+          "symbols": [
+            "_$s17ComputerUseClient0aB23IPCAppGetSkyshotRequestV0aB0E6handle13senderContextAA0aB16IPCSkyshotResultVAD0ab9IPCSenderJ0VSg_tYaKF"
+          ],
+          "demangled": "(extension in ComputerUse):ComputerUseClient.ComputerUseIPCAppGetSkyshotRequest.handle(senderContext: ComputerUse.ComputerUseIPCSenderContext?) async throws -> ComputerUseClient.ComputerUseIPCSkyshotResult"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s17ComputerUseClient0aB23IPCAppGetSkyshotRequestV0aB0E6handle13senderContextAA0aB16IPCSkyshotResultVAD0ab9IPCSenderJ0VSg_tYaKF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N03",
+      "start": "0x10008234c",
+      "stop": "0x100083a00",
+      "assembly_sha256": "bbd1dc097dc363f0e82dbade6ebdccff104485b109954be3566565b41072096b",
+      "instruction_count": 1453,
+      "selected_calls": [
+        {
+          "from": "0x100082554",
+          "to": "0x1010b9620",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeScale"
+          ],
+          "demangled": "_CGAffineTransformMakeScale"
+        },
+        {
+          "from": "0x100082578",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100082590",
+          "to": "0x1010b962c",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeTranslation"
+          ],
+          "demangled": "_CGAffineTransformMakeTranslation"
+        },
+        {
+          "from": "0x1000825b0",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x1000825e8",
+          "to": "0x100084938",
+          "kind": "bl",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC14orderedWindowsSay20AccessibilitySupport23WindowUIElementProtocol_pGyKF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.orderedWindows() throws -> [AccessibilitySupport.WindowUIElementProtocol]"
+        },
+        {
+          "from": "0x100082610",
+          "to": "0x1007039b0",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV6target15forMouseEventAt4withAC0gH6TargetVSo7CGPointV_SayAA06WindowD8Protocol_pGtKF"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.target(forMouseEventAt: __C.CGPoint, with: [AccessibilitySupport.WindowUIElementProtocol]) throws -> AccessibilitySupport.ApplicationUIElement.MouseEventTarget"
+        },
+        {
+          "from": "0x100082830",
+          "to": "0x1010b9620",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeScale"
+          ],
+          "demangled": "_CGAffineTransformMakeScale"
+        },
+        {
+          "from": "0x100082850",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100082868",
+          "to": "0x1010b962c",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeTranslation"
+          ],
+          "demangled": "_CGAffineTransformMakeTranslation"
+        },
+        {
+          "from": "0x100082888",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x1000829b4",
+          "to": "0x1010b9620",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeScale"
+          ],
+          "demangled": "_CGAffineTransformMakeScale"
+        },
+        {
+          "from": "0x1000829d4",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x1000829ec",
+          "to": "0x1010b962c",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeTranslation"
+          ],
+          "demangled": "_CGAffineTransformMakeTranslation"
+        },
+        {
+          "from": "0x100082a10",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100082be8",
+          "to": "0x10078ff28",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport15UIElementActionV5pressACvau"
+          ],
+          "demangled": "AccessibilitySupport.UIElementAction.press.unsafeMutableAddressor : AccessibilitySupport.UIElementAction"
+        },
+        {
+          "from": "0x100082ef8",
+          "to": "0x1010b9620",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeScale"
+          ],
+          "demangled": "_CGAffineTransformMakeScale"
+        },
+        {
+          "from": "0x100082f18",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100082f30",
+          "to": "0x1010b962c",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeTranslation"
+          ],
+          "demangled": "_CGAffineTransformMakeTranslation"
+        },
+        {
+          "from": "0x100082f50",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x1000831ac",
+          "to": "0x1006fa474",
+          "kind": "b",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV9sendClick2to2at13insideWebView9andDragTo11mouseButton5count12holdDuration7heldKey5flags6window13focusEnforcer13virtualCursoryAC16MouseEventTargetV_So7CGPointVSbATSgSo07CGMouseP0VSis0S0VSgSo010SAIVirtualU5PressCSgSo12CGEventFlagsVAA06WindowD0VSgAA017SyntheticAppFocusY0CSgAA13VirtualCursor_pSgtYaKF"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.sendClick(to: AccessibilitySupport.ApplicationUIElement.MouseEventTarget, at: __C.CGPoint, insideWebView: Swift.Bool, andDragTo: __C.CGPoint?, mouseButton: __C.CGMouseButton, count: Swift.Int, holdDuration: Swift.Duration?, heldKey: __C.SAIVirtualKeyPress?, flags: __C.CGEventFlags, window: AccessibilitySupport.WindowUIElement?, focusEnforcer: AccessibilitySupport.SyntheticAppFocusEnforcer?, virtualCursor: AccessibilitySupport.VirtualCursor?) async throws -> ()"
+        },
+        {
+          "from": "0x100083240",
+          "to": "0x1007058fc",
+          "kind": "b",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV17waitForUIToSettle5delay17notificationDelay21includingScrollEventsAA011TransformedD0V9TreeCacheVSgSdSg_SdSbtYaKF"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.waitForUIToSettle(delay: Swift.Double?, notificationDelay: Swift.Double, includingScrollEvents: Swift.Bool) async throws -> AccessibilitySupport.TransformedUIElement.TreeCache?"
+        },
+        {
+          "from": "0x10008341c",
+          "to": "0x1010b9620",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeScale"
+          ],
+          "demangled": "_CGAffineTransformMakeScale"
+        },
+        {
+          "from": "0x10008343c",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100083454",
+          "to": "0x1010b962c",
+          "kind": "bl",
+          "symbols": [
+            "_CGAffineTransformMakeTranslation"
+          ],
+          "demangled": "_CGAffineTransformMakeTranslation"
+        },
+        {
+          "from": "0x100083474",
+          "to": "0x1010b983c",
+          "kind": "bl",
+          "symbols": [
+            "_CGPointApplyAffineTransform"
+          ],
+          "demangled": "_CGPointApplyAffineTransform"
+        },
+        {
+          "from": "0x100083674",
+          "to": "0x1006fa474",
+          "kind": "b",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV9sendClick2to2at13insideWebView9andDragTo11mouseButton5count12holdDuration7heldKey5flags6window13focusEnforcer13virtualCursoryAC16MouseEventTargetV_So7CGPointVSbATSgSo07CGMouseP0VSis0S0VSgSo010SAIVirtualU5PressCSgSo12CGEventFlagsVAA06WindowD0VSgAA017SyntheticAppFocusY0CSgAA13VirtualCursor_pSgtYaKF"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.sendClick(to: AccessibilitySupport.ApplicationUIElement.MouseEventTarget, at: __C.CGPoint, insideWebView: Swift.Bool, andDragTo: __C.CGPoint?, mouseButton: __C.CGMouseButton, count: Swift.Int, holdDuration: Swift.Duration?, heldKey: __C.SAIVirtualKeyPress?, flags: __C.CGEventFlags, window: AccessibilitySupport.WindowUIElement?, focusEnforcer: AccessibilitySupport.SyntheticAppFocusEnforcer?, virtualCursor: AccessibilitySupport.VirtualCursor?) async throws -> ()"
+        },
+        {
+          "from": "0x1000837a0",
+          "to": "0x1007058fc",
+          "kind": "b",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV17waitForUIToSettle5delay17notificationDelay21includingScrollEventsAA011TransformedD0V9TreeCacheVSgSdSg_SdSbtYaKF"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.waitForUIToSettle(delay: Swift.Double?, notificationDelay: Swift.Double, includingScrollEvents: Swift.Bool) async throws -> AccessibilitySupport.TransformedUIElement.TreeCache?"
+        },
+        {
+          "from": "0x1000838b0",
+          "to": "0x10007177c",
+          "kind": "b",
+          "symbols": [
+            "_$s11ComputerUse0aB13AppControllerC13updateSkyshot9treeCache16disableAXDiffing14skipScreenshotAC0F7CaptureV20AccessibilitySupport20TransformedUIElementV04TreeH0VSg_S2btYaKF"
+          ],
+          "demangled": "ComputerUse.ComputerUseAppController.updateSkyshot(treeCache: AccessibilitySupport.TransformedUIElement.TreeCache?, disableAXDiffing: Swift.Bool, skipScreenshot: Swift.Bool) async throws -> ComputerUse.ComputerUseAppController.SkyshotCapture"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s11ComputerUse0aB13AppControllerC5click2at4with0E5Count9andDragTo12holdDuration3key13returnSkyshot13animateCursorAC0P7CaptureVSgSaySiGSg_So13CGMouseButtonVSiSo7CGPointVSgs0M0VSgSSSgS2btYaKF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N04",
+      "start": "0x1006fa474",
+      "stop": "0x1006fc700",
+      "assembly_sha256": "aca58ad09ef9b9e27f196fbd284d3c37dc5084c2bff25c81543a6cc437928f78",
+      "instruction_count": 2211,
+      "selected_calls": [
+        {
+          "from": "0x1006fa740",
+          "to": "0x1007a542c",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport17UIElementProtocolPAAE25clickingMayCauseSelectionSbvg"
+          ],
+          "demangled": "(extension in AccessibilitySupport):AccessibilitySupport.UIElementProtocol.clickingMayCauseSelection.getter : Swift.Bool"
+        },
+        {
+          "from": "0x1006fa7f4",
+          "to": "0x1007137cc",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport20ApplicationUIElementV13isCatalystAppSbvg"
+          ],
+          "demangled": "AccessibilitySupport.ApplicationUIElement.isCatalystApp.getter : Swift.Bool"
+        },
+        {
+          "from": "0x1006fa840",
+          "to": "0x1007a542c",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport17UIElementProtocolPAAE25clickingMayCauseSelectionSbvg"
+          ],
+          "demangled": "(extension in AccessibilitySupport):AccessibilitySupport.UIElementProtocol.clickingMayCauseSelection.getter : Swift.Bool"
+        },
+        {
+          "from": "0x1006faa34",
+          "to": "0x10073f634",
+          "kind": "b",
+          "symbols": [
+            "_$s20AccessibilitySupport25SyntheticAppFocusEnforcerC24safelyEnforceActiveState3foryAA23WindowUIElementProtocol_pSg_tYaKF"
+          ],
+          "demangled": "AccessibilitySupport.SyntheticAppFocusEnforcer.safelyEnforceActiveState(for: AccessibilitySupport.WindowUIElementProtocol?) async throws -> ()"
+        },
+        {
+          "from": "0x1006faca4",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006facb0",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fad08",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fad14",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb034",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb040",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb0a8",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb0b4",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb0bc",
+          "to": "0x100256d0c",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO7getTypeySo0cF0VSo0C3RefaFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.getType(__C.CGEventRef) -> __C.CGEventType"
+        },
+        {
+          "from": "0x1006fb1b0",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb1bc",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb5c8",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb5d4",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb62c",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb638",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb958",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb964",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb9cc",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fb9d8",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fb9e0",
+          "to": "0x100256d0c",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO7getTypeySo0cF0VSo0C3RefaFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.getType(__C.CGEventRef) -> __C.CGEventType"
+        },
+        {
+          "from": "0x1006fbad0",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fbadc",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fbe38",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fbe44",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fbe9c",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fbea8",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fc1c8",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fc1d4",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fc23c",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fc248",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fc250",
+          "to": "0x100256d0c",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO7getTypeySo0cF0VSo0C3RefaFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.getType(__C.CGEventRef) -> __C.CGEventType"
+        },
+        {
+          "from": "0x1006fc340",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fc34c",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fc630",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fc63c",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        },
+        {
+          "from": "0x1006fc694",
+          "to": "0x100256fbc",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO12setTimestamp_9timestampySo0C3Refa_s6UInt64VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.setTimestamp(_: __C.CGEventRef, timestamp: Swift.UInt64) -> ()"
+        },
+        {
+          "from": "0x1006fc6a0",
+          "to": "0x100256e64",
+          "kind": "bl",
+          "symbols": [
+            "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+          ],
+          "demangled": "static SystemSoftware.CGEventAPI.postToPid(_: __C.CGEventRef, pid: Swift.Int32) -> ()"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s20AccessibilitySupport20ApplicationUIElementV9sendClick2to2at13insideWebView9andDragTo11mouseButton5count12holdDuration7heldKey5flags6window13focusEnforcer13virtualCursoryAC16MouseEventTargetV_So7CGPointVSbATSgSo07CGMouseP0VSis0S0VSgSo010SAIVirtualU5PressCSgSo12CGEventFlagsVAA06WindowD0VSgAA017SyntheticAppFocusY0CSgAA13VirtualCursor_pSgtYaKF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N05",
+      "start": "0x100233b44",
+      "stop": "0x100234064",
+      "assembly_sha256": "c20a3c5ee2c6d3187800b7eb733d9c901541ad0fcf8956033ef52282522f99c1",
+      "instruction_count": 328,
+      "selected_calls": [
+        {
+          "from": "0x100233d88",
+          "to": "0x1007a93c8",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport17UIElementProtocolPAAE5titleSSSgvg"
+          ],
+          "demangled": "(extension in AccessibilitySupport):AccessibilitySupport.UIElementProtocol.title.getter : Swift.String?"
+        },
+        {
+          "from": "0x100233e80",
+          "to": "0x100efc28c",
+          "kind": "b",
+          "symbols": [
+            "_$s8SlimCore24ScreenshotImplementationO07captureC6Buffer7appName5delay9imageSize17includedWindowIDs011cropToFirstM014shouldBeOpaque07includeM6ShadowSo10CGImageRefaSSSg_SiSgSo6CGSizeVSgSays6UInt32VGSgS3btYaKFZ"
+          ],
+          "demangled": "static SlimCore.ScreenshotImplementation.captureScreenshotBuffer(appName: Swift.String?, delay: Swift.Int?, imageSize: __C.CGSize?, includedWindowIDs: [Swift.UInt32]?, cropToFirstWindow: Swift.Bool, shouldBeOpaque: Swift.Bool, includeWindowShadow: Swift.Bool) async throws -> __C.CGImageRef"
+        },
+        {
+          "from": "0x100233fa0",
+          "to": "0x1007a93c8",
+          "kind": "bl",
+          "symbols": [
+            "_$s20AccessibilitySupport17UIElementProtocolPAAE5titleSSSgvg"
+          ],
+          "demangled": "(extension in AccessibilitySupport):AccessibilitySupport.UIElementProtocol.title.getter : Swift.String?"
+        },
+        {
+          "from": "0x100233fdc",
+          "to": "0x100efc3a0",
+          "kind": "bl",
+          "symbols": [
+            "_$s8SlimCore24ScreenshotImplementationO05writeC6ToFile7appName10screenshot8encodingAA0cG0VSSSg_So10CGImageRefaAA0C8EncodingOtKFZ"
+          ],
+          "demangled": "static SlimCore.ScreenshotImplementation.writeScreenshotToFile(appName: Swift.String?, screenshot: __C.CGImageRef, encoding: SlimCore.ScreenshotEncoding) throws -> SlimCore.ScreenshotFile"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s11ComputerUse16SkyshotOperationV17captureScreenshot9imageSizeSo10CGImageRefaSo6CGSizeVSg_tYaKF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N06",
+      "start": "0x100f45b9c",
+      "stop": "0x100f46000",
+      "assembly_sha256": "b6f8b11e97eb7bbcfc18c198e642860e5c2a7617c826b32c9a931b6659b46ff1",
+      "instruction_count": 281,
+      "selected_calls": [
+        {
+          "from": "0x100f45e08",
+          "to": "0x1010b9c2c",
+          "kind": "bl",
+          "symbols": [
+            "_SecCodeCopyGuestWithAttributes"
+          ],
+          "demangled": "_SecCodeCopyGuestWithAttributes"
+        }
+      ],
+      "exported_entry_symbols": [
+        "_$s8SlimCore17SkyIPCRequirementV8evaluate20senderAuditTokenDataSb10Foundation0I0V_tF"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N07",
+      "start": "0x100f46664",
+      "stop": "0x100f46900",
+      "assembly_sha256": "0617e99458096664c0aa181d6afc5f1c42f8a082380394c517699a09e3681dbc",
+      "instruction_count": 167,
+      "selected_calls": [],
+      "exported_entry_symbols": [],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N08",
+      "start": "0x100256e64",
+      "stop": "0x1002570c0",
+      "assembly_sha256": "f4d8bdade0813a1df924140323071314b9fadd9e00a9d8ecce5473d376af1127",
+      "instruction_count": 151,
+      "selected_calls": [],
+      "exported_entry_symbols": [
+        "_$s14SystemSoftware10CGEventAPIO9postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    },
+    {
+      "id": "N09",
+      "start": "0x100efae18",
+      "stop": "0x100efb140",
+      "assembly_sha256": "cdbb70ec08ad5b76600d919674dcf7d5222cfb28216332cf38377d6a33ac83cf",
+      "instruction_count": 202,
+      "selected_calls": [],
+      "exported_entry_symbols": [
+        "_$s8SlimCore24ScreenshotImplementationO07captureC12WithSkyLight9windowIDs4rectSo10CGImageRefaSgSays6UInt32VG_So6CGRectVtFZ"
+      ],
+      "limitations": [
+        "Half-open bounded assembly region; not a verified complete procedure body",
+        "Swift async continuations and indirect calls remain unresolved",
+        "Callee aliases at a shared address are not disambiguated"
+      ]
+    }
+  ],
+  "policy_branch": {
+    "call_address": "0x100154e7c",
+    "callee_address": "0x100255ed0",
+    "branch_address": "0x100154e84",
+    "instruction": "tbz w0, #0x0, 0x100154ed0",
+    "interpretation": "The Boolean result of isForbiddenComputerUseTarget controls a branch. The full error/dispatch graph remains unresolved."
+  }
+}

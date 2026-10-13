@@ -22,14 +22,11 @@ export function BootstrapScreen({ steps }: { steps: BootstrapProgressState }) {
   const detail = active ? steps[active.id].detail : "Ambiente pronto";
 
   return <main className="bootstrap-screen dark relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background p-5 sm:p-8">
-    <div aria-hidden="true" className="bootstrap-ambient pointer-events-none absolute inset-0" />
-    <Card className="instrument-panel relative z-10 w-full max-w-2xl overflow-hidden border-border/80 bg-card/95 p-0 shadow-2xl shadow-black/35 backdrop-blur-xl">
+    <Card className="instrument-panel w-full max-w-2xl overflow-hidden bg-card p-0">
       <CardContent className="p-0">
-        <div className="relative overflow-hidden border-b border-border bg-sidebar/75 px-6 py-7 sm:px-8">
-          <div aria-hidden="true" className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-onedark-cyan/70 to-transparent" />
+        <div className="overflow-hidden border-b border-border bg-sidebar px-6 py-7 sm:px-8">
           <div className="flex items-center justify-between gap-5">
             <div className="min-w-0 space-y-2">
-              <p className="micro-label text-onedark-cyan">Inicialização do sistema</p>
               <h1 className="text-lg font-medium tracking-tight text-foreground">Preparando seu ambiente</h1>
               <p aria-live="polite" className="truncate text-xs text-muted-foreground">{detail}</p>
             </div>
@@ -40,7 +37,7 @@ export function BootstrapScreen({ steps }: { steps: BootstrapProgressState }) {
         <div className="space-y-6 px-6 py-6 sm:px-8">
           <div className="space-y-2.5" role="status" aria-label="Iniciando o Jarvis">
             <div className="flex items-center justify-between gap-4">
-              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Bootstrap</span>
+              <span className="text-xs text-muted-foreground">Inicialização</span>
               <span className="font-mono text-xs tabular-nums text-onedark-cyan">{percent}%</span>
             </div>
             <Progress value={percent} aria-label="Progresso da inicialização" className="bootstrap-progress [&_[data-slot=progress-track]]:h-1.5 [&_[data-slot=progress-indicator]]:bg-onedark-cyan" />
@@ -79,7 +76,7 @@ export function BootstrapScreen({ steps }: { steps: BootstrapProgressState }) {
             })}
           </div>
 
-          <p className="text-center font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/70">Os dados preparados aqui serão reutilizados durante esta sessão.</p>
+          <p className="text-center text-xs text-muted-foreground">Os dados preparados aqui serão reutilizados durante esta sessão.</p>
         </div>
       </CardContent>
     </Card>

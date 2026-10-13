@@ -7,9 +7,9 @@ export function applicationSurface(label: string): "main" | "companion" | Auxili
 }
 
 /** Browser previews retain dialogs; native entry points use a single dedicated window. */
-export async function openAuxiliaryWindow(kind: AuxiliaryWindowKind): Promise<boolean> {
+export async function openAuxiliaryWindow(kind: AuxiliaryWindowKind, section?: "computer"): Promise<boolean> {
   if (!("__TAURI_INTERNALS__" in window)) return false;
-  await invoke("open_auxiliary_window", { kind });
+  await invoke("open_auxiliary_window", { kind, ...(section ? { section } : {}) });
   return true;
 }
 

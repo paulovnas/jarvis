@@ -161,7 +161,7 @@ export function TerminalSettings() {
   if (!snapshot || !draft) {
     return error
       ? <div className="space-y-3"><p role="alert" className="text-xs text-destructive">{error}</p><Button type="button" size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(value => value + 1); }}>Tentar novamente</Button></div>
-      : <div role="status" aria-label="Carregando preferências do terminal" className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-64" /><Skeleton className="h-64" /></div>;
+      : <div role="status" aria-label="Carregando preferências do terminal" className="space-y-6"><Skeleton className="h-64" /><Skeleton className="h-64" /></div>;
   }
 
   const proposed = draftPreferences(draft);
@@ -178,10 +178,10 @@ export function TerminalSettings() {
     : !changed ? snapshot.terminalFontError : null;
 
   return <TooltipProvider><form className="space-y-5" onSubmit={save}>
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card className="min-w-0 gap-5 p-5">
+    <div className="space-y-6">
+      <Card className="min-w-0 gap-4 p-4">
         <div>
-          <h3 className="flex items-center gap-2 text-sm font-medium"><TerminalIcon className="size-4 text-onedark-green" />Shell interativo</h3>
+          <h3 className="settings-section-title"><TerminalIcon aria-hidden="true" className="size-4" />Shell interativo</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha o ambiente usado nas abas de terminal abertas no Jarvis.</p>
         </div>
         <div className="space-y-2">
@@ -204,9 +204,9 @@ export function TerminalSettings() {
         {snapshot.terminalError && <p role="alert" className="text-xs text-destructive">{snapshot.terminalError}</p>}
       </Card>
 
-      <Card className="min-w-0 gap-5 p-5">
+      <Card className="min-w-0 gap-4 p-4">
         <div>
-          <h3 className="flex items-center gap-2 text-sm font-medium"><Type className="size-4 text-onedark-purple" />Aparência</h3>
+          <h3 className="settings-section-title"><Type aria-hidden="true" className="size-4" />Aparência</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">A fonte é aplicada aos terminais já abertos e aos próximos.</p>
         </div>
         <div className="space-y-2">

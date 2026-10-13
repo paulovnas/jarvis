@@ -1,0 +1,4 @@
+# Large local REA evidence and provider snapshots are retained outside Git.
+rea-evidence.json
+rea-analysis.snapshot.json
+*.hop

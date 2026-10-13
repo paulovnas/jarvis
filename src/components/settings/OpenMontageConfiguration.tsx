@@ -61,7 +61,7 @@ function ConfigurationContent({ onOpenChange, onSaved }: Omit<ConfigurationProps
   }
 
   const busy = operation !== null;
-  return <Dialog open onOpenChange={next => { if (!inFlight.current) onOpenChange(next); }}><DialogContent className="dark instrument-panel flex max-h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl" showCloseButton={!busy}>
+  return <Dialog open onOpenChange={next => { if (!inFlight.current) onOpenChange(next); }}><DialogContent className="dark flex max-h-[85dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl" showCloseButton={!busy}>
     <DialogHeader className="shrink-0 border-b border-border px-6 py-5"><DialogTitle className="flex items-center gap-2"><KeyRound className="size-4 text-primary" />Configurar OpenMontage</DialogTitle><DialogDescription>Prepare as integrações e os recursos opcionais da produção de vídeos.</DialogDescription></DialogHeader>
     <div className="min-h-0 space-y-6 overflow-y-auto p-6">
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

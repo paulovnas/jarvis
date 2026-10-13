@@ -7,6 +7,7 @@ mod command_sessions;
 mod compaction;
 pub(crate) mod companion;
 pub(crate) mod companion_chat;
+pub(crate) mod computer;
 mod context_manager;
 mod core_runtime;
 pub(crate) mod dashboard;
@@ -38,6 +39,7 @@ mod parallel_tools;
 mod patch;
 pub(crate) mod processes;
 mod progress;
+pub(crate) mod prompt_refinement;
 mod protocol;
 mod provider;
 pub(crate) mod provider_links;
@@ -2588,6 +2590,16 @@ fn answer_approval_decision(
         .as_mut()
         .filter(|active| active.id == turn_id)
         .ok_or_else(AgentError::cancelled)?;
+    if decision.grant.is_some()
+        && active
+            .pending_approval_tool()
+            .is_some_and(|tool| tool.id == tool_id && computer::mutating(&tool.name))
+    {
+        return Err(AgentError::new(
+            "execution_grant",
+            "Inputs do computador exigem aprovação por ação e não permitem regras reutilizáveis.",
+        ));
+    }
     let Some(approval) = active.take_approval(tool_id) else {
         return Err(AgentError::new(
             "stale_approval",
@@ -2772,6 +2784,7 @@ struct ApprovalRequest<'a> {
     session: &'a Session,
     tool: &'a ToolCall,
     options: &'a TurnOptions,
+    computer: Option<computer::ComputerState>,
     policy: Option<execution_policy::ToolPolicy>,
     sandbox: Option<&'a execution_sandbox::SandboxPlan>,
     project_id: Option<&'a str>,
@@ -2822,6 +2835,7 @@ async fn authorize_with_policy(
             session,
             tool,
             options,
+            computer: None,
             policy: None,
             sandbox: None,
             project_id: None,
@@ -2842,7 +2856,10 @@ async fn authorize_prepared(
     policy_requires_approval: bool,
     sandbox_requires_approval: bool,
 ) -> Result<bool, AgentError> {
-    let approval = if force_manual || sandbox_requires_approval {
+    let approval = if prepared.capabilities.approval == tool_contract::ApprovalPolicy::UserRequired
+    {
+        tool_contract::ApprovalPolicy::UserRequired
+    } else if force_manual || sandbox_requires_approval {
         tool_contract::ApprovalPolicy::Always
     } else if policy_requires_approval {
         tool_contract::ApprovalPolicy::AccordingToTurn
@@ -2860,6 +2877,14 @@ async fn authorize_declared(
     if *request.signal.borrow() {
         return Err(AgentError::cancelled());
     }
+    let computer_input = computer::mutating(&request.tool.name);
+    let computer_yolo = computer_input && request.computer.as_ref().is_some_and(|state| state.mode() == computer::ComputerMode::Yolo);
+    // Missing OS access is explained by the computer preflight, before asking to review an action.
+    if computer_input && request.computer.as_ref().is_some_and(|state| state.preflight(request.tool).is_err()) { return Ok(true); }
+    let user_required = if computer_input { !computer_yolo } else { approval == tool_contract::ApprovalPolicy::UserRequired };
+    if user_required {
+        request.policy = None;
+    }
     let mutating_mcp = handler == tool_contract::Handler::Mcp
         && approval == tool_contract::ApprovalPolicy::AccordingToTurn;
     // Authoring proposals have their own mandatory native review. They bypass
@@ -2874,14 +2899,13 @@ async fn authorize_declared(
                 | "jarvis_propose_plugin"
                 | "jarvis_propose_project_instructions"
         );
-    // YOLO preauthorizes execution, including native fallback and terminal control.
-    // Tool validation and explicit workflow reviews are enforced separately.
-    let execution_preauthorized = request.options.approval_mode == ApprovalMode::Yolo
-        || (!request.explicit_video_approval
-            && (approval == tool_contract::ApprovalPolicy::Never
-                || (approval != tool_contract::ApprovalPolicy::Always
-                    && request.options.mode == Mode::Plan
-                    && !mutating_mcp)));
+    let execution_preauthorized = computer_yolo || !user_required
+        && (request.options.approval_mode == ApprovalMode::Yolo
+            || (!request.explicit_video_approval
+                && (approval == tool_contract::ApprovalPolicy::Never
+                    || (approval != tool_contract::ApprovalPolicy::Always
+                        && request.options.mode == Mode::Plan
+                        && !mutating_mcp))));
     if let Some(hooks) = request
         .manual_hooks
         .filter(|_| authoring_review || !execution_preauthorized)
@@ -3854,6 +3878,11 @@ fn run_turn_once<'a>(
             }
             context.hooks.before_agent(&mut instructions);
             tools::append_response_language(&mut instructions, response_language);
+            if definitions.iter().any(|definition| definition["name"] == "computer_status") {
+                if let Some(app) = execution.as_ref().and_then(workflow::Execution::native_app) {
+                    instructions.push_str(&computer::context(app)?);
+                }
+            }
             let overhead =
                 compaction::estimate(&json!({"instructions":instructions,"tools":definitions}));
             let credential = provider_session.current_credential(signal.clone()).await?;
@@ -4635,6 +4664,7 @@ fn run_turn_once<'a>(
                                     session,
                                     tool: &tool,
                                     options: &options,
+                                    computer: execution.as_ref().and_then(workflow::Execution::native_app).map(|app| app.state::<computer::ComputerState>().inner().clone()),
                                     policy: tool_policy.clone(),
                                     sandbox: sandbox_plan.as_ref(),
                                     project_id: Some(&project_id),
@@ -5229,6 +5259,7 @@ fn run_turn_once<'a>(
                 // Flush it before another tool or model step can proceed.
                 session.flush_async().await?;
                 if let Some(exec) = &execution {
+                    exec.record_computer_result(&tool, &wire_output)?;
                     if status == "completed" && confirmed_mutation {
                         exec.record_confirmed_progress()?;
                     }

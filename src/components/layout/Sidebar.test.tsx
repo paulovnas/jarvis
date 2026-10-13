@@ -421,7 +421,7 @@ describe("Persistent sidebar", () => {
     expect(within(menu).getByRole("menuitem", { name: "Excluir" })).toBeVisible();
   });
 
-  it("uses the project icon and color for the active project and conversation", async () => {
+  it("keeps project identity in the icons while marking the selected conversation", async () => {
     const stored = populatedLibrary();
     stored.projects[0].icon = "rocket";
     stored.projects[0].color = "purple";
@@ -432,7 +432,9 @@ describe("Persistent sidebar", () => {
     expect(group.closest("[data-project-color]")).toHaveAttribute("data-project-color", "purple");
     const projectButton = within(group).getByRole("button", { name: "Jarvis" });
     expect(projectButton.querySelector('svg[style*="color"]')).toHaveStyle({ color: "var(--color-onedark-purple)" });
-    expect(within(group).getByRole("button", { name: "Primeira conversa" }).getAttribute("style")).toContain("--color-onedark-purple");
+    const conversation = within(group).getByRole("button", { name: "Primeira conversa" });
+    expect(conversation).toHaveAttribute("aria-current", "page");
+    expect(conversation.querySelector("svg")).toHaveStyle({ color: "var(--color-onedark-purple)" });
   });
 
   it(

@@ -177,7 +177,7 @@ function ReasoningGroup({ thoughts, isStreaming, streamId }: { thoughts: { id: s
   return <Collapsible>
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-9 w-full max-w-full cursor-pointer justify-start gap-2 rounded-md px-2.5 text-left text-[11px] hover:bg-card/45">
       <BrainCircuit aria-hidden="true" data-icon="inline-start" className="size-3.5 text-onedark-purple" />
-      <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-onedark-purple">Raciocínio</span>
+      <span className="shrink-0 text-xs font-medium text-muted-foreground">Raciocínio</span>
       <span className="min-w-0 flex-1 truncate italic text-muted-foreground">{reasoningPreview(displayed)}</span>
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{thoughts.length} etapas</span>
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
@@ -208,7 +208,7 @@ function ReasoningItem({ content, isStreaming, streamId }: { content: string; is
   return <Collapsible>
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 w-full max-w-full cursor-pointer justify-start gap-2 rounded-md px-2.5 text-left hover:bg-card/35">
       <BrainCircuit aria-hidden="true" data-icon="inline-start" className="text-onedark-purple" />
-      <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-onedark-purple">Raciocínio</span>
+      <span className="shrink-0 text-xs font-medium text-muted-foreground">Raciocínio</span>
       <span className="min-w-0 truncate text-[11px] italic text-muted-foreground">{reasoningPreview(displayed) || "Em andamento"}</span>
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>

@@ -95,6 +95,25 @@ pub(crate) fn read_maximized_state(
   }
 }
 
+// Borderless AppKit windows cannot use Zoom. Keep their normal frame while
+// filling the current display's visible frame, including on repeated requests.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn borderless_maximize_frame<Frame: Copy + PartialEq>(
+  maximized: bool,
+  current_frame: Frame,
+  visible_frame: Frame,
+  restore_frame: &mut Option<Frame>,
+) -> Frame {
+  if maximized {
+    if current_frame != visible_frame {
+      *restore_frame = Some(current_frame);
+    }
+    visible_frame
+  } else {
+    restore_frame.take().unwrap_or(current_frame)
+  }
+}
+
 #[cfg(any(
   target_os = "linux",
   target_os = "dragonfly",
@@ -493,6 +512,8 @@ pub(crate) struct AppWindow {
   #[cfg(windows)]
   pub(crate) background_surface: Option<SoftbufferSurface>,
   pub(crate) window: Arc<dyn WinitWindow>,
+  #[cfg(target_os = "macos")]
+  pub(crate) borderless_restore_frame: Option<objc2_foundation::NSRect>,
   pub(crate) attrs: AppWindowAttrs,
   pub(crate) children: Vec<AppWebview>,
   pub(crate) listeners: WindowEventListeners,
@@ -692,6 +713,8 @@ impl<T: UserEvent> WinitCefApp<T> {
       #[cfg(windows)]
       background_surface: None,
       window: window.into(),
+      #[cfg(target_os = "macos")]
+      borderless_restore_frame: None,
       attrs,
       children: Vec::new(),
       listeners: Default::default(),
@@ -1017,8 +1040,13 @@ impl<T: UserEvent> WinitCefApp<T> {
       WindowMessage::SetEnabled(value) => appwindow.set_enabled(value),
       WindowMessage::SetResizable(value) => window.set_resizable(value),
       WindowMessage::SetTitle(title) => window.set_title(&title),
-      WindowMessage::Maximize => window.set_maximized(true),
-      WindowMessage::Unmaximize => window.set_maximized(false),
+      WindowMessage::Maximize | WindowMessage::Unmaximize => {
+        let maximized = matches!(message, WindowMessage::Maximize);
+        #[cfg(target_os = "macos")]
+        appwindow.set_maximized(maximized);
+        #[cfg(not(target_os = "macos"))]
+        window.set_maximized(maximized);
+      }
       WindowMessage::Minimize => window.set_minimized(true),
       WindowMessage::Unminimize => window.set_minimized(false),
       WindowMessage::Show => window.set_visible(true),
@@ -1221,8 +1249,57 @@ macro_rules! native_window_getter {
 
 #[cfg(test)]
 mod maximized_state_tests {
-  use super::read_maximized_state;
+  use super::{borderless_maximize_frame, read_maximized_state};
   use std::cell::Cell;
+
+  #[test]
+  fn borderless_maximize_fills_the_work_area_and_restores_the_original_frame() {
+    let normal = (0.0, 65.0, 1_512.0, 917.0);
+    let visible = (0.0, 33.0, 1_512.0, 949.0);
+    let mut restore = None;
+    let maximized = borderless_maximize_frame(true, normal, visible, &mut restore);
+    assert_eq!(maximized, visible);
+    assert!(read_maximized_state(
+      false,
+      || panic!("borderless maximization must not query native zoom"),
+      || Some(((maximized.2, maximized.3), (visible.2, visible.3))),
+    ));
+
+    // Repeated maximize requests must not replace the user's normal bounds.
+    let repeated = borderless_maximize_frame(true, maximized, visible, &mut restore);
+    assert_eq!(repeated, visible);
+    let restored = borderless_maximize_frame(false, repeated, visible, &mut restore);
+    assert_eq!(restored, normal);
+    assert!(!read_maximized_state(
+      false,
+      || panic!("borderless restoration must not query native zoom"),
+      || Some(((restored.2, restored.3), (visible.2, visible.3))),
+    ));
+    assert_eq!(
+      borderless_maximize_frame(false, restored, visible, &mut restore),
+      normal,
+    );
+  }
+
+  #[test]
+  fn borderless_maximize_keeps_the_selected_display_and_new_normal_bounds() {
+    let normal = (-1_800.0, 60.0, 1_280.0, 720.0);
+    let visible = (-1_920.0, 30.0, 1_920.0, 1_050.0);
+    let mut restore = None;
+    let maximized = borderless_maximize_frame(true, normal, visible, &mut restore);
+    assert_eq!(maximized, visible);
+    assert_eq!(
+      borderless_maximize_frame(false, maximized, visible, &mut restore),
+      normal,
+    );
+
+    let resized = (-1_700.0, 100.0, 1_100.0, 800.0);
+    let maximized = borderless_maximize_frame(true, resized, visible, &mut restore);
+    assert_eq!(
+      borderless_maximize_frame(false, maximized, visible, &mut restore),
+      resized,
+    );
+  }
 
   #[test]
   fn maximized_decorated_windows_use_native_zoom_without_reading_screen_geometry() {

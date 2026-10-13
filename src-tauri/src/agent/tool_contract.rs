@@ -18,6 +18,8 @@ pub(super) enum ApprovalPolicy {
     AccordingToTurn,
     /// Also prompts in Plan mode; YOLO still preauthorizes execution.
     Always,
+    /// A human approves each input even in YOLO; reusable grants never apply.
+    UserRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +67,7 @@ impl Handler {
             || name.starts_with("process_")
             || name.starts_with("terminal_")
             || name.starts_with("browser_")
+            || name.starts_with("computer_")
             || name.starts_with("http_")
             || matches!(
                 name,
@@ -129,6 +132,21 @@ pub(super) struct Capabilities {
 
 impl Capabilities {
     fn native(name: &str) -> Self {
+        if name.starts_with("computer_") {
+            return Self {
+                effect: if super::computer::mutating(name) {
+                    Effect::Mutating
+                } else {
+                    Effect::Stateful
+                },
+                approval: if super::computer::mutating(name) {
+                    ApprovalPolicy::UserRequired
+                } else {
+                    ApprovalPolicy::Never
+                },
+                parallel_safe: false,
+            };
+        }
         let read_only = matches!(
             name,
             "read"
@@ -411,6 +429,50 @@ mod tests {
             status: "pending".into(),
             output: String::new(),
             duration_ms: 0,
+        }
+    }
+
+    #[test]
+    fn computer_input_requires_user_review_and_all_native_tools_are_serial() {
+        let definitions = super::super::computer::definitions(super::super::Mode::Build);
+        let contract = Orchestrator::new(&definitions);
+        for (name, args) in [
+            (
+                "computer_click",
+                json!({"targetId":"window","observationId":"seen","element":"button"}),
+            ),
+            (
+                "computer_type",
+                json!({"targetId":"window","observationId":"seen","text":"hello"}),
+            ),
+            (
+                "computer_press",
+                json!({"targetId":"window","observationId":"seen","key":"Enter"}),
+            ),
+            (
+                "computer_scroll",
+                json!({"targetId":"window","observationId":"seen","x":10,"y":20,"deltaX":0,"deltaY":100}),
+            ),
+            (
+                "computer_drag",
+                json!({"targetId":"window","observationId":"seen","from":{"x":10,"y":20},"to":{"x":30,"y":40}}),
+            ),
+        ] {
+            let prepared = contract.preflight(&call(name, args)).unwrap();
+            assert_eq!(prepared.handler, Handler::Workflow);
+            assert_eq!(prepared.capabilities.approval, ApprovalPolicy::UserRequired);
+            assert!(!prepared.capabilities.parallel_safe);
+        }
+        let reads = [
+            call("computer_status", json!({})),
+            call("computer_list_apps", json!({})),
+        ];
+        assert!(!contract.parallel_safe(&reads));
+        for read in reads {
+            assert_eq!(
+                contract.preflight(&read).unwrap().capabilities.approval,
+                ApprovalPolicy::Never
+            );
         }
     }
 

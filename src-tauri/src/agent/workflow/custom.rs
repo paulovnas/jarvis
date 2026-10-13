@@ -114,6 +114,12 @@ pub(super) fn allowed(agent: &catalog::AgentDefinition, name: &str) -> bool {
     if catalog::permissions::required(name) {
         return true;
     }
+    if crate::agent::computer::mutating(name)
+        && (!capability_allows(agent.capability, name)
+            || agent.denied_tools.iter().any(|denied| denied == name))
+    {
+        return false;
+    }
     if name == "jarvis_propose_project_instructions"
         && (!capability_allows(agent.capability, name)
             || agent.denied_tools.iter().any(|denied| denied == name))
@@ -161,6 +167,9 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
         return capability == Capability::Commands;
     }
     if crate::agent::browser::mutating(name) {
+        return capability == Capability::Commands;
+    }
+    if crate::agent::computer::mutating(name) {
         return capability == Capability::Commands;
     }
     if name.starts_with("hub_") {

@@ -259,6 +259,63 @@ fn global_jarvito_history_does_not_surface_as_an_invisible_project_model_warning
 }
 
 #[test]
+fn refinement_model_joins_provider_removal_review_and_respects_later_user_changes() {
+    let (mut db, home) = fixture();
+    let preferences = crate::system::Preferences {
+        prompt_refinement_model: Some(choice("openai-codex-old", "old-model")),
+        ..crate::system::Preferences::default()
+    };
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    std::fs::write(&path, serde_json::to_vec(&preferences).unwrap()).unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let refinement = preview
+        .items
+        .iter()
+        .find(|item| item.kind == Kind::PromptRefinement)
+        .unwrap();
+    assert_eq!(
+        refinement.item_key,
+        crate::system::PROMPT_REFINEMENT_MODEL_KEY
+    );
+    let replacement = choice("openai-codex-new", "new-model");
+    let transaction = db.transaction().unwrap();
+    apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: refinement.id.clone(),
+            choice: replacement.clone(),
+        }],
+    )
+    .unwrap();
+    transaction.commit().unwrap();
+    assert_eq!(
+        crate::system::resolved_prompt_refinement_model(&db, &preferences).unwrap(),
+        Some(replacement)
+    );
+    assert_eq!(
+        inventory(&db, home.path())
+            .unwrap()
+            .iter()
+            .find(|item| item.kind == Kind::PromptRefinement)
+            .unwrap()
+            .choice
+            .account,
+        "openai-codex-new"
+    );
+    let edited = crate::system::Preferences {
+        prompt_refinement_model: Some(choice("openai-codex-third", "third-model")),
+        ..preferences
+    };
+    assert_eq!(
+        crate::system::resolved_prompt_refinement_model(&db, &edited).unwrap(),
+        edited.prompt_refinement_model
+    );
+}
+
+#[test]
 fn chat_title_model_is_visible_remapped_and_guarded_against_later_user_edits() {
     let (mut db, home) = fixture();
     let original = choice("openai-codex-old", "old-model");

@@ -9,6 +9,12 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 describe("ToolCallCard Web Search", () => {
+  it("names native observation and distinguishes native input from read-only activity", () => {
+    const { rerender } = render(<ToolCallCard tool={{ id: "observe", name: "computer_observe", status: "completed", args: { targetId: "safari-window" }, output: "observação" }} />);
+    expect(screen.getByRole("button", { name: /Computador · Observar janela.*safari-window/ })).toBeVisible();
+    rerender(<ToolCallCard tool={{ id: "click", name: "computer_click", status: "pending", args: { targetId: "safari-window", observationId: "observation-1" }, output: "" }} />);
+    expect(screen.getByRole("button", { name: /Computador · Clique.*Aguardando autorização/ }).querySelector(".text-onedark-yellow")).toBeInTheDocument();
+  });
   it("identifies the OpenMontage tool used in a production step without expanding arguments", () => {
     render(<ToolCallCard tool={{ id: "production", name: "video_run", status: "running", args: { tool: "video_compose", arguments: { output: "renders/demo.mp4" } }, output: "" }} />);
     expect(screen.getByRole("button", { name: /Vídeo · Executar etapa.*video_compose.*Executando/ })).toBeVisible();

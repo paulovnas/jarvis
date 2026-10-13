@@ -54,7 +54,7 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
     finally { lock.current = false; if (mounted.current) setSaving(false); }
   }
   return <Card className="min-w-0 gap-3 py-4">
-    <CardHeader className="px-4"><CardTitle className="flex items-center gap-2 text-sm">{imageGeneration ? <ImagePlus className="size-4 text-onedark-green" /> : kind === "vision" ? <Eye className="size-4 text-[#c678dd]" /> : <Globe className="size-4 text-primary" />}{title}</CardTitle></CardHeader>
+    <CardHeader className="px-4"><CardTitle className="flex items-center gap-2 text-sm">{imageGeneration ? <ImagePlus className="size-4 text-onedark-green" /> : kind === "vision" ? <Eye className="size-4 text-onedark-purple" /> : <Globe className="size-4 text-primary" />}{title}</CardTitle></CardHeader>
     <CardContent className="px-4">
       {loading ? <Skeleton className="h-8 w-full" role="status" aria-label={`Carregando ${title}`} /> : error ? <div className="flex gap-2"><p role="alert" className="text-xs text-destructive">Não foi possível carregar {title}.</p><Button variant="outline" size="sm" onClick={() => { setLoading(true); setRetry(value => value + 1); }}>Recarregar {title}</Button></div> : <div className="grid min-w-0 gap-3" aria-busy={saving}>
         <Select items={accountItems} value={config.inheritChat ? INHERIT : config.accountAlias ?? OFF} disabled={saving} onValueChange={value => {

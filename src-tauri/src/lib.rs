@@ -224,6 +224,7 @@ pub fn run() {
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
         .manage(agent::learning::capture::LearningJobs::default())
         .manage(agent::browser::BrowserState::default())
+        .manage(agent::computer::ComputerState::default())
         .manage(agent::browser::extension::ExtensionState::default())
         .manage(http_client::HttpState::default())
         .manage(agent::dashboard::DashboardState::default())
@@ -391,6 +392,7 @@ pub fn run() {
                 system::save_claude_provider_preferences,
                 system::get_system_preferences,
                 system::save_system_preferences,
+                agent::prompt_refinement::refine_chat_prompt,
                 system::test_system_notification,
                 optional_tools::get_optional_tools_status,
                 optional_tools::install_optional_tool,
@@ -482,6 +484,13 @@ pub fn run() {
                 agent::attachments::import_chat_attachments,
                 agent::attachments::get_chat_attachment_image,
                 agent::attachments::save_chat_image,
+                agent::computer::commands::get_computer_use_status,
+                agent::computer::commands::list_computer_apps,
+                agent::computer::commands::request_computer_permission,
+                agent::computer::commands::set_computer_use_mode,
+                agent::computer::commands::authorize_computer_app,
+                agent::computer::commands::revoke_computer_app,
+                agent::computer::commands::stop_computer_use,
                 agent::response_export::save_markdown_document,
                 agent::web_search::set_web_search_config,
                 library::get_library_snapshot,

@@ -60,3 +60,16 @@ it("reports a hidden compact shell without modifying its document", async () => 
   expect(await pending).toMatchObject({ hidden: true, expanded: false });
   expect(document.documentElement.outerHTML).toBe(before);
 });
+
+it("distinguishes a fixed canvas from its animated mask and pinned content", async () => {
+  const shell = document.querySelector<HTMLDivElement>(".companion-island")!;
+  Object.assign(shell.style, { width: "640px", height: "600px", clipPath: "inset(0px 176px 568px 176px round 18px)" });
+  shell.innerHTML = '<section class="companion-panel" style="width:640px;height:400px"></section>';
+  document.querySelector(".companion")?.setAttribute("data-closing", "true");
+  const before = document.documentElement.outerHTML;
+  const pending = observe();
+  await vi.advanceTimersByTimeAsync(260);
+  const result = await pending;
+  expect(result).toMatchObject({ closing: true, island: { layoutWidth: "640px", layoutHeight: "600px", clipPath: "inset(0px 176px 568px 176px round 18px)" }, panel: { layoutWidth: "640px", layoutHeight: "400px" } });
+  expect(document.documentElement.outerHTML).toBe(before);
+});

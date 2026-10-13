@@ -30,11 +30,11 @@ function backupError(cause: unknown, fallback: string): string {
   return fallback;
 }
 
-function SummaryCard({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: number }) {
-  return <Card className="min-w-0 gap-2 rounded-lg p-3">
-    <span className="flex items-center gap-2 text-[11px] text-muted-foreground"><Icon aria-hidden="true" className="size-3.5 text-onedark-cyan" />{label}</span>
-    <strong className="font-mono text-lg font-medium tabular-nums">{value}</strong>
-  </Card>;
+function SummaryRow({ icon: Icon, label, value }: { icon: typeof Bot; label: string; value: number }) {
+  return <div className="settings-row">
+    <span className="settings-row-copy flex items-center gap-2 text-sm text-muted-foreground"><Icon aria-hidden="true" className="size-4" />{label}</span>
+    <strong className="font-mono text-sm font-medium tabular-nums">{value}</strong>
+  </div>;
 }
 
 function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target: BackupModelTarget; accounts: ProviderAccount[]; choice?: ModelChoice; busy: boolean; onChange: (choice?: ModelChoice) => void }) {
@@ -51,14 +51,14 @@ function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target:
     </div>
     <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1.45fr)] sm:items-center">
       <div className="min-w-0 rounded-md border border-border bg-sidebar p-3">
-        <p className="micro-label mb-2 text-muted-foreground">De · Backup</p>
+        <p className="text-xs font-medium mb-2 text-muted-foreground">De · Backup</p>
         <p className="truncate text-xs font-medium">{target.label}</p>
         <p className="mt-1 text-[11px] text-muted-foreground">{target.details.join(" · ")}</p>
         <p className="mt-2 font-mono text-[10px] text-muted-foreground">Modelo removido do arquivo</p>
       </div>
       <ArrowRight aria-hidden="true" className="hidden size-4 text-muted-foreground sm:block" />
       <div className="min-w-0 space-y-3">
-        <p className="micro-label text-muted-foreground">Para · Neste Jarvis</p>
+        <p className="text-xs font-medium text-muted-foreground">Para · Neste Jarvis</p>
         <ChoiceField
           label={`Provedor para ${target.label}`}
           value={choice?.account ?? UNASSIGNED}
@@ -195,28 +195,26 @@ export function BackupSettings({ accounts, onRestored, restoreOnly = false }: { 
     }
   }
 
-  return <section aria-labelledby={restoreOnly ? undefined : "backup-settings-title"} className={restoreOnly ? "space-y-3" : "mt-7 space-y-3 border-t border-border pt-6"}>
+  return <section aria-labelledby={restoreOnly ? undefined : "backup-settings-title"} className={restoreOnly ? "space-y-3" : "mt-8 space-y-3"}>
     {!restoreOnly && <div className="space-y-1">
-      <h2 id="backup-settings-title" className="micro-label flex items-center gap-2 text-muted-foreground"><Archive aria-hidden="true" className="size-3.5" />Backup e restauração</h2>
+      <h2 id="backup-settings-title" className="settings-section-title"><Archive aria-hidden="true" className="size-4" />Backup e restauração</h2>
       <p className="text-xs leading-relaxed text-muted-foreground">Proteja suas preferências, agentes, fluxos, skills e MCPs em um único arquivo portátil.</p>
     </div>}
-    {restoreOnly ? <div className="flex flex-wrap items-center gap-3 rounded-lg border border-onedark-cyan/25 bg-onedark-cyan/5 p-4"><span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-medium">Já tem um backup?</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Restaure agentes, fluxos, skills, MCPs e preferências antes de configurar esta instalação.</p></div><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Restaurar backup</>}</Button></div> : <Card size="sm" className="grid gap-0 rounded-lg py-0 lg:grid-cols-2">
-      <div className="flex min-w-0 flex-col gap-3 p-4">
-        <div className="flex items-start gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-green/10 text-onedark-green"><Download aria-hidden="true" className="size-3.5" /></span>
-          <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Criar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Escolha onde salvar um ZIP com as configurações atuais do Jarvis.</p></div>
+    {restoreOnly ? <div className="settings-group"><div className="settings-row"><div className="settings-row-copy"><p className="text-sm font-medium">Já tem um backup?</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Restaure agentes, fluxos, skills, MCPs e preferências antes de configurar esta instalação.</p></div><div className="settings-row-control"><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Restaurar backup</>}</Button></div></div></div> : <Card size="sm" className="settings-group">
+      <div className="settings-row">
+        <div className="settings-row-copy space-y-2">
+          <div><h3 className="flex items-center gap-2 text-sm font-medium"><Download aria-hidden="true" className="size-4 text-muted-foreground" />Criar backup</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Escolha onde salvar um ZIP com as configurações atuais do Jarvis.</p></div>
+          <p className="text-xs leading-5 text-muted-foreground">Inclui Sistema, Agentes e fluxos, Skills e MCPs.</p>
+          <p className="flex items-start gap-2 text-xs leading-5 text-onedark-yellow"><CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />MCPs podem incluir chaves de acesso. Guarde o ZIP em um local seguro.</p>
         </div>
-        <p className="text-[10px] leading-4 text-muted-foreground">Inclui Sistema, Agentes e fluxos, Skills e MCPs.</p>
-        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><CircleAlert aria-hidden="true" className="mt-0.5 size-3 shrink-0" />MCPs podem incluir chaves de acesso. Guarde o ZIP em um local seguro.</p>
-        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void createBackup()} className="mt-auto w-fit cursor-pointer gap-2">{exporting ? <><Spinner aria-hidden="true" />Criando backup…</> : <><Download aria-hidden="true" />Escolher destino</>}</Button>
+        <div className="settings-row-control"><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void createBackup()} className="cursor-pointer gap-2">{exporting ? <><Spinner aria-hidden="true" />Criando backup…</> : <><Download aria-hidden="true" />Escolher destino</>}</Button></div>
       </div>
-      <div className="flex min-w-0 flex-col gap-3 border-t border-border p-4 lg:border-t-0 lg:border-l">
-        <div className="flex items-start gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-onedark-cyan/10 text-onedark-cyan"><Upload aria-hidden="true" className="size-3.5" /></span>
-          <div className="min-w-0 space-y-1"><h3 className="text-sm font-medium">Restaurar backup</h3><p className="text-[11px] leading-relaxed text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>
+      <div className="settings-row">
+        <div className="settings-row-copy space-y-2">
+          <div><h3 className="flex items-center gap-2 text-sm font-medium"><Upload aria-hidden="true" className="size-4 text-muted-foreground" />Restaurar backup</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Inspecione o conteúdo e associe os agentes aos modelos disponíveis antes de aplicar.</p></div>
+          <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />Contas de IA, projetos, conversas e layout da janela permanecem nesta instalação. Documentos de conhecimento ficam nas pastas dos projetos e devem ser copiados com elas. Aprendizados são locais e têm exportação própria nas opções de cada projeto.</p>
         </div>
-        <p className="flex items-start gap-2 text-[10px] leading-relaxed text-onedark-yellow"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Contas de IA, projetos, conversas e layout da janela permanecem nesta instalação. Documentos de conhecimento ficam nas pastas dos projetos e devem ser copiados com elas. Aprendizados são locais e têm exportação própria nas opções de cada projeto.</p>
-        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="mt-auto w-fit cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button>
+        <div className="settings-row-control"><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void chooseBackup()} className="cursor-pointer gap-2">{inspecting ? <><Spinner aria-hidden="true" />Inspecionando…</> : <><Upload aria-hidden="true" />Escolher arquivo</>}</Button></div>
       </div>
     </Card>}
     {error && !preview && <p role="alert" className="text-xs text-destructive">{error}</p>}
@@ -229,17 +227,17 @@ export function BackupSettings({ accounts, onRestored, restoreOnly = false }: { 
         </DialogHeader>
         {preview && <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
           {step === "review" ? <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <SummaryCard icon={Bot} label="Agentes" value={preview.summary.customAgents} />
-              <SummaryCard icon={Workflow} label="Fluxos" value={preview.summary.customFlows} />
-              <SummaryCard icon={BookOpen} label="Skills" value={preview.summary.skills} />
-              <SummaryCard icon={Plug} label="MCPs" value={preview.summary.mcps} />
+            <div className="settings-group">
+              <SummaryRow icon={Bot} label="Agentes" value={preview.summary.customAgents} />
+              <SummaryRow icon={Workflow} label="Fluxos" value={preview.summary.customFlows} />
+              <SummaryRow icon={BookOpen} label="Skills" value={preview.summary.skills} />
+              <SummaryRow icon={Plug} label="MCPs" value={preview.summary.mcps} />
             </div>
-            <Card className="grid gap-3 rounded-lg p-4 sm:grid-cols-4">
-              <div><p className="micro-label text-muted-foreground">Criado em</p><p className="mt-1 font-mono text-xs tabular-nums">{new Date(preview.createdAt * 1000).toLocaleString("pt-BR")}</p></div>
-              <div><p className="micro-label text-muted-foreground">Versão de origem</p><p className="mt-1 font-mono text-xs">Jarvis {preview.appVersion}</p></div>
-              <div><p className="micro-label text-muted-foreground">Sistema de origem</p><p className="mt-1 font-mono text-xs">{preview.sourcePlatform?.label ?? "Não informado"}</p></div>
-              <div><p className="micro-label text-muted-foreground">Tamanho</p><p className="mt-1 font-mono text-xs tabular-nums">{formatBackupSize(preview.archiveBytes)}</p></div>
+            <Card className="settings-group">
+              <div className="settings-row"><p className="settings-row-copy text-sm text-muted-foreground">Criado em</p><p className="font-mono text-xs tabular-nums">{new Date(preview.createdAt * 1000).toLocaleString("pt-BR")}</p></div>
+              <div className="settings-row"><p className="settings-row-copy text-sm text-muted-foreground">Versão de origem</p><p className="font-mono text-xs">Jarvis {preview.appVersion}</p></div>
+              <div className="settings-row"><p className="settings-row-copy text-sm text-muted-foreground">Sistema de origem</p><p className="font-mono text-xs">{preview.sourcePlatform?.label ?? "Não informado"}</p></div>
+              <div className="settings-row"><p className="settings-row-copy text-sm text-muted-foreground">Tamanho</p><p className="font-mono text-xs tabular-nums">{formatBackupSize(preview.archiveBytes)}</p></div>
             </Card>
             <Alert className="border-onedark-yellow/30 bg-onedark-yellow/5"><CircleAlert className="text-onedark-yellow" /><AlertTitle className="text-onedark-yellow">A restauração substitui estas categorias</AlertTitle><AlertDescription className="space-y-1 text-xs leading-relaxed">{preview.warnings.map(warning => <p key={warning}>{warning}</p>)}</AlertDescription></Alert>
           </> : <div className="space-y-3">

@@ -103,6 +103,56 @@ describe("Desktop companion", () => {
     expect(screen.getByRole("tab", { name: "Chat" })).toBeVisible();
   });
 
+  it("keeps the activity content at its target size throughout the shell reveal", async () => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    let time = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => time);
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { callbacks.set(++id, callback); return id; });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(frame => { callbacks.delete(frame); });
+    render(<Companion />);
+    fireEvent.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    const panel = await screen.findByRole("region", { name: "Assistente Jarvis" });
+    const heading = screen.getByRole("heading", { name: base.title });
+    const pet = screen.getByRole("button", { name: "Interagir com Jarvito" });
+    expect(panel.style.width).toBe("640px");
+    expect(panel.style.height).toBe("160px");
+    for (let index = 0; index < 60; index++) {
+      act(() => {
+        time += 1000 / 60;
+        const pending = [...callbacks.values()]; callbacks.clear();
+        for (const callback of pending) callback(time);
+      });
+      expect(panel.style.width).toBe("640px");
+      expect(panel.style.height).toBe("160px");
+      expect(screen.getByRole("heading", { name: base.title })).toBe(heading);
+      expect(screen.getByRole("button", { name: "Interagir com Jarvito" })).toBe(pet);
+    }
+  });
+
+  it("lays out a detailed view before the native response when the viewport already has room", async () => {
+    let finishResize: ((value: unknown) => void) | undefined;
+    const original = call.getMockImplementation();
+    call.mockImplementation(async (command, args) => {
+      if (command === "set_companion_expanded" && (args as { height?: number }).height === 400) return new Promise(resolve => { finishResize = resolve; });
+      const result = await original?.(command, args);
+      if (command !== "set_companion_expanded" && command !== "set_companion_bubble") return result;
+      if (!result || typeof result !== "object") throw new Error("Missing geometry");
+      return { ...result, width: 640, height: 600, compactX: 176, dragAxis: "none" };
+    });
+    const user = await expanded();
+    const panel = screen.getByRole("region", { name: "Assistente Jarvis" });
+    await user.click(screen.getByRole("tab", { name: "Ajustes" }));
+    await waitFor(() => expect(finishResize).toBeDefined());
+    expect(screen.getByRole("heading", { name: "Ajustes do Jarvito" })).toBeVisible();
+    expect(panel.style.height).toBe("400px");
+    await user.click(screen.getByRole("tab", { name: "Atividade" }));
+    expect(panel.style.height).toBe("160px");
+    await act(async () => finishResize?.({ ...geometryFor(true, 400), width: 640, height: 600, compactX: 176, dragAxis: "none" }));
+    expect(panel.style.height).toBe("160px");
+    expect(screen.getByRole("heading", { name: base.title })).toBeVisible();
+  });
+
   it("opens an announcement only after audio is ready and keeps it visible throughout speech", async () => {
     const original = call.getMockImplementation();
     const preparing = voiceSession({ id: "notice-audio", target: "companion-notice", owner: "companion", mode: "announcement", phase: "preparing", revision: 100 });
@@ -933,6 +983,44 @@ describe("Desktop companion", () => {
     expect(call).toHaveBeenCalledWith("set_companion_expanded", { expanded: false });
     expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument();
     expect(main).toHaveAttribute("data-closing", "false");
+  });
+
+  it("reopens when the pet is clicked during collapse and cancels the delayed close", async () => {
+    await expanded();
+    snapshot.items = [{ ...base, status: "waiting", activeSince: null, pendingQuestion: { turnId: "turn-1", toolId: "question-1", questions: [{ id: "name", question: "Qual o nome?", options: [] }] } }];
+    act(() => events.get("companion:changed")?.({}));
+    const answer = await screen.findByRole("textbox", { name: "Sua resposta" });
+    fireEvent.change(answer, { target: { value: "Portal" } });
+    const panel = screen.getByRole("region", { name: "Assistente Jarvis" });
+    const pet = screen.getByRole("button", { name: "Interagir com Jarvito" });
+    vi.useFakeTimers(); call.mockClear();
+    act(() => events.get("companion:collapse-request")?.(null));
+    expect(pet.closest("main")).toHaveAttribute("data-closing", "true");
+    await act(async () => { fireEvent.click(pet); });
+    expect(pet.closest("main")).toHaveAttribute("data-closing", "false");
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByRole("region", { name: "Assistente Jarvis" })).toBe(panel);
+    expect(screen.getByRole("textbox", { name: "Sua resposta" })).toBe(answer);
+    expect(answer).toHaveValue("Portal");
+    expect(call).not.toHaveBeenCalledWith("set_companion_expanded", { expanded: false });
+  });
+
+  it("restores a new notice arriving while the previous bubble is closing", async () => {
+    snapshot.items = [{ ...base, status: "completed", activeSince: null, attentionId: "first/completed" }];
+    render(<Companion />);
+    const notice = await screen.findByRole("status", { name: "Aviso do Jarvito" });
+    const main = notice.closest("main");
+    vi.useFakeTimers(); call.mockClear();
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Dispensar aviso" })); });
+    expect(main).toHaveAttribute("data-closing", "true");
+    snapshot.items = [{ ...base, status: "failed", activeSince: null, attentionId: "next/failed", updatedAt: 1_000_100 }];
+    act(() => events.get("companion:changed")?.({}));
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toHaveTextContent("Não consegui concluir esta solicitação.");
+    expect(main).toHaveAttribute("data-closing", "false");
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeInTheDocument();
+    expect(call).not.toHaveBeenCalledWith("set_companion_bubble", { visible: false });
   });
 
   it.each(["sound", "activities"] as const)("closes the %s menu when the island collapses and keeps it closed when reopened", async menu => {

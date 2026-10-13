@@ -79,11 +79,11 @@ export function TitleBar() {
 
   if (isMac && isFullscreen) return null;
 
-  // macOS keeps the traffic-light cluster on the left and the wordmark on the
-  // right. Windows (and Linux) follow the native convention: branding on the
+  // macOS keeps the traffic-light cluster on the left and centers the wordmark.
+  // Windows (and Linux) follow the native convention: branding on the
   // left, square caption controls on the right with a destructive close hover.
   const controls = (
-    <div aria-label="Controles da janela" className={isMac ? "group flex items-center gap-0.5" : "flex self-stretch"} onDoubleClick={event => event.stopPropagation()}>
+    <div aria-label="Controles da janela" className={isMac ? "group flex items-center" : "flex self-stretch"} onDoubleClick={event => event.stopPropagation()}>
       {isMac ? (
         <>
           <Hint content="Fechar"><Button variant="ghost" type="button" aria-label="Fechar janela" onClick={handleClose} className="traffic-light size-6 cursor-pointer rounded-full p-1.5 hover:bg-transparent">
@@ -116,20 +116,20 @@ export function TitleBar() {
     <header
       data-tauri-drag-region
       onDoubleClick={event => { if (!(event.target instanceof Element) || !event.target.closest("button")) void handleToggleMaximize(); }}
-      className="flex h-9 w-full shrink-0 select-none items-center border-b border-border bg-sidebar px-3 text-xs font-medium text-muted-foreground shadow-[inset_0_1px_0_#ffffff08]"
+      className="native-titlebar relative flex h-10 w-full shrink-0 select-none items-center border-b border-border bg-sidebar px-3 text-[13px] font-medium text-muted-foreground"
     >
       {isMac ? (
         <>
           {controls}
           <div data-tauri-drag-region className="h-full flex-1" />
-          <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
-            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-7 w-auto shrink-0" />
+          <div data-tauri-drag-region className="absolute left-1/2 flex h-full min-w-0 -translate-x-1/2 items-center">
+            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-6 w-auto shrink-0" />
           </div>
         </>
       ) : (
         <>
           <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
-            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-7 w-auto shrink-0" />
+            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-6 w-auto shrink-0" />
           </div>
           <div data-tauri-drag-region className="h-full flex-1" />
           {controls}

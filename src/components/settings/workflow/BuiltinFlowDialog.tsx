@@ -29,17 +29,17 @@ export function BuiltinFlowDialog({ flow, agents, accounts, onClose }: { flow: B
           <Canvas flow={flow} agents={agents} selected={selected} onSelect={setSelected} onChange={() => undefined} disabled />
         </Suspense>
         <aside className="space-y-3">
-          <Card className="instrument-panel gap-0 py-0">
-            <CardHeader className="border-b border-border p-4"><CardTitle className="micro-label flex items-center gap-2 text-muted-foreground"><Network className="size-3.5 text-onedark-cyan" />Topologia nativa</CardTitle></CardHeader>
+          <Card className="gap-0 py-0">
+            <CardHeader className="border-b border-border p-4"><CardTitle className="text-xs font-medium flex items-center gap-2 text-muted-foreground"><Network className="size-3.5 text-onedark-cyan" />Topologia nativa</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 text-xs leading-5 text-muted-foreground"><p>As linhas em ciano mostram as delegações que cada coordenador pode fazer. O agente escolhe apenas as rotas necessárias para o pedido atual.</p><p>Os mesmos agentes Jarvis podem ser usados como blocos imutáveis em fluxos personalizados.</p></CardContent>
           </Card>
-          {selectedAgent && <Card className="instrument-panel gap-0 py-0">
+          {selectedAgent && <Card className="gap-0 py-0">
             <CardHeader className="p-4 pb-2"><CardTitle className="flex items-center gap-2 text-sm"><WorkflowIdentityIcon appearance={selectedAgent.appearance} className="size-4" />{selectedAgent.name}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 pt-1"><p className="text-xs leading-5 text-muted-foreground">{selectedAgent.description}</p><AgentInstructionsDialog flow={flow.id} role={selectedAgent.role}><DialogTrigger render={<Button variant="outline" size="sm" />} className="w-full cursor-pointer text-xs"><LockKeyhole />Ver instruções</DialogTrigger></AgentInstructionsDialog></CardContent>
           </Card>}
         </aside>
       </div>
-      <section aria-label={`Modelos do fluxo ${flow.name}`} className="border-t border-border bg-sidebar/40 p-5"><h3 className="micro-label mb-3 text-muted-foreground">Modelos deste fluxo</h3><AgentSettings accounts={accounts} flowFilter={flow.id} /></section>
+      <section aria-label={`Modelos do fluxo ${flow.name}`} className="border-t border-border bg-sidebar/40 p-5"><h3 className="settings-section-title mb-3 text-muted-foreground">Modelos deste fluxo</h3><AgentSettings accounts={accounts} flowFilter={flow.id} /></section>
       </div>
       <DialogFooter role="group" aria-label="Ações do fluxo" className="m-0 shrink-0 border-t border-border bg-card px-5 py-3">
         <Button variant="outline" className="cursor-pointer" onClick={onClose}>Fechar</Button>

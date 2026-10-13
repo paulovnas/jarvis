@@ -7,6 +7,10 @@ function tool(name: string, index: number, status: ToolCallItem["status"] = "com
 }
 
 describe("grouped tool activity", () => {
+  it("keeps native computer actions identifiable in collapsed activity", () => {
+    expect(summarizeToolActivity([tool("computer_observe", 1), tool("computer_click", 2)]))
+      .toBe("Usou recursos do computador");
+  });
   it("describes mixed batches in natural pt-BR", () => {
     expect(summarizeToolActivity([tool("ctx_search", 1), tool("read", 2), tool("bash", 3)]))
       .toBe("Usou Context Mode, leu e pesquisou arquivos e executou comandos");

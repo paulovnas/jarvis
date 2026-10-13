@@ -162,10 +162,15 @@ export function Companion() {
   const detail = Boolean(question) || tab !== "activity" || activityPicker || tasksOpen;
   const notchInset = geometry.notchWidth > 0 ? geometry.headerHeight : 0;
   const requestedHeight = Math.max(detail ? 400 : notifications.length ? 180 : 160, soundSettingsOpen ? 256 : 0) + notchInset;
-  const visualGeometry = useMemo(() => geometry.expanded && !closing && requestedHeight < geometry.surfaceHeight ? {
-    ...geometry, surfaceHeight: requestedHeight,
-    surfaceY: geometry.surfaceY + (geometry.robotVertical === "bottom" ? geometry.surfaceHeight - requestedHeight : 0),
-  } : geometry, [geometry, closing, requestedHeight]);
+  const visualGeometry = useMemo(() => {
+    const availableHeight = geometry.robotVertical === "bottom" ? geometry.surfaceY + geometry.surfaceHeight : geometry.height - geometry.surfaceY;
+    const height = Math.min(requestedHeight, Math.max(1, availableHeight));
+    return geometry.expanded && !closing && height !== geometry.surfaceHeight ? {
+      ...geometry, surfaceHeight: height,
+      surfaceY: geometry.surfaceY + (geometry.robotVertical === "bottom" ? geometry.surfaceHeight - height : 0),
+    } : geometry;
+  }, [geometry, closing, requestedHeight]);
+  const contentStyle: CSSProperties = { left: visualGeometry.surfaceX, top: visualGeometry.surfaceY, width: visualGeometry.surfaceWidth, height: visualGeometry.surfaceHeight };
   useIslandMotion(islandElement, robotPlacement, visualGeometry, geometry.expanded && !closing || geometry.bubble && !peekingClosing, geometry.expanded && detail, visible);
   useEffect(() => () => { window.clearTimeout(gestureTimer.current); if (gestureFrame.current !== undefined) window.cancelAnimationFrame(gestureFrame.current); }, []);
 
@@ -221,10 +226,11 @@ export function Companion() {
   }, []);
 
   useEffect(() => {
-    if (dragging || resizing || bubbleWanted === geometry.bubble) return;
+    if (dragging || resizing) return;
     let alive = true;
-    const revision = ++geometryRevision.current;
     const update = async () => {
+      if (bubbleWanted === geometry.bubble) { setPeekingClosing(false); return; }
+      const revision = ++geometryRevision.current;
       setPeekingClosing(!bubbleWanted && geometry.bubble);
       if (!bubbleWanted && geometry.bubble && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) await new Promise(resolve => window.setTimeout(resolve, 360));
       if (!alive) return;
@@ -379,14 +385,14 @@ export function Companion() {
   const pet = <div ref={robotPlacement} className="companion-robot-placement">
     <Button ref={robotElement} variant="ghost" className="companion-pet relative size-full cursor-pointer p-0 focus-visible:ring-2 focus-visible:ring-onedark-cyan/60" aria-label={geometry.expanded ? "Interagir com Jarvito" : `Abrir assistente Jarvis${waiting ? `, ${waiting} interações pendentes` : working ? `, ${working} atividades em andamento` : ""}`} aria-expanded={geometry.expanded && !closing} aria-controls="companion-panel"
       onPointerEnter={() => { rest.wake(); setHovered(true); sounds.play("hover"); }} onPointerLeave={() => setHovered(false)}
-      onClick={() => { if (geometry.expanded) poke(); else { clearNotices(); void expand(true); } }}>
+      onClick={() => { if (geometry.expanded && !closing) poke(); else { clearNotices(); void expand(true); } }}>
       <span className="companion-robot-facing">
         <Robot status={status} gesture={gesture !== "none" ? gesture : speakingNotice && voice.session?.phase === "speaking" ? "speak" : rest.gesture} voiceLevel={speakingNotice ? voice.session?.level ?? 0 : 0} visible={visible} hovered={hovered} dragging={dragging} expanded={geometry.expanded} lookX={gaze.x} lookY={gaze.y} />
       </span>
     </Button>
   </div>;
 
-  const panel = <Card id="companion-panel" role="region" aria-label="Assistente Jarvis" hidden={!geometry.expanded} className={`companion-panel min-h-0 gap-0 border-0 bg-transparent p-0 shadow-none ring-0 ${geometry.expanded ? "" : "hidden"}`} onPointerDownCapture={event => { if (question && event.target instanceof Element && event.target.closest("input, textarea, button, [contenteditable=true]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof HTMLElement && event.currentTarget.contains(event.relatedTarget))) void invoke("companion_set_interacting", { active: false }).catch(() => {}); }}>
+  const panel = <Card id="companion-panel" role="region" aria-label="Assistente Jarvis" hidden={!geometry.expanded} style={contentStyle} className={`companion-panel min-h-0 gap-0 border-0 bg-transparent p-0 shadow-none ring-0 ${geometry.expanded ? "" : "hidden"}`} onPointerDownCapture={event => { if (question && event.target instanceof Element && event.target.closest("input, textarea, button, [contenteditable=true]")) void invoke("companion_set_interacting", { active: true }).catch(() => {}); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof HTMLElement && event.currentTarget.contains(event.relatedTarget))) void invoke("companion_set_interacting", { active: false }).catch(() => {}); }}>
     <h1 className="sr-only">Jarvito</h1>
     <Tabs value={tab} onValueChange={value => { if (typeof value === "string") setTab(value); }} className="min-h-0 flex-1 gap-0">
       <header className="companion-header">
@@ -453,7 +459,7 @@ export function Companion() {
     </Tabs>
   </Card>;
 
-  const speech = bubbleVisible && notice && <div className="companion-peek">
+  const speech = bubbleVisible && notice && <div className="companion-peek" style={contentStyle}>
     <header className="companion-header"><span className="ml-2 flex-1 text-[10px] text-muted-foreground">Jarvito · {companionStatusLabels[notice.item.status]}</span><Hint content="Dispensar aviso"><Button variant="ghost" size="icon-xs" aria-label="Dispensar aviso" className="companion-nav-button cursor-pointer" onClick={clearNotices}><ChevronDown className="size-3.5" /></Button></Hint></header>
     <Card role="status" aria-label="Aviso do Jarvito" data-state={notice.item.status} className="companion-activity-card companion-speech gap-1">
       <p className="truncate text-[10px] text-muted-foreground">{notice.item.projectName} · {roleLabel(notice.item.role)}</p>

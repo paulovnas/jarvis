@@ -65,7 +65,11 @@ const K_TIMER_DELAY_PLACEHOLDER: i64 = i32::MAX as i64;
 
 // The maximum number of milliseconds we're willing to wait between calls to
 // DoWork().
-const K_MAX_TIMER_DELAY: i64 = 1000 / 30; // 30fps
+// macOS software painting requests 60 Hz; its fallback must fit one frame.
+#[cfg(target_os = "macos")]
+const K_MAX_TIMER_DELAY: i64 = 1000 / 60;
+#[cfg(not(target_os = "macos"))]
+const K_MAX_TIMER_DELAY: i64 = 1000 / 30;
 
 /// Handle to the external message pump. Cloning shares the same underlying
 /// state; the backing platform resources are released when the last clone drops.
@@ -195,5 +199,16 @@ impl PumpState {
     // |reentrancy_detected_| may have changed due to re-entrant calls to this
     // method.
     self.reentrancy_detected.load(Ordering::SeqCst)
+  }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+  use super::K_MAX_TIMER_DELAY;
+
+  #[test]
+  fn compositor_work_is_not_deferred_past_a_60_hz_frame() {
+    let longest_wait = std::time::Duration::from_millis(K_MAX_TIMER_DELAY as u64);
+    assert!(longest_wait <= std::time::Duration::from_secs_f64(1.0 / 60.0));
   }
 }

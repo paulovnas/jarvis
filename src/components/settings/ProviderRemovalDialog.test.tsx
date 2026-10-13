@@ -87,7 +87,7 @@ it("replaces agent references with Claude without fabricating a provider account
   expect(call).toHaveBeenCalledWith("disconnect_provider_account", { alias: "antigo", revision: "review-1", replacements: [{ id: item.id, choice: { executor: "claude", account: "", model: "sonnet", reasoning: null } }] });
 });
 
-it.each(["web_search", "vision", "image_generation", "chat_title"] as const)("keeps CLI executors out of %s replacements", async kind => {
+it.each(["web_search", "vision", "image_generation", "chat_title", "prompt_refinement"] as const)("keeps CLI executors out of %s replacements", async kind => {
   call.mockResolvedValue({ ...plan, items: [{ ...item, kind }] });
   setup();
   await screen.findByLabelText("Vínculo: Analista");

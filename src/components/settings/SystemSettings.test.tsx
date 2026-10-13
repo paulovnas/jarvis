@@ -140,6 +140,38 @@ describe("system preferences", () => {
     }));
     expect(picker).toHaveTextContent("Automático");
   });
+  it("saves a separate refinement model with reasoning and restores or clears it without changing chat titles", async () => {
+    const user = userEvent.setup();
+    const account: ProviderAccount = {
+      alias: "openai-codex-refiner", providerKind: "openai-codex", enabled: true,
+      createdAt: 1, email: null, accountType: "unknown", modelsAvailable: true,
+      models: [{ id: "refiner", name: "Refiner", reasoningLevels: ["low", "high"], defaultReasoningLevel: "low" }],
+    };
+    const choice = { executor: "jarvis", account: account.alias, model: "refiner", reasoning: "high" };
+    const saved = { ...initial, preferences: { ...initial.preferences, promptRefinementModel: choice } };
+    const view = render(<SystemSettings accounts={[account]} />);
+    const picker = await screen.findByRole("button", { name: "Modelo para refinar prompts" });
+    expect(picker).toHaveTextContent("Não configurado");
+    call.mockResolvedValue(saved);
+    await user.click(picker);
+    await user.hover(await screen.findByRole("menuitem", { name: account.alias }));
+    const model = await screen.findByRole("menuitem", { name: "Refiner" });
+    act(() => model.focus());
+    await user.keyboard("{ArrowRight}");
+    await user.click(await screen.findByRole("menuitem", { name: "Alto" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: saved.preferences }));
+    expect(picker).toHaveTextContent("Refiner · Alto");
+    expect(screen.getByRole("button", { name: "Modelo para títulos das conversas" })).toHaveTextContent("Automático");
+    view.unmount();
+    render(<SystemSettings accounts={[account]} />);
+    const restored = await screen.findByRole("button", { name: "Modelo para refinar prompts" });
+    expect(restored).toHaveTextContent("Refiner · Alto");
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, promptRefinementModel: null } });
+    await user.click(restored);
+    await user.click(await screen.findByRole("menuitem", { name: "Não configurado" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, promptRefinementModel: null } }));
+    expect(restored).toHaveTextContent("Não configurado");
+  });
   it("saves the ask_user countdown in seconds and rejects out-of-range values", async () => {
     const user = userEvent.setup(); render(<SystemSettings />);
     const input = await screen.findByRole("spinbutton", { name: "Tempo para resposta recomendada" });

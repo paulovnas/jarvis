@@ -426,7 +426,7 @@ export function SkillsMarketplace({
               <div
                 role="status"
                 aria-label="Carregando Marketplace"
-                className="grid grid-cols-1 gap-3.5 p-2 pb-6 sm:grid-cols-2 lg:grid-cols-3"
+                className="flex flex-col gap-3 p-2 pb-6"
               >
                 {Array.from({ length: 9 }, (_, i) => (
                   <Card
@@ -488,7 +488,7 @@ export function SkillsMarketplace({
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3.5 p-2 pb-6 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="settings-card-grid p-2 pb-6">
                 {visible.map((skill) => {
                   const isInstalled = installedIds.has(skill.id);
                   const owner = skill.source.split("/")[0] || "";
@@ -498,7 +498,7 @@ export function SkillsMarketplace({
                   return (
                     <Card
                       key={skill.id}
-                      className="group relative flex min-w-0 flex-col justify-between gap-3.5 rounded-lg border border-border bg-background p-3.5 shadow-sm transition-all duration-150 hover:bg-secondary hover:border-[#61afef]/60 hover:shadow-md"
+                      className="group relative flex min-w-0 flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4 transition-colors duration-150 hover:bg-secondary"
                     >
                       <div className="flex items-start justify-between gap-2.5">
                         <Button
@@ -522,7 +522,7 @@ export function SkillsMarketplace({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <Hint content={skill.name} whenTruncated><span
-                                className="truncate text-sm font-semibold text-[#e5e5e6] group-hover:text-[#61afef] transition-colors"
+                                className="truncate text-sm font-semibold text-foreground"
                               >
                                 {skill.name}
                               </span></Hint>
@@ -547,7 +547,7 @@ export function SkillsMarketplace({
                           <Hint content="Ver no skills.sh"><Button
                             variant="ghost"
                             size="icon-sm"
-                            className="size-7 cursor-pointer text-muted-foreground hover:text-[#e5e5e6] hover:bg-card"
+                            className="size-7 cursor-pointer text-muted-foreground hover:text-foreground hover:bg-card"
                             aria-label={`Ver ${skill.name} no skills.sh`}
                             onClick={() => {
                               void openUrl(
@@ -564,17 +564,19 @@ export function SkillsMarketplace({
 
                       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5">
                         <div className="flex min-w-0 items-center gap-2">
-                          <Hint content={`Filtrar por @${skill.source}`}><button
+                          <Hint content={`Filtrar por @${skill.source}`}><Button
+                            variant="ghost"
+                            size="sm"
                             type="button"
                             onClick={() => {
                               setSource(skill.source);
                               setPage(1);
                             }}
                             aria-label={`Filtrar por @${skill.source}`}
-                            className="cursor-pointer max-w-[140px] truncate rounded-md bg-card border border-border/60 hover:border-[#61afef]/40 px-2 py-0.5 text-[11px] font-medium text-foreground hover:text-white transition-colors"
+                            className="h-auto max-w-[240px] cursor-pointer truncate rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                           >
                             @{skill.source}
-                          </button></Hint>
+                          </Button></Hint>
                           <Hint content={`${skill.installs.toLocaleString("pt-BR")} instalações`}><span
                             className="flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground shrink-0"
                           >
@@ -587,7 +589,7 @@ export function SkillsMarketplace({
                           {isInstalled ? (
                             <Badge
                               variant="outline"
-                              className="h-7 border-emerald-500/30 bg-emerald-500/10 px-2.5 text-xs font-medium text-[#98c379] gap-1 rounded-lg"
+                              className="h-7 border-emerald-500/30 bg-emerald-500/10 px-2.5 text-xs font-medium text-onedark-green gap-1 rounded-lg"
                             >
                               <Check className="size-3" aria-hidden="true" />
                               Instalada
@@ -596,7 +598,7 @@ export function SkillsMarketplace({
                             <Button
                               variant="secondary"
                               size="sm"
-                              className="h-7 cursor-pointer text-xs gap-1.5 font-medium bg-card border border-border text-foreground hover:bg-[#61afef] hover:text-primary-foreground hover:border-transparent rounded-lg transition-colors"
+                              className="h-7 cursor-pointer text-xs gap-1.5 font-medium bg-card border border-border text-foreground hover:bg-primary hover:text-primary-foreground hover:border-transparent rounded-lg transition-colors"
                               disabled={installing !== null}
                               aria-label={`Instalar ${skill.name}`}
                               onClick={() => {

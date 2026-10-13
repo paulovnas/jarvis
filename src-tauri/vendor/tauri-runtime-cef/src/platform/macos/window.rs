@@ -11,11 +11,11 @@ use objc2::{
   sel,
 };
 use objc2_app_kit::{
-  NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-  NSWindowDidBecomeKeyNotification, NSWindowDidChangeBackingPropertiesNotification,
-  NSWindowDidChangeScreenNotification, NSWindowDidDeminiaturizeNotification,
-  NSWindowDidEndLiveResizeNotification, NSWindowDidExitFullScreenNotification,
-  NSWindowDidResizeNotification, NSWindowStyleMask,
+  NSBackingStoreType, NSColor, NSScreen, NSView, NSWindow, NSWindowButton,
+  NSWindowCollectionBehavior, NSWindowDidBecomeKeyNotification,
+  NSWindowDidChangeBackingPropertiesNotification, NSWindowDidChangeScreenNotification,
+  NSWindowDidDeminiaturizeNotification, NSWindowDidEndLiveResizeNotification,
+  NSWindowDidExitFullScreenNotification, NSWindowDidResizeNotification, NSWindowStyleMask,
 };
 use objc2_foundation::{
   MainThreadMarker, NSNotification, NSNotificationCenter, NSObjectNSDelayedPerforming, NSPoint,
@@ -23,9 +23,9 @@ use objc2_foundation::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tauri_runtime::{Error, Result, dpi::Position};
 use tauri_utils::{TitleBarStyle, config::Color};
-use winit::window::Window as WinitWindow;
+use winit::{platform::macos::WindowExtMacOS, window::Window as WinitWindow};
 
-use crate::window::{AppWindow, read_maximized_state};
+use crate::window::{AppWindow, borderless_maximize_frame, read_maximized_state};
 
 use super::utils;
 
@@ -58,6 +58,36 @@ pub(crate) fn window_is_maximized(window: &dyn WinitWindow) -> Result<bool> {
 }
 
 impl AppWindow {
+  pub(crate) fn set_maximized(&mut self, maximized: bool) {
+    let Some(nswindow) = self.nsview().window() else {
+      return;
+    };
+    // Keep the native behavior for titled windows and fullscreen transitions.
+    if nswindow.styleMask().contains(NSWindowStyleMask::Titled)
+      || self.window.fullscreen().is_some()
+      || self.window.simple_fullscreen()
+    {
+      self.window.set_maximized(maximized);
+      return;
+    }
+    let Some(screen) = nswindow
+      .screen()
+      .or_else(|| NSScreen::mainScreen(MainThreadMarker::from(&*nswindow)))
+    else {
+      return;
+    };
+    let current_frame = nswindow.frame();
+    let target_frame = borderless_maximize_frame(
+      maximized,
+      current_frame,
+      screen.visibleFrame(),
+      &mut self.borderless_restore_frame,
+    );
+    if target_frame != current_frame {
+      nswindow.setFrame_display(target_frame, true);
+    }
+  }
+
   pub(crate) fn cef_host_handle(&self) -> cef::sys::cef_window_handle_t {
     let nsview = self.nsview();
     Retained::as_ptr(&nsview).cast_mut().cast()

@@ -785,9 +785,9 @@ impl Execution {
         };
         if let Some(recovery) = recovery {
             text.push_str(&format!(
-                "\nRestart recovery checkpoint: {}. Inspect the exact affected resource for each unresolved call, then use recovery_resolve with its callId and the successful inspection evidenceCallId. Match the same file, repository, process or MCP server/resource. Unknown outcomes remain unresolved; do not repeat them blindly. Calls: {}. Legacy tool names: {}.\n",
+                "\nExecution recovery checkpoint: {}. Inspect the exact affected resource for each unresolved call, then use recovery_resolve with its callId and the successful inspection evidenceCallId. Match the same file, repository, process, browser tab ID, native targetId or MCP server/resource. For a confirmed unavailable native target, use unavailable; this does not confirm whether its input took effect. Unknown outcomes remain unresolved; never replay them on the old or a replacement target. Calls: {}. Legacy tool names: {}.\n",
                 if recovery.inspected {
-                    "the required post-restart inspection was recorded"
+                    "the required operation evidence was recorded"
                 } else {
                     "specific operation evidence is still required"
                 },
@@ -870,6 +870,13 @@ impl Execution {
         definitions.extend(processes::definitions(self.role_mode()));
         definitions.extend(terminals::definitions(self.role_mode()));
         definitions.extend(super::browser::definitions(self.role_mode()));
+        definitions.extend(super::computer::definitions(
+            if self.role_mode() == Mode::Build && self.allowed("computer_click") {
+                Mode::Build
+            } else {
+                Mode::Plan
+            },
+        ));
         definitions.extend(super::http::definitions(self.role_mode()));
         if self.flow == Flow::Custom && !direct {
             let role = if self.designer() {
@@ -892,7 +899,13 @@ impl Execution {
             definitions.push(super::authoring::project_instructions_definition());
         }
         definitions.retain(|d| d["name"].as_str().is_some_and(|name| self.allowed(name)));
-        if self.recovery_inspection_pending().unwrap_or(false) {
+        if self.recovery_inspection_pending().unwrap_or(false)
+            || definitions.iter().any(|definition| {
+                definition["name"]
+                    .as_str()
+                    .is_some_and(super::computer::mutating)
+            })
+        {
             definitions.push(recovery::definition());
         }
     }
@@ -934,6 +947,20 @@ impl Execution {
         if name == recovery::TOOL {
             return true;
         }
+        if catalog::permissions::required(name)
+            && (name.starts_with("computer_") || name.starts_with("browser_"))
+        {
+            return true;
+        }
+        if super::computer::mutating(name)
+            && !self
+                .hub
+                .manifest
+                .lock()
+                .is_ok_and(|state| state.options.mode == Mode::Build)
+        {
+            return false;
+        }
         if self.direct() && name.starts_with("hub_") {
             return false;
         }
@@ -964,6 +991,7 @@ impl Execution {
                     | "workflow_check"
             ) || crate::core::beads::needs_approval(name)
                 || super::browser::mutating(name)
+                || super::computer::mutating(name)
                 || super::http::mutating(name)
                 || crate::core::context::needs_approval(name))
         {
@@ -989,6 +1017,12 @@ impl Execution {
     pub(super) fn preflight(&self, tool: &ToolCall) -> Option<String> {
         if !self.allowed(&tool.name) {
             return Some("Ferramenta indisponível para o papel deste agente.".into());
+        }
+        if tool.name == "computer_select"
+            && tool.args["access"] == "control"
+            && (self.role_mode() != Mode::Build || !self.allowed("computer_click"))
+        {
+            return Some("Este agente pode selecionar aplicativos somente para observação.".into());
         }
         if self.role == Role::Github
             && matches!(
@@ -1263,6 +1297,11 @@ impl Execution {
         Ok(format!("{run_id}:{}", self.id))
     }
 
+    fn computer_call_id(&self, provider_call_id: &str) -> String {
+        // Provider IDs can collide across workers; executor IDs remain stable after resume.
+        format!("{}:{provider_call_id}", self.id)
+    }
+
     pub(super) fn terminal_close_requires_approval(
         &self,
         tool: &ToolCall,
@@ -1347,6 +1386,32 @@ impl Execution {
                 .ok_or_else(|| invalid("Navegador nativo indisponível."))?;
             return super::browser::execute(app, &self.hub.root.id, tool, signal).await;
         }
+        if tool.name.starts_with("computer_") {
+            if !self.allowed(&tool.name)
+                || (super::computer::mutating(&tool.name) && self.role_mode() != Mode::Build)
+                || (tool.name == "computer_select"
+                    && tool.args["access"] == "control"
+                    && (self.role_mode() != Mode::Build || !self.allowed("computer_click")))
+            {
+                return Err(invalid("Computador indisponível para este agente."));
+            }
+            let app = self
+                .hub
+                .env
+                .browser_app
+                .as_ref()
+                .ok_or_else(|| invalid("Computador nativo indisponível."))?;
+            let mut call = tool.clone();
+            call.id = self.computer_call_id(&tool.id);
+            return super::computer::execute(
+                app,
+                &self.hub.root.id,
+                &self.terminal_owner_id()?,
+                &call,
+                signal,
+            )
+            .await;
+        }
         if tool.name == "validation_publish" {
             return validation::publish(self, &tool.args, signal).await;
         }
@@ -1427,6 +1492,19 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "beads_show"
             | "beads_list"
             | "beads_ready"
+            | "browser_list"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_console"
+            | "browser_screenshot"
+            | "browser_discover"
+            | "browser_network"
+            | "browser_response_body"
+            | "computer_status"
+            | "computer_list_apps"
+            | "computer_select"
+            | "computer_observe"
+            | "computer_stop"
     ) || name.starts_with("lsp_")
         || name.starts_with("graft_")
         || name.starts_with("context7_")

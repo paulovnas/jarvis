@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { voiceSettings } from "@/test/voice-fixtures";
-import { VoiceSettings } from "./VoiceSettings";
+import { VoiceSettings, VoiceSettingsDialog } from "./VoiceSettings";
 const mock = vi.hoisted(() => ({ settings: null as ReturnType<typeof voiceSettings> | null, error: null as string | null, save: vi.fn(), refresh: vi.fn(), start: vi.fn(), control: vi.fn() }));
 vi.mock("@/hooks/use-voice", () => ({ useVoice: () => ({ ...mock, active: false, session: null }) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -42,5 +42,14 @@ describe("local voice setup", () => {
     expect(screen.getByText(/o ditado funciona/)).toHaveTextContent("Os áudios de notificação e o ditado continuam disponíveis");
     expect(screen.getByText(/O microfone só abre ao iniciar um ditado\./)).toBeVisible();
     expect(screen.queryByText(/ligaç/)).not.toBeInTheDocument();
+  });
+  it("keeps device and speed controls in the compact voice dialog without opening the microphone", () => {
+    render(<VoiceSettingsDialog open onOpenChange={vi.fn()} />);
+    expect(screen.getByRole("dialog", { name: "Jarvis Voice" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Microfone" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Saída de áudio" })).toBeVisible();
+    expect(screen.getByRole("group", { name: /Velocidade/ })).toBeVisible();
+    expect(screen.queryByRole("group", { name: /Pausa para enviar/ })).not.toBeInTheDocument();
+    expect(mock.start).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@ function Lines({ count = 3 }: { count?: number }) {
 }
 
 export function CardsSkeleton({ label, columns = false }: { label: string; columns?: boolean }) {
-  return <div role="status" aria-label={label} className={`grid gap-3 ${columns ? "sm:grid-cols-2" : "grid-cols-1"}`}>
+  return <div role="status" aria-label={label} className={columns ? "settings-card-grid" : "grid grid-cols-1 gap-3"}>
     {[0, 1, 2, 3].slice(0, columns ? 4 : 2).map(i => <Card key={i} aria-hidden="true" className="gap-3 p-4"><div className="flex items-center gap-3"><Skeleton className="size-5 shrink-0" /><Skeleton className="h-4 w-1/2" /><Skeleton className="ml-auto h-4 w-7 rounded-full" /></div><Lines count={2} /><div className="flex gap-2"><Skeleton className="h-4 w-14 rounded-full" /><Skeleton className="h-4 w-16 rounded-full" /></div></Card>)}
   </div>;
 }
@@ -39,7 +39,11 @@ export function ConversationSkeleton() {
 }
 
 export function ComposerSkeleton() {
-  return <Card role="status" aria-label="Carregando campo de mensagem" className="h-[130px] justify-between rounded-[22px] p-4"><Skeleton className="h-3 w-1/2" /><div aria-hidden="true" className="flex items-center gap-3"><Skeleton className="size-7 rounded-full" /><Skeleton className="ml-auto h-5 w-20" /><Skeleton className="h-5 w-28" /><Skeleton className="size-7 rounded-full" /></div></Card>;
+  return <Card role="status" aria-label="Carregando campo de mensagem" className="h-[130px] justify-between rounded-2xl p-4"><Skeleton className="h-3 w-1/2" /><div aria-hidden="true" className="flex items-center gap-3"><Skeleton className="size-7 rounded-full" /><Skeleton className="ml-auto h-5 w-20" /><Skeleton className="h-5 w-28" /><Skeleton className="size-7 rounded-full" /></div></Card>;
+}
+
+export function PromptRefinementSkeleton() {
+  return <div role="status" aria-label="Refinando prompt" aria-live="polite" className="min-h-[84px] px-5 pt-4 pb-2 [&_[data-slot=skeleton]]:bg-muted-foreground/25 motion-reduce:**:animate-none"><span className="sr-only">Refinando prompt…</span><Lines count={3} /></div>;
 }
 
 export function HomeSkeleton() {
@@ -65,5 +69,5 @@ export function BootSkeleton() {
 }
 
 export function SettingsSkeleton({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[860px] flex-col gap-0 p-0 motion-reduce:transition-none"><DialogHeader className="border-b bg-card px-6 py-5"><DialogTitle className="text-base">Configurações</DialogTitle><DialogDescription className="sr-only">Carregando configurações</DialogDescription></DialogHeader><div role="status" aria-label="Carregando configurações" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto"><div aria-hidden="true" className="flex h-12 shrink-0 items-center gap-5 border-b px-6">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-5 w-20" />)}</div><div aria-hidden="true" className="px-6 pb-5"><CardsSkeleton label="Carregando opções" /></div></div></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex h-[min(740px,85dvh)] w-[calc(100vw-3rem)] sm:max-w-[960px] flex-col gap-0 p-0 motion-reduce:transition-none"><DialogHeader className="border-b bg-sidebar px-6 py-3"><DialogTitle className="text-sm">Configurações</DialogTitle><DialogDescription className="sr-only">Carregando configurações</DialogDescription></DialogHeader><div role="status" aria-label="Carregando configurações" className="flex min-h-0 flex-1"><aside aria-hidden="true" className="flex w-14 shrink-0 flex-col gap-3 border-r bg-sidebar p-3 sm:w-60 sm:p-4">{Array.from({ length: 12 }, (_, i) => <Skeleton key={i} className="h-6 w-full rounded-md" />)}</aside><div aria-hidden="true" className="min-w-0 flex-1 space-y-6 overflow-y-auto p-6"><Skeleton className="h-5 w-24" /><RowsSkeleton label="Carregando opções" count={6} /><RowsSkeleton label="Carregando limpeza" count={3} /></div></div></DialogContent></Dialog>;
 }

@@ -19,6 +19,7 @@ export function useIslandMotion(island: RefObject<HTMLDivElement | null>, pet: R
     if (!island.current || !pet.current) return;
     const shell = island.current;
     const character = pet.current;
+    Object.assign(shell.style, { left: "0px", top: "0px", width: `${geometry.width}px`, height: `${geometry.height}px`, borderRadius: "0px" });
     // Keep Rive's drawing surface stable while the visual size changes.
     Object.assign(character.style, { left: "0px", top: "0px", width: "80px", height: "80px", transformOrigin: "top left" });
     const spring = state.current;
@@ -35,8 +36,14 @@ export function useIslandMotion(island: RefObject<HTMLDivElement | null>, pet: R
     let lastReported = -Infinity;
     const paint = () => {
       const current = spring.frame;
-      Object.assign(shell.style, { left: `${current.x}px`, top: `${current.y}px`, width: `${current.width}px`, height: `${current.height}px`, borderRadius: notchInset > 0 ? `0 0 ${current.radius}px ${current.radius}px` : `${current.radius}px` });
-      Object.assign(character.style, { transform: `translate3d(${current.petX}px, ${current.petY}px, 0) scale(${current.petSize / 80})` });
+      const radius = notchInset > 0 ? `0 0 ${current.radius}px ${current.radius}px` : `${current.radius}px`;
+      // Reveal a shape without forcing text, controls, or Rive to relayout every frame.
+      Object.assign(shell.style, { clipPath: `inset(${current.y}px ${geometry.width - current.x - current.width}px ${geometry.height - current.y - current.height}px ${current.x}px round ${radius})` });
+      shell.style.setProperty("--companion-frame-x", `${current.x}px`);
+      shell.style.setProperty("--companion-frame-y", `${current.y}px`);
+      shell.style.setProperty("--companion-frame-width", `${current.width}px`);
+      shell.style.setProperty("--companion-frame-height", `${current.height}px`);
+      Object.assign(character.style, { transform: `translate3d(${current.x + current.petX}px, ${current.y + current.petY}px, 0) scale(${current.petSize / 80})` });
     };
     const report = () => {
       const x = Math.max(0, Math.min(spring.frame.x, geometry.width - 1));

@@ -112,8 +112,7 @@ export function AppSidebar({
               ref={sort.setActivatorNodeRef}
               {...sort.listeners}
               aria-describedby={sort.attributes["aria-describedby"]}
-              className="h-7 cursor-pointer pr-8 text-muted-foreground/80 data-active:text-foreground!"
-              style={item.id === selected?.conversationId ? { backgroundColor: `color-mix(in srgb, ${accent} 11%, transparent)` } : undefined}
+              className="native-navigation-row h-[34px] cursor-pointer pr-8 text-[13px] text-muted-foreground data-active:text-foreground!"
               isActive={item.id === selected?.conversationId}
               aria-current={
                 item.id === selected?.conversationId ? "page" : undefined
@@ -123,9 +122,9 @@ export function AppSidebar({
                 void library.select({ kind: "conversation", id: item.id });
               }}
             >
-              {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <MessageSquare className={item.id === selected?.conversationId ? "" : "text-muted-foreground/55"} style={item.id === selected?.conversationId ? { color: accent } : undefined} />}
+              {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <MessageSquare className="text-muted-foreground" style={item.id === selected?.conversationId ? { color: accent } : undefined} />}
               <Hint content={item.title} whenTruncated><span className="min-w-0 flex-1 truncate">{item.title}</span></Hint>
-              {unreadConversationIds?.has(item.id) && <Hint content="Mensagem não lida"><Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent, boxShadow: `0 0 6px ${accent}` }} /></Hint>}
+              {unreadConversationIds?.has(item.id) && <Hint content="Mensagem não lida"><Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent }} /></Hint>}
             </SidebarMenuButton>
           </LibraryItemMenu>
           <Hint content="Excluir conversa"><SidebarMenuAction showOnHover aria-label={`Excluir conversa ${item.title}`} disabled={busy} className="cursor-pointer text-muted-foreground hover:text-destructive focus-visible:opacity-100" onClick={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}><Trash2 aria-hidden="true" /></SidebarMenuAction></Hint>
@@ -138,7 +137,7 @@ export function AppSidebar({
   return (
     <aside
       aria-label="Espaço"
-      className="h-full min-h-0 w-full overflow-hidden border-r border-border/70"
+      className="native-sidebar h-full min-h-0 w-full overflow-hidden border-r border-border"
     >
       <SidebarProvider
         defaultOpen
@@ -146,8 +145,8 @@ export function AppSidebar({
         className="h-full min-h-0 w-full"
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
-          <SidebarHeader className="gap-2 border-b border-border/70 px-3 pt-3 pb-3.5">
-            <span className="micro-label flex items-center gap-2 px-1 text-muted-foreground"><Layers aria-hidden="true" className="size-3 text-onedark-cyan" />Espaço</span>
+          <SidebarHeader className="gap-2 border-b border-border px-3 py-3">
+            <span className="flex items-center gap-2 px-1 text-xs font-medium text-muted-foreground"><Layers aria-hidden="true" className="size-3.5" />Espaço</span>
             <div className="flex items-center gap-2">
               <Select
                 items={(snapshot?.workspaces ?? []).map((item) => ({
@@ -162,7 +161,7 @@ export function AppSidebar({
               >
                 <SelectTrigger
                   aria-label="Selecionar espaço"
-                  className="h-8 w-full min-w-0 cursor-pointer border-transparent bg-card/30 text-xs shadow-none hover:border-border hover:bg-card/50"
+                  className="h-8 w-full min-w-0 cursor-pointer border-border bg-secondary/50 text-[13px] shadow-none hover:bg-secondary"
                 >
                   <SelectValue placeholder="Selecione um espaço" />
                 </SelectTrigger>
@@ -181,7 +180,7 @@ export function AppSidebar({
                 </SelectContent>
             </Select>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Adicionar projeto ou espaço" className="shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Adicionar projeto ou espaço" className="size-8 shrink-0 cursor-pointer" disabled={busy || !snapshot} />}>
                 <Hint content="Adicionar projeto ou espaço"><span className="flex items-center"><Plus /></span></Hint>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
@@ -213,8 +212,8 @@ export function AppSidebar({
               </div>
             )}
             {!loading && snapshot && (
-              <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
-                <div className="micro-label mb-2.5 flex items-center justify-between px-1.5 text-muted-foreground/80"><span>Projetos</span><span className="font-mono tabular-nums">{projects.length}</span></div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-4">
+                <div className="mb-2 flex items-center justify-between px-1.5 text-xs font-medium text-muted-foreground"><span>Projetos</span><span className="font-mono text-[11px] tabular-nums">{projects.length}</span></div>
                   {!workspace ? (
                     <Empty>
                       <EmptyHeader>
@@ -246,7 +245,7 @@ export function AppSidebar({
                           const appearance = appearanceOfProject(item);
                           const accent = WORKFLOW_COLORS[appearance.color].value;
                           return (
-                          <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={{ ...sort.style, borderLeftColor: isCurrentProject ? accent : "transparent", background: isCurrentProject ? `linear-gradient(90deg, color-mix(in srgb, ${accent} 10%, transparent), transparent 88%)` : undefined }} data-active-project={isCurrentProject ? "true" : undefined} data-project-color={appearance.color} className="rounded-r-md border-l-2 py-0.5 transition-colors duration-150 motion-reduce:transition-none">
+                          <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style} data-active-project={isCurrentProject ? "true" : undefined} data-project-color={appearance.color} className="rounded-md py-0.5">
                             <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
@@ -258,7 +257,7 @@ export function AppSidebar({
                                 {...sort.listeners}
                                 aria-describedby={sort.attributes["aria-describedby"]}
                                 size="lg"
-                                className={`h-8 cursor-pointer text-muted-foreground data-active:bg-transparent! data-active:shadow-none! ${isCurrentProject ? "font-semibold text-foreground!" : ""}`}
+                                className={`native-navigation-row h-[34px] cursor-pointer text-[13px] text-muted-foreground data-active:bg-transparent! data-active:shadow-none! ${isCurrentProject ? "font-semibold text-foreground!" : ""}`}
                                 isActive={item.id === project?.id}
                                 disabled={busy}
                                 onClick={() => {
@@ -268,8 +267,8 @@ export function AppSidebar({
                                   });
                                 }}
                               />}>
-                                <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground/55 transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
-                                {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <WorkflowIdentityIcon appearance={appearance} className={`size-4 ${isCurrentProject ? "" : "opacity-65"}`} />}
+                                <ChevronRight aria-hidden="true" className={`size-3 text-muted-foreground transition-transform motion-reduce:transition-none ${isOpen ? "rotate-90" : ""}`} />
+                                {snapshot.conversations.some(entry => entry.projectId === item.id && runningConversationIds?.has(entry.id)) ? <Spinner aria-label="Projeto com conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <WorkflowIdentityIcon appearance={appearance} className="size-4" />}
                                 <Hint content={item.path}><span className="min-w-0 flex-1">
                                   <span className="block truncate">
                                     {item.name}
@@ -294,17 +293,16 @@ export function AppSidebar({
                               <CollapsibleContent className="my-0.5 ml-2.5 border-l border-border/60 pl-1.5">
                                 <SidebarMenu className="mb-1">
                                   <SidebarMenuItem>
-                                    <SidebarMenuButton className="h-7 cursor-pointer text-muted-foreground data-active:text-foreground!" disabled={busy}
-                                      style={selected?.projectId === item.id && !selected.conversationId ? { backgroundColor: `color-mix(in srgb, ${accent} 11%, transparent)` } : undefined}
+                                    <SidebarMenuButton className="native-navigation-row h-[34px] cursor-pointer text-[13px] text-muted-foreground data-active:text-foreground!" disabled={busy}
                                       isActive={selected?.projectId === item.id && !selected.conversationId}
                                       aria-current={selected?.projectId === item.id && !selected.conversationId ? "page" : undefined}
                                       onClick={() => { void library.select({ kind: "project", id: item.id }); }}>
-                                      <LayoutDashboard className={selected?.projectId === item.id && !selected.conversationId ? "" : "text-muted-foreground/55"} style={selected?.projectId === item.id && !selected.conversationId ? { color: accent } : undefined} /><span>Detalhes</span>
+                                      <LayoutDashboard className="text-muted-foreground" style={selected?.projectId === item.id && !selected.conversationId ? { color: accent } : undefined} /><span>Detalhes</span>
                                     </SidebarMenuButton>
                                   </SidebarMenuItem>
                                 </SidebarMenu>
                                 {conversationList(conversations.slice(0, visibleCount), conversations, item.id, accent)}
-                                {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-0.5 h-7 w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground/80" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[10px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
+                                {conversations.length > visibleCount && <Button variant="ghost" size="sm" className="mt-0.5 h-[34px] w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground" onClick={() => setVisibleCounts(counts => ({ ...counts, [item.id]: visibleCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[11px]">+{Math.min(10, conversations.length - visibleCount)}</span></Button>}
                               </CollapsibleContent>
                             </Collapsible>
                           </SidebarMenuItem>}</SortableItem>

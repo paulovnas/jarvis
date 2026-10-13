@@ -129,6 +129,7 @@ x11-dl = "2.21"
 
 [features]
 default = []
+browser-probe = []
 # also enables devtools on `tauri` so the feature only needs to be enabled on this crate
 devtools = ["tauri-runtime/devtools", "tauri/devtools"]
 # also enables macos-private-api on `tauri` so the feature only needs to be enabled on this crate

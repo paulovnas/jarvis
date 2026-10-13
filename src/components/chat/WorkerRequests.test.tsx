@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkerRequests } from "./WorkerRequests";
 import type { WorkflowAgent } from "@/core/workflow";
+import { computerSnapshot, computerTarget } from "@/test/computer-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 it("pauses the automatic answer of the exact worker when the user starts typing", async () => {
@@ -26,6 +27,18 @@ it("routes a Manual approval to the exact worker and turn, without approving the
   expect(screen.getByRole("region",{name:"Solicitação de Construtor"})).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"Autorizar uma vez"}));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("approve_workflow_tool",{conversationId:"root",agentId:"child",turnId:"child-turn",toolId:"write1",decision:{approved:true,grant:null}}));
+});
+
+it("routes a once-only native input review to its exact YOLO worker after verifying the parent conversation target", async () => {
+  const user = userEvent.setup();
+  vi.mocked(invoke).mockReset().mockImplementation(async command => command === "get_computer_use_status" ? computerSnapshot({ targets: [computerTarget] }) : undefined);
+  const agent: WorkflowAgent = { id: "child", parentId: "main", role: "builder", title: "Preencher aplicativo", status: "waiting", createdAt: 1, updatedAt: 2, startedAt: 1, durationMs: 1000, currentThought: null, attempts: 1, options: { account: "personal", model: "model", reasoning: null, mode: "build", approvalMode: "yolo" }, beadId: null, handoff: null, error: null, activeTurnId: "child-turn", pendingQuestion: null, pendingApproval: { tool: { id: "native1", name: "computer_type", args: { targetId: "safari-window", observationId: "observation-1", text: "Exemplo" }, status: "pending", output: "", durationMs: 0 }, policy: null } };
+  render(<WorkerRequests conversationId="root" projectPath="/project" agents={[agent]} drafts={new Map()} />);
+  expect(await screen.findByText("Safari")).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("get_computer_use_status", { conversationId: "root" });
+  expect(invoke).not.toHaveBeenCalledWith("approve_workflow_tool", expect.anything());
+  await user.click(screen.getByRole("button", { name: "Autorizar uma vez" }));
+  expect(invoke).toHaveBeenCalledWith("approve_workflow_tool", { conversationId: "root", agentId: "child", turnId: "child-turn", toolId: "native1", decision: { approved: true, grant: null } });
 });
 
 it("routes a supervised catalog decision to the exact worker", async () => {

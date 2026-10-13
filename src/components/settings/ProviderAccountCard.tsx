@@ -73,23 +73,23 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
   return (
     <Dialog open={open} onOpenChange={setOpen}><Card size="sm"
       data-testid={`provider-account-${account.alias}`}
-      className="min-w-0 gap-0 py-0"
+      className="settings-group min-w-0"
     >
       <DialogTrigger
         render={<CardHeader />}
         nativeButton={false}
         aria-label={`Detalhes de ${account.alias}`}
         aria-describedby={summaryId}
-        className="group cursor-pointer rounded-lg py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className="group settings-row cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <ProviderIcon kind={account.providerKind} className="size-4" />
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
+            <ProviderIcon kind={account.providerKind} className="size-5" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <Hint content={account.alias} whenTruncated><CardTitle className="min-w-0 truncate font-mono text-xs!">{account.alias}</CardTitle></Hint>
+            <Hint content={account.alias} whenTruncated><CardTitle className="min-w-0 truncate font-mono text-sm!">{account.alias}</CardTitle></Hint>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-[#e5c07b]/30 bg-[#e5c07b]/10 text-[#e5c07b]" : "border-[#98c379]/30 bg-[#98c379]/10 text-[#98c379]"}`}>
+              <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow" : "border-onedark-green/30 bg-onedark-green/10 text-onedark-green"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
                 {!account.enabled ? "Desativada" : account.modelsAvailable ? custom ? "Configurada" : "Conectada" : "Indisponível"}
               </Badge>
@@ -136,7 +136,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="micro-label text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{account.models.length}</Badge></div>{!custom && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="text-xs font-medium text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{account.models.length}</Badge></div>{!custom && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
             <p className="text-xs leading-5 text-muted-foreground">{custom ? "Escolha quais modelos cadastrados neste endpoint poderão ser usados. Para mudar o catálogo, edite a conta Custom." : "A consulta pode demorar. Modelos novos são ativados automaticamente. Modelos retirados pelo provedor deixam de aparecer; agentes que ainda os usam precisam de outro modelo."}</p>
             {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
               <p className="text-muted-foreground">Não foi possível consultar os modelos agora.</p>

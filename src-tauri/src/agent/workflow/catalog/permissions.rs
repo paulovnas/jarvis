@@ -1,8 +1,8 @@
 //! Tool visibility and dispatch share the same capability intersection.
 use super::*;
 use crate::agent::{
-    attachments, authoring, browser, image_generation, image_tasks, processes, publication,
-    terminals, tools, video, vision, web_search,
+    attachments, authoring, browser, computer, image_generation, image_tasks, processes,
+    publication, terminals, tools, video, vision, web_search,
 };
 
 pub(crate) fn required(name: &str) -> bool {
@@ -21,6 +21,15 @@ pub(crate) fn required(name: &str) -> bool {
             | "graft_find_all"
             | "graft_repo_map"
             | "graft_check_freshness"
+            | "browser_list"
+            | "browser_snapshot"
+            | "browser_wait"
+            | "browser_screenshot"
+            | "computer_status"
+            | "computer_list_apps"
+            | "computer_select"
+            | "computer_observe"
+            | "computer_stop"
     )
 }
 
@@ -167,6 +176,18 @@ fn description(name: &str) -> &'static str {
         "browser_evaluate" => "Executar JavaScript na página vinculada.",
         "browser_devtools" => "Usar os recursos de DevTools na página vinculada.",
         "browser_close" => "Fechar uma aba do navegador.",
+        "computer_status" => "Consultar permissões e disponibilidade do computador.",
+        "computer_list_apps" => "Listar aplicativos e janelas para escolher o alvo.",
+        "computer_select" => "Vincular um aplicativo autorizado a esta conversa.",
+        "computer_observe" => {
+            "Consultar a interface e capturar uma imagem do aplicativo autorizado."
+        }
+        "computer_click" => "Clicar no aplicativo após aprovação desta ação.",
+        "computer_type" => "Digitar no aplicativo após aprovação desta ação.",
+        "computer_press" => "Enviar uma tecla após aprovação desta ação.",
+        "computer_scroll" => "Rolar o aplicativo após aprovação desta ação.",
+        "computer_drag" => "Arrastar no aplicativo após aprovação desta ação.",
+        "computer_stop" => "Interromper o uso do computador nesta conversa.",
         "http_requests" => "Consultar requisições, ambientes e variáveis do projeto.",
         "http_save_request" => "Preparar requisições e arquivos no cliente HTTP.",
         "http_send" => "Executar uma requisição HTTP e preservar seu resultado.",
@@ -247,6 +268,7 @@ pub(crate) fn builtin_permissions() -> Vec<Permission> {
             .concat(),
         ),
         ("Navegador", browser::definitions(Mode::Build)),
+        ("Computador", computer::definitions(Mode::Build)),
         ("Cliente HTTP", crate::agent::http::definitions(Mode::Build)),
         ("Beads · Core", crate::core::beads::definitions(false)),
         (
@@ -350,6 +372,12 @@ mod tests {
             "terminal_start",
             "terminal_close",
             "browser_screenshot",
+            "computer_status",
+            "computer_list_apps",
+            "computer_select",
+            "computer_observe",
+            "computer_stop",
+            "computer_click",
             "http_requests",
             "http_save_request",
             "http_send",
@@ -388,5 +416,33 @@ mod tests {
         assert!(required("update_tasks"));
         assert!(validate(&["update_tasks".into()]).is_err());
         assert!(validate(&["../tool".into()]).is_err());
+    }
+
+    #[test]
+    fn native_observation_is_required_but_input_requires_command_capability() {
+        let tools = builtin_permissions();
+        for name in [
+            "computer_status",
+            "computer_list_apps",
+            "computer_select",
+            "computer_observe",
+            "computer_stop",
+            "browser_snapshot",
+        ] {
+            assert!(required(name));
+            assert!(validate(&[name.into()]).is_err());
+            assert!(tools
+                .iter()
+                .find(|tool| tool.id == name)
+                .unwrap()
+                .capabilities
+                .contains(&Capability::ReadOnly));
+        }
+        let input = tools
+            .iter()
+            .find(|tool| tool.id == "computer_click")
+            .unwrap();
+        assert!(!input.required);
+        assert_eq!(input.capabilities, vec![Capability::Commands]);
     }
 }

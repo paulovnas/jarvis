@@ -108,8 +108,8 @@ export function HooksSettings({ onBusyChange }: { onBusyChange?: (busy: boolean)
 }
 
 function HookRow({ hook, native = false, untrusted = false, busy, onEdit, onDelete, onToggle }: { hook: Hook | NativeHook; native?: boolean; untrusted?: boolean; busy: boolean; onEdit?: () => void; onDelete?: () => void; onToggle?: (enabled: boolean) => void }) {
-  return <Collapsible render={<Card size="sm" />} className="gap-0 py-0">
-    <CardHeader className="flex min-w-0 flex-row items-center gap-2 py-3">
+  return <Collapsible render={<Card size="sm" />} className="settings-group">
+    <CardHeader className="flex min-w-0 flex-row items-center gap-2 p-4">
       <CardTitle className="min-w-0 flex-1 break-words">{hook.name}</CardTitle>
       {native ? <Badge variant="outline" className="shrink-0 gap-1"><LockKeyhole aria-hidden="true" className="size-3" />Somente leitura</Badge> : <>
         {untrusted && <Badge variant="outline" className="shrink-0 gap-1"><AlertTriangle aria-hidden="true" className="size-3" />Revisão necessária</Badge>}

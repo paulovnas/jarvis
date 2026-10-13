@@ -112,7 +112,7 @@ fn round_trip_preserves_portable_settings_and_skill_payload() {
 }
 
 #[test]
-fn backup_sanitizes_chat_title_provider_and_offers_a_portable_mapping_target() {
+fn backup_sanitizes_generation_providers_and_offers_portable_mapping_targets() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir(crate::data_dir::root(home.path())).unwrap();
     let path = home.path().join("title-settings.zip");
@@ -121,21 +121,32 @@ fn backup_sanitizes_chat_title_provider_and_offers_a_portable_mapping_target() {
         "account":"private-title-provider", "model":"private-title-model", "reasoning":null,
     }))
     .unwrap();
+    settings.system.prompt_refinement_model = Some(workflow::settings::ModelChoice {
+        account: "private-refinement-provider".into(),
+        model: "private-refinement-model".into(),
+        reasoning: Some("high".into()),
+        ..choice.clone()
+    });
+    assert!(validate_payload(&settings).is_err());
     settings.system.chat_title_model = Some(choice);
     assert!(validate_payload(&settings).is_err());
     settings.system = clean_system_preferences(settings.system, &mut settings.model_targets);
     assert!(settings.system.chat_title_model.is_none());
+    assert!(settings.system.prompt_refinement_model.is_none());
+    assert!(settings.model_targets.contains(&prompt_refinement_target()));
     assert!(settings.model_targets.contains(&chat_title_target()));
     validate_payload(&settings).unwrap();
     let serialized = serde_json::to_string(&settings).unwrap();
     assert!(!serialized.contains("private-title-provider"));
     assert!(!serialized.contains("private-title-model"));
+    assert!(!serialized.contains("private-refinement-provider"));
+    assert!(!serialized.contains("private-refinement-model"));
     write_archive(&path, &settings, &[]).unwrap();
     let loaded = read_archive(&path).unwrap();
     assert!(preview(&loaded)
         .model_targets
         .contains(&chat_title_target()));
-    let (_, _, bindings, title) = prepare_import(
+    let (_, _, bindings, preferences) = prepare_import(
         &loaded,
         home.path(),
         &AppState::default(),
@@ -144,10 +155,15 @@ fn backup_sanitizes_chat_title_provider_and_offers_a_portable_mapping_target() {
     )
     .unwrap();
     assert!(
-        title.is_none(),
+        preferences.chat_title_model.is_none(),
         "unmapped title generation falls back to automatic"
     );
     assert!(bindings.contains(&system::CHAT_TITLE_MODEL_KEY.into()));
+    assert!(
+        preferences.prompt_refinement_model.is_none(),
+        "unmapped refinement requires a new explicit selection"
+    );
+    assert!(bindings.contains(&system::PROMPT_REFINEMENT_MODEL_KEY.into()));
 
     let external: workflow::settings::ModelChoice = serde_json::from_value(serde_json::json!({
         "executor":"claude", "account":"", "model":"sonnet", "reasoning":null,
@@ -160,6 +176,17 @@ fn backup_sanitizes_chat_title_provider_and_offers_a_portable_mapping_target() {
         &OpenAiCodexState::default(),
         vec![ModelMapping {
             target_id: system::CHAT_TITLE_MODEL_KEY.into(),
+            choice: external.clone()
+        }],
+    )
+    .is_err());
+    assert!(prepare_import(
+        &loaded,
+        home.path(),
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        vec![ModelMapping {
+            target_id: system::PROMPT_REFINEMENT_MODEL_KEY.into(),
             choice: external
         }],
     )

@@ -211,7 +211,9 @@ pub struct Preferences {
     )]
     pub(crate) _retired_cli_preferences: (),
     pub(crate) browser: crate::agent::browser::BrowserPreferences,
+    pub(crate) computer_use_mode: crate::agent::computer::ComputerMode,
     pub(crate) chat_title_model: Option<crate::agent::workflow::settings::ModelChoice>,
+    pub(crate) prompt_refinement_model: Option<crate::agent::workflow::settings::ModelChoice>,
 }
 
 fn discard_retired_cli_preferences<'de, D: serde::Deserializer<'de>>(
@@ -232,7 +234,9 @@ impl Default for Preferences {
             claude: crate::claude::ProviderPreferences::default(),
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
+            computer_use_mode: crate::agent::computer::ComputerMode::default(),
             chat_title_model: None,
+            prompt_refinement_model: None,
         }
     }
 }
@@ -247,11 +251,41 @@ impl Preferences {
         if let Some(choice) = &self.chat_title_model {
             validate_chat_title_model(choice)?;
         }
+        if let Some(choice) = &self.prompt_refinement_model {
+            validate_prompt_refinement_model(choice)?;
+        }
         Ok(())
     }
 }
 
 pub(crate) const CHAT_TITLE_MODEL_KEY: &str = "chat_title";
+pub(crate) const PROMPT_REFINEMENT_MODEL_KEY: &str = "prompt_refinement";
+
+pub(crate) fn validate_prompt_refinement_model(
+    choice: &crate::agent::workflow::settings::ModelChoice,
+) -> Result<(), String> {
+    choice
+        .validate_shape()
+        .map_err(|error| error.message().to_owned())?;
+    if choice.executor != crate::claude::Executor::Jarvis || choice.fallback.is_some() {
+        return Err("Para refinar prompts, escolha um provedor Jarvis e um único modelo.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn resolved_prompt_refinement_model(
+    db: &rusqlite::Connection,
+    preferences: &Preferences,
+) -> Result<
+    Option<crate::agent::workflow::settings::ModelChoice>,
+    crate::persistence::PersistenceError,
+> {
+    preferences
+        .prompt_refinement_model
+        .as_ref()
+        .map(|choice| crate::model_bindings::resolve(db, PROMPT_REFINEMENT_MODEL_KEY, choice))
+        .transpose()
+}
 
 pub(crate) fn validate_chat_title_model(
     choice: &crate::agent::workflow::settings::ModelChoice,
@@ -413,6 +447,23 @@ pub struct SystemState {
     edit: tokio::sync::Mutex<()>,
 }
 impl SystemState {
+    pub(crate) async fn save_computer_mode(
+        &self,
+        app: &tauri::AppHandle,
+        mode: crate::agent::computer::ComputerMode,
+    ) -> Result<(), String> {
+        let _edit = self.edit.lock().await;
+        {
+            let mut store = self.store.lock().map_err(|_| "Preferências indisponíveis.")?;
+            let store = store.as_mut().ok_or("Preferências ainda não carregadas.")?
+                .as_mut().map_err(|error| error.clone())?;
+            let mut preferences = store.preferences.clone();
+            preferences.computer_use_mode = mode;
+            store.save(preferences)?;
+        }
+        self.changed(app);
+        Ok(())
+    }
     pub(crate) fn browser_preferences(
         &self,
     ) -> Result<crate::agent::browser::BrowserPreferences, String> {
@@ -484,6 +535,7 @@ impl SystemState {
         })
     }
     pub(crate) fn changed(&self, app: &tauri::AppHandle) {
+        crate::agent::computer::configure(app);
         if let Ok(snapshot) = self.configured_snapshot(app) {
             let _ = app.emit("system:changed", snapshot);
         }
@@ -492,7 +544,9 @@ impl SystemState {
     fn configured_snapshot(&self, app: &tauri::AppHandle) -> Result<Snapshot, String> {
         let mut snapshot = self.snapshot()?;
         snapshot.companion_error = crate::companion::error(app);
-        if snapshot.preferences.chat_title_model.is_none() {
+        if snapshot.preferences.chat_title_model.is_none()
+            && snapshot.preferences.prompt_refinement_model.is_none()
+        {
             return Ok(snapshot);
         }
         let home = app
@@ -505,6 +559,12 @@ impl SystemState {
                 resolved_chat_title_model(db, &snapshot.preferences)
             })
             .map_err(|_| "Não foi possível ler o modelo dos títulos.")?;
+        snapshot.preferences.prompt_refinement_model = app
+            .state::<crate::persistence::AppState>()
+            .with_connection(&home, |db| {
+                resolved_prompt_refinement_model(db, &snapshot.preferences)
+            })
+            .map_err(|_| "Não foi possível ler o modelo de refinamento.")?;
         Ok(snapshot)
     }
     fn notification_result(&self, app: &tauri::AppHandle, result: &Result<(), String>) {
@@ -596,6 +656,7 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .store
         .lock()
         .map_err(|_| "System preferences lock poisoned")? = Some(store);
+    crate::agent::computer::configure(app);
     if let Err(error) = notifications::setup(app) {
         *state
             .notification_error
@@ -792,16 +853,32 @@ pub async fn save_system_preferences(
         .home_dir()
         .map_err(|_| "Pasta pessoal indisponível.")?;
     let previous_preferences = state.preferences()?;
-    let previous_title_model = providers
-        .with_connection(&home, |db| {
-            resolved_chat_title_model(db, &previous_preferences)
-        })
-        .map_err(|_| "Não foi possível ler o modelo dos títulos.")?;
-    if let Some(choice) = preferences
-        .chat_title_model
-        .as_ref()
-        .filter(|choice| Some(*choice) != previous_title_model.as_ref())
-    {
+    for (previous, next, key) in [
+        (
+            &previous_preferences.chat_title_model,
+            &preferences.chat_title_model,
+            CHAT_TITLE_MODEL_KEY,
+        ),
+        (
+            &previous_preferences.prompt_refinement_model,
+            &preferences.prompt_refinement_model,
+            PROMPT_REFINEMENT_MODEL_KEY,
+        ),
+    ] {
+        let resolved = previous
+            .as_ref()
+            .map(|choice| {
+                providers
+                    .with_connection(&home, |db| crate::model_bindings::resolve(db, key, choice))
+            })
+            .transpose()
+            .map_err(|_| "Não foi possível ler o modelo configurado.")?;
+        let Some(choice) = next
+            .as_ref()
+            .filter(|choice| Some(*choice) != resolved.as_ref())
+        else {
+            continue;
+        };
         let providers = providers.inner().clone();
         let oauth = oauth.inner().clone();
         let home = home.clone();
@@ -810,7 +887,7 @@ pub async fn save_system_preferences(
             crate::agent::workflow::settings::validate_choice(&providers, &oauth, &home, &choice)
         })
         .await
-        .map_err(|_| "Não foi possível validar o modelo dos títulos.")?
+        .map_err(|_| "Não foi possível validar o modelo configurado.")?
         .map_err(|error| error.message().to_owned())?;
     }
     // Fail a stale or misspelled custom executable before persisting it. Any

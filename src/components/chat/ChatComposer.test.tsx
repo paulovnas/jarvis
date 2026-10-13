@@ -36,6 +36,23 @@ async function openModel(user: ReturnType<typeof userEvent.setup>, name: RegExp)
 }
 
 describe("ChatComposer model reasoning", () => {
+  it("omits the redundant execution label while preserving compaction, stop, and drafts", async () => {
+    const user = userEvent.setup();
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const props = { modelGroups: models, onSendMessage: vi.fn(), onStop: stop };
+    const view = await renderComposer(<ChatComposer {...props} running />);
+    expect(screen.queryByText("Em execução")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Rascunho preservado");
+    await user.click(screen.getByRole("button", { name: "Interromper execução" }));
+    expect(stop).toHaveBeenCalledTimes(1);
+    view.rerender(<ChatComposer {...props} running compacting />);
+    expect(screen.getByRole("status", { name: "Estado da execução" })).toHaveTextContent("Organizando contexto");
+    expect(screen.queryByRole("button", { name: "Interromper execução" })).not.toBeInTheDocument();
+    view.rerender(<ChatComposer {...props} />);
+    expect(screen.queryByRole("status", { name: "Estado da execução" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho preservado");
+    expect(props.onSendMessage).not.toHaveBeenCalled();
+  });
   it("toggles Live next to dictation with the selected model without submitting or clearing the draft", async () => {
     const user = userEvent.setup();
     const toggle = vi.fn();

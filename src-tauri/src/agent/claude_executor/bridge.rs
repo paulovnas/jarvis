@@ -301,6 +301,11 @@ impl<'a> Bridge<'a> {
         }
         context.hooks.before_agent(&mut prompt);
         tools::append_response_language(&mut prompt, crate::system::response_language(home));
+        if !global_companion && !image_specialist {
+            if let Some(app) = execution.as_ref().and_then(workflow::Execution::native_app) {
+                prompt.push_str(&computer::context(app)?);
+            }
+        }
         Ok(Self {
             session,
             runtime,
@@ -613,6 +618,7 @@ impl<'a> Bridge<'a> {
                 session: self.session,
                 tool,
                 options: &self.options,
+                computer: self.execution.as_ref().and_then(workflow::Execution::native_app).map(|app| app.state::<computer::ComputerState>().inner().clone()),
                 policy,
                 sandbox: sandbox.as_ref(),
                 project_id: Some(&project_id),

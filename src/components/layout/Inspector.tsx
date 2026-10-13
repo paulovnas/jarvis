@@ -28,9 +28,9 @@ import { DesignerPanel, type DesignerSession } from "./DesignerPanel";
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
-  return <Collapsible open={layout.activitySections[title] ?? true} onOpenChange={open => updateLayout(current => ({ activitySections: { ...current.activitySections, [title]: open } }))} className="inspector-section border-b border-border py-1.5">
-    <CollapsibleTrigger render={<Button variant="ghost" />} className="group h-9 w-full cursor-pointer justify-start gap-2 px-2 text-xs">
-      {icon}<span>{title}</span>{count !== undefined && <Badge variant="secondary" className="px-1.5 text-[10px]">{count}</Badge>}<ChevronRight aria-hidden="true" className="ml-auto size-3 text-muted-foreground group-aria-expanded:rotate-90" />
+  return <Collapsible open={layout.activitySections[title] ?? true} onOpenChange={open => updateLayout(current => ({ activitySections: { ...current.activitySections, [title]: open } }))} className="inspector-section border-b border-border py-1">
+    <CollapsibleTrigger render={<Button variant="ghost" />} className="group h-9 w-full cursor-pointer justify-start gap-2 px-2 text-[13px] font-medium">
+      {icon}<span>{title}</span>{count !== undefined && <Badge variant="secondary" className="rounded-full px-1.5 text-[11px] font-normal">{count}</Badge>}<ChevronRight aria-hidden="true" className="ml-auto size-3 text-muted-foreground group-aria-expanded:rotate-90" />
     </CollapsibleTrigger>
     <CollapsibleContent className="px-2 pb-3 pt-2">{children}</CollapsibleContent>
   </Collapsible>;
@@ -57,26 +57,26 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const projectPath = library?.projects.find(project => project.id === projectId)?.path;
   const section = layout.inspectorTab === "explorer" || layout.inspectorTab === "github" || layout.inspectorTab === "designer" ? layout.inspectorTab : "activities";
   const selectSection = (value: unknown) => { if (value === "activities" || value === "github" || value === "explorer" || value === "designer") { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
-  const tabClass = "h-7 cursor-pointer px-1.5 text-xs data-active:bg-primary/15 data-active:text-primary dark:data-active:border-primary/20 dark:data-active:bg-primary/15 dark:data-active:text-primary";
-  return <aside aria-label="Inspector" className="flex h-full min-h-0 flex-col bg-sidebar">
+  const tabClass = "h-7 min-w-0 cursor-pointer px-1.5 text-xs text-muted-foreground data-active:bg-accent data-active:text-foreground dark:data-active:border-border dark:data-active:bg-accent dark:data-active:text-foreground";
+  return <aside aria-label="Inspector" className="native-inspector flex h-full min-h-0 flex-col bg-sidebar">
     <Tabs value={section} onValueChange={selectSection} className="h-full min-h-0 gap-0">
-      <div className="shrink-0 border-b border-border bg-card px-2 py-1"><TabsList aria-label="Seções da lateral direita" className="h-7 w-full justify-start gap-0.5 rounded-md bg-transparent p-0"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger><TabsTrigger value="designer" className={tabClass}>Designer</TabsTrigger></TabsList></div>
+      <div className="shrink-0 border-b border-border px-2 py-2"><TabsList aria-label="Seções da lateral direita" className="h-8 w-full justify-start gap-0.5 rounded-md bg-secondary/50 p-0.5"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger><TabsTrigger value="designer" className={tabClass}>Designer</TabsTrigger></TabsList></div>
       <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
-          {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" || flow === "video" || flow === "image_generator" ? { color: ROLE_COLORS[flow] } : undefined} className={`size-4 ${flow === "standard" ? "text-primary" : ""}`} />} count={latestTurn?.tasks?.length}>
+          {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" || flow === "video" || flow === "image_generator" ? { color: ROLE_COLORS[flow] } : undefined} className="size-4 text-muted-foreground" />} count={latestTurn?.tasks?.length}>
             <DirectTasks tasks={latestTurn?.tasks ?? []} active={!!latestTurn && selectedChat?.activeTurnId === latestTurn.id} flow={flow === "designer" || flow === "video" || flow === "image_generator" || flow === "custom" ? flow : "standard"} />
-          </ActivitySection> : <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-[#c678dd]" />}>
+          </ActivitySection> : <ActivitySection title="Plano" icon={<ListChecks aria-hidden="true" className="size-4 text-muted-foreground" />}>
             {projectId && selectedChat ? <EpicPlans key={`${projectId}:${selectedChat.conversationId}`} projectId={projectId} conversationId={selectedChat.conversationId} active={Boolean(selectedChat.activeTurnId)} onOpenKanban={onOpenKanban} /> : <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>}
           </ActivitySection>)}
-          <ActivitySection title="Arquivos alterados" icon={<Files aria-hidden="true" className="size-4 text-primary" />} count={files.length}>
+          <ActivitySection title="Arquivos alterados" icon={<Files aria-hidden="true" className="size-4 text-muted-foreground" />} count={files.length}>
             {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} projectPath={projectPath} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
-          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow) || workflow.data.flow === latestFlow && workflow.data.agents.some(agent => agent.parentId !== null)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-onedark-yellow" />}>
+          {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow) || workflow.data.flow === latestFlow && workflow.data.agents.some(agent => agent.parentId !== null)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-muted-foreground" />}>
             <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
           </ActivitySection>}
-          {selectedChat && manualValidation && !directFlow && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-onedark-green" />} count={workflow.data.validation?.items.length}>
+          {selectedChat && manualValidation && !directFlow && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-muted-foreground" />} count={workflow.data.validation?.items.length}>
             <WorkflowValidation key={`${selectedChat.conversationId}/${workflow.data.validation?.id ?? "empty"}`} conversationId={selectedChat.conversationId} batch={workflow.data.validation} busy={!!selectedChat.activeTurnId || compacting || pending || (selectedChat.queuedMessages?.length ?? 0) > 0 || workflow.data.agents.some(activeAgent)} onRefresh={workflow.retry} />
           </ActivitySection>}
         </div></ScrollArea>

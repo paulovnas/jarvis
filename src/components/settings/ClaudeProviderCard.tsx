@@ -57,7 +57,7 @@ function ClaudeProviderDetails() {
         onChange={(showFiveHourUsage, showWeeklyUsage) => { void save({ ...preferences, showFiveHourUsage, showWeeklyUsage }); }}
       />
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2"><span className="micro-label text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{claudeModels(runtime.data).length}/{runtime.data?.models.length ?? 0}</Badge></div>
+        <div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{claudeModels(runtime.data).length}/{runtime.data?.models.length ?? 0}</Badge></div>
         <p className="text-xs leading-5 text-muted-foreground">Modelos novos ficam disponíveis automaticamente. Ao ocultar um modelo, revise os agentes e fluxos que o utilizam. Conversas em execução continuam normalmente.</p>
         {!runtime.loading && !runtime.data?.installed && <p role="status" className="text-xs text-muted-foreground">Claude Code não encontrado. Instale o CLI para consultar os modelos.</p>}
         {runtime.data?.installed && !runtime.data.authenticated && <p role="status" className="text-xs text-muted-foreground">Entre na sua conta pelo Claude Code para usar os modelos.</p>}
@@ -82,10 +82,10 @@ export function ClaudeProviderCard() {
   const enabled = runtime.data?.preferences?.enabled !== false;
   const status = runtime.loading ? "Consultando…" : !enabled ? "Desativado" : runtime.error || runtime.data?.error ? "Verificar configuração" : !runtime.data?.installed ? "Instalação necessária" : !runtime.data.authenticated ? "Login necessário" : "Conectado";
   return <Dialog open={open} onOpenChange={setOpen}>
-    <Card size="sm" className="min-w-0 gap-0 py-0" data-testid="provider-account-claude-code">
-      <DialogTrigger render={<CardHeader />} nativeButton={false} aria-label="Detalhes de Claude Code" className="cursor-pointer rounded-lg py-3 transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><ProviderIcon kind="claude-code" className="size-4" /></span>
+    <Card size="sm" className="settings-group min-w-0" data-testid="provider-account-claude-code">
+      <DialogTrigger render={<CardHeader />} nativeButton={false} aria-label="Detalhes de Claude Code" className="settings-row cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"><ProviderIcon kind="claude-code" className="size-5" /></span>
           <div className="flex min-w-0 flex-1 flex-col gap-1"><CardTitle>Claude Code</CardTitle><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{status}</Badge><CardDescription>CLI local · {claudeModels(runtime.data).length} modelos ativos</CardDescription></div></div>
           <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         </div>

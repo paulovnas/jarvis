@@ -1,7 +1,6 @@
 //! Dedicated local settings and about windows. Creation is serialized by the
 //! native event loop, so repeated requests reuse a single window per surface.
 use serde::Deserialize;
-#[cfg(target_os = "macos")]
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -88,6 +87,9 @@ pub(crate) fn command_allowed(label: &str, command: &str) -> bool {
                 | "get_workspace_storage"
                 | "delete_library_item"
                 | "get_core_status"
+                | "get_computer_use_status"
+                | "request_computer_permission"
+                | "set_computer_use_mode"
                 | "check_core_updates"
                 | "install_core_component"
                 | "cancel_core_installation"
@@ -199,9 +201,12 @@ fn fitted_size(spec: WindowSpec, work_width: f64, work_height: f64) -> (f64, f64
     )
 }
 
-fn create_or_focus(app: &tauri::AppHandle, kind: AuxiliaryWindowKind) -> Result<(), String> {
+fn create_or_focus(app: &tauri::AppHandle, kind: AuxiliaryWindowKind, section: Option<&str>) -> Result<(), String> {
     let spec = kind.spec();
     if let Some(window) = app.get_webview_window(spec.label) {
+        if let Some(section) = section {
+            window.emit("settings:navigate", section).map_err(|error| error.to_string())?;
+        }
         window.unminimize().map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
         return window.set_focus().map_err(|error| error.to_string());
@@ -225,6 +230,9 @@ fn create_or_focus(app: &tauri::AppHandle, kind: AuxiliaryWindowKind) -> Result<
     .visible(false)
     .inner_size(spec.width, spec.height)
     .min_inner_size(spec.min_width, spec.min_height);
+    if section == Some("computer") {
+        builder = builder.initialization_script("window.location.hash = 'computer';");
+    }
     if let Some(monitor) = monitor.as_ref() {
         let area = monitor.work_area();
         let scale = monitor.scale_factor();
@@ -264,11 +272,15 @@ fn create_or_focus(app: &tauri::AppHandle, kind: AuxiliaryWindowKind) -> Result<
 pub(crate) async fn open_auxiliary_window(
     app: tauri::AppHandle,
     kind: AuxiliaryWindowKind,
+    section: Option<String>,
 ) -> Result<(), String> {
+    if section.as_deref().is_some_and(|section| kind != AuxiliaryWindowKind::Settings || section != "computer") {
+        return Err("Seção de configurações inválida.".into());
+    }
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        let _ = sender.send(create_or_focus(&handle, kind));
+        let _ = sender.send(create_or_focus(&handle, kind, section.as_deref()));
     })
     .map_err(|_| "Não foi possível abrir a janela do Jarvis.".to_owned())?;
     receiver
@@ -280,7 +292,7 @@ pub(crate) async fn open_auxiliary_window(
 pub(crate) fn open_from_menu(app: &tauri::AppHandle, kind: AuxiliaryWindowKind) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = open_auxiliary_window(app.clone(), kind).await {
+        if let Err(error) = open_auxiliary_window(app.clone(), kind, None).await {
             eprintln!("Auxiliary window unavailable: {error}");
             let _ = app.emit_to("main", "app:auxiliary-error", error);
         }

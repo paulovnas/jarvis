@@ -1,16 +1,16 @@
 /* One palette for native scrollports and the scrollbars drawn by our libraries. */
 :root {
   color-scheme: light;
-  --scrollbar-thumb: color-mix(in srgb, var(--foreground) 70%, var(--background));
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 85%, var(--background));
-  --scrollbar-thumb-active: var(--primary);
+  --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, var(--background));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 85%, var(--background));
+  --scrollbar-thumb-active: var(--muted-foreground);
 }
 
 .dark {
   color-scheme: dark;
-  --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 80%, var(--background));
-  --scrollbar-thumb-hover: var(--muted-foreground);
-  --scrollbar-thumb-active: var(--primary);
+  --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 55%, var(--background));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, var(--background));
+  --scrollbar-thumb-active: var(--muted-foreground);
 }
 
 /* Keep native high-contrast scrollbars and the platform's accessibility settings.

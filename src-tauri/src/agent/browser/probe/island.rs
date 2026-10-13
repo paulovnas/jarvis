@@ -1,11 +1,11 @@
 //! Synthetic probe and opt-in read-only observation of real Companion chrome.
 use super::*;
-use objc2::{rc::Retained, AnyThread, MainThreadMarker};
+use objc2::{msg_send, rc::Retained, AnyThread, MainThreadMarker};
 use objc2_app_kit::{
-    NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSEvent, NSEventModifierFlags, NSEventType,
-    NSView,
+    NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSEvent, NSEventModifierFlags,
+    NSEventType, NSView,
 };
-use objc2_foundation::{NSDictionary, NSPoint, NSString};
+use objc2_foundation::{NSDictionary, NSPoint, NSString, NSUInteger};
 
 pub(super) const PAGE: &str = r#"<!doctype html><html class="dark" data-companion><head><title>Island probe</title><style>
 html,body,#root{margin:0;background:transparent;font:16px system-ui;color:white}
@@ -138,6 +138,27 @@ fn alpha_at(view: &NSView, points: &[(&str, f64, f64)]) -> Result<Value, AgentEr
         .window()
         .ok_or_else(|| error("Island has no native window"))?;
     let mut evidence = json!({"viewOpaque":view.isOpaque(),"windowOpaque":window.isOpaque(),"windowVisible":window.isVisible(),"windowClass":window.class().name().to_string_lossy(),"windowBackgroundAlpha":window.backgroundColor().alphaComponent(),"pixelWidth":image.pixelsWide(),"pixelHeight":image.pixelsHigh(),"viewWidth":size.width,"viewHeight":size.height});
+    let frame = window.frame();
+    evidence["windowFrame"] = json!([
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height
+    ]);
+    let marker = MainThreadMarker::new()
+        .ok_or_else(|| error("Island observation requires AppKit's thread"))?;
+    evidence["mainWindowFrame"] =
+        json!(NSApplication::sharedApplication(marker)
+            .mainWindow()
+            .map(|window| {
+                let frame = window.frame();
+                [
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                ]
+            }));
     let content = window.contentView();
     // Native observation owns this live surface and runs on AppKit's thread.
     let mut current = unsafe { Retained::retain(view as *const NSView as *mut NSView) };
@@ -181,16 +202,26 @@ const OBSERVE_DOM: &str = r#"(async () => {
     const node = document.querySelector(selector);
     if (!node) return null;
     const style = getComputedStyle(node), rect = node.getBoundingClientRect();
-    return { backgroundColor:style.backgroundColor, colorScheme:style.colorScheme, borderRadius:style.borderRadius, opacity:style.opacity, hasBackgroundImage:style.backgroundImage!=='none', width:rect.width, height:rect.height, x:rect.x, y:rect.y };
+    return { backgroundColor:style.backgroundColor, colorScheme:style.colorScheme, borderRadius:style.borderRadius, clipPath:style.clipPath, layoutWidth:style.width, layoutHeight:style.height, opacity:style.opacity, hasBackgroundImage:style.backgroundImage!=='none', width:rect.width, height:rect.height, x:rect.x, y:rect.y };
   };
   const companion = document.querySelector('.companion');
-  const dom = { ready:document.readyState, mainFrame:window===window.top, companionAttribute:document.documentElement.hasAttribute('data-companion'), dark:document.documentElement.classList.contains('dark'), hidden:document.hidden, expanded:companion?.dataset.expanded==='true', html:element('html'), body:element('body'), root:element('#root'), companion:element('.companion'), island:element('.companion-island'), canvasCount:document.querySelectorAll('canvas').length };
+  const dom = { ready:document.readyState, mainFrame:window===window.top, companionAttribute:document.documentElement.hasAttribute('data-companion'), dark:document.documentElement.classList.contains('dark'), hidden:document.hidden, expanded:companion?.dataset.expanded==='true', closing:companion?.dataset.closing==='true', html:element('html'), body:element('body'), root:element('#root'), companion:element('.companion'), island:element('.companion-island'), panel:element('.companion-panel'), pet:element('.companion-robot-placement'), canvasCount:document.querySelectorAll('canvas').length };
   let frames=0, previous, maxGapMs=0, done=false;
   const start=performance.now();
   const frame=now=>{ if(done)return; frames++; if(previous!==undefined)maxGapMs=Math.max(maxGapMs,now-previous); previous=now; requestAnimationFrame(frame); };
   requestAnimationFrame(frame);
   return new Promise(resolve=>setTimeout(()=>{done=true;resolve({...dom,frames,maxGapMs,frameDurationMs:performance.now()-start});},250));
 })()"#;
+
+fn paint_counts(view: &NSView) -> Result<[NSUInteger; 2], AgentError> {
+    // The probe feature supplies these counters on the verified live CEF surface.
+    Ok(unsafe {
+        [
+            msg_send![view, jarvisPaintCount],
+            msg_send![view, jarvisFrameSizeCalls],
+        ]
+    })
+}
 
 pub(super) async fn observe_companion(app: &tauri::AppHandle) -> Result<(), AgentError> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.codex/browser-review");
@@ -202,39 +233,59 @@ pub(super) async fn observe_companion(app: &tauri::AppHandle) -> Result<(), Agen
     let mut unavailable = 0;
     let mut observed = 0;
     println!(
-        "Observing real Companion paint for 40 seconds: {}",
+        "Observing real Companion paint for 120 seconds: {}",
         output.display()
     );
-    while start.elapsed() < Duration::from_secs(40) {
+    while start.elapsed() < Duration::from_secs(120) {
         if let (Some(window), Some(view)) = (
             app.get_webview_window("companion"),
             app.get_webview("companion"),
         ) {
+            let before = native(&window, paint_counts).await;
+            let interval_start = std::time::Instant::now();
             let dom =
                 cdp_action(&view, json!({"action":"evaluate","expression":OBSERVE_DOM})).await;
-            let paint = native(&window, |view| {
-                let size = view.bounds().size;
-                let right = (size.width - 1.).max(0.);
-                let bottom = (size.height - 1.).max(0.);
-                alpha_at(
-                    view,
-                    &[
-                        ("topLeftAlpha", 0., 0.),
-                        ("topRightAlpha", right, 0.),
-                        ("bottomLeftAlpha", 0., bottom),
-                        ("bottomRightAlpha", right, bottom),
-                        ("centerAlpha", size.width / 2., size.height / 2.),
-                    ],
+            let after = native(&window, paint_counts).await;
+            let native_paint = before.ok().zip(after.ok()).map(|(before, after)| {
+                json!({"frames":after[0].saturating_sub(before[0]),"durationMs":interval_start.elapsed().as_secs_f64()*1000.0,"totalFrames":after[0],"frameSizeCalls":after[1]})
+            });
+            // Pixel conversion must stay sparse so the observer does not compete with painting.
+            let pixel_sample = samples.len() % 12 == 0;
+            let paint = if pixel_sample {
+                Some(
+                    native(&window, |view| {
+                        let size = view.bounds().size;
+                        let right = (size.width - 1.).max(0.);
+                        let bottom = (size.height - 1.).max(0.);
+                        alpha_at(
+                            view,
+                            &[
+                                ("topLeftAlpha", 0., 0.),
+                                ("topRightAlpha", right, 0.),
+                                ("bottomLeftAlpha", 0., bottom),
+                                ("bottomRightAlpha", right, bottom),
+                                ("centerAlpha", size.width / 2., size.height / 2.),
+                            ],
+                        )
+                    })
+                    .await,
                 )
-            })
-            .await;
-            if dom.is_ok() && paint.is_ok() {
+            } else {
+                None
+            };
+            if dom.is_ok() && paint.as_ref().is_none_or(Result::is_ok) {
                 observed += 1;
             } else {
                 unavailable += 1;
             }
+            if pixel_sample {
+                if let Ok(image) = native(&window, png).await {
+                    std::fs::write(directory.join("real-island-paint.png"), image)
+                        .map_err(|_| AgentError::storage())?;
+                }
+            }
             samples.push(
-                json!({"elapsedMs":start.elapsed().as_millis(),"dom":dom.ok(),"paint":paint.ok()}),
+                json!({"elapsedMs":start.elapsed().as_millis(),"dom":dom.ok(),"pixelSample":pixel_sample,"paint":paint.and_then(Result::ok),"nativePaint":native_paint}),
             );
         } else {
             missing += 1;

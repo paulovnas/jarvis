@@ -703,6 +703,12 @@ async fn execute_tool(
             }
         })
         .await?;
+    if computer::mutating(&tool.name) {
+        bridge.session.flush_async().await?;
+        if let Some(exec) = &bridge.execution {
+            exec.record_computer_result(&tool, &replay)?;
+        }
+    }
     core_runtime::record(bridge.session, bridge.context.take_activity())?;
     core_runtime::record(bridge.session, bridge.graft.take_activity())?;
     if impeccable::should_finish_accept(

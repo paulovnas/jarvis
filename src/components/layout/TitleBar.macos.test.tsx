@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { TitleBar } from "./TitleBar";
 
-const native = vi.hoisted(() => ({ isMaximized: vi.fn(), isFullscreen: vi.fn(), setFullscreen: vi.fn(), toggleMaximize: vi.fn(), onResized: vi.fn() }));
+const native = vi.hoisted(() => ({ isMaximized: vi.fn(), isFullscreen: vi.fn(), setFullscreen: vi.fn(), toggleMaximize: vi.fn(), onResized: vi.fn(), minimize: vi.fn(), close: vi.fn() }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => native }));
 beforeEach(() => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -12,6 +12,8 @@ beforeEach(() => {
   native.isFullscreen.mockImplementation(async () => full);
   native.setFullscreen.mockImplementation(async next => { full = next; });
   native.toggleMaximize.mockResolvedValue(undefined);
+  native.minimize.mockResolvedValue(undefined);
+  native.close.mockResolvedValue(undefined);
   native.onResized.mockResolvedValue(() => {});
 });
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
@@ -30,6 +32,17 @@ it("toggles macOS fullscreen with the green button and hides the custom titlebar
   await user.click(screen.getByRole("button", { name: "Entrar em tela cheia" }));
   expect(native.setFullscreen).toHaveBeenLastCalledWith(true);
   await waitFor(() => expect(screen.queryByRole("banner")).not.toBeInTheDocument());
+});
+
+it("routes the close and minimize controls to their native window actions", async () => {
+  const user = userEvent.setup();
+  render(<TitleBar />);
+  await user.click(screen.getByRole("button", { name: "Fechar janela" }));
+  await user.click(screen.getByRole("button", { name: "Minimizar janela" }));
+  expect(native.close).toHaveBeenCalledOnce();
+  expect(native.minimize).toHaveBeenCalledOnce();
+  expect(native.setFullscreen).not.toHaveBeenCalled();
+  expect(native.toggleMaximize).not.toHaveBeenCalled();
 });
 
 it("keeps the custom titlebar hidden when macOS already starts fullscreen", async () => {

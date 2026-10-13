@@ -480,17 +480,14 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     window.set_position(position)?;
                 }
             }
-            if saved.maximized {
-                window.maximize()?;
-            }
-            if saved.fullscreen {
-                window.set_fullscreen(true)?;
-            }
             *state.store.lock().map_err(|_| "Desktop lock poisoned")? = Some(store);
         }
         // Preserve an unreadable/newer file. The UI can still open, and reports save failures.
         Err(error) => eprintln!("Desktop restoration unavailable: {error}"),
     }
+    // Start in the monitor's usable area; retain normal bounds for restoring the window.
+    window.set_fullscreen(false)?;
+    window.maximize()?;
     window.show()?;
     Ok(())
 }
@@ -1021,5 +1018,39 @@ mod tests {
         .unwrap();
         assert_eq!(position, PhysicalPosition::new(-1800, 60));
         assert_eq!(size, PhysicalSize::new(1280, 720));
+    }
+
+    #[test]
+    fn saved_normal_bounds_restore_on_the_secondary_display_without_rewriting_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        let original = r#"{"window":{"normal":{"x":-1800,"y":60,"width":1280,"height":720},"maximized":false,"fullscreen":true}}"#;
+        fs::write(&path, original).unwrap();
+        let restored = Store::open(path.clone()).unwrap();
+        let (position, size) = fit_bounds(
+            restored.preferences.window.normal.unwrap(),
+            &[
+                Screen {
+                    x: 0,
+                    y: 66,
+                    width: 3024,
+                    height: 1898,
+                    scale: 2.0,
+                },
+                Screen {
+                    x: -1920,
+                    y: 30,
+                    width: 1920,
+                    height: 1050,
+                    scale: 1.0,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(position, PhysicalPosition::new(-1800, 60));
+        assert_eq!(size, PhysicalSize::new(1280, 720));
+        assert!(restored.preferences.window.fullscreen);
+        assert!(!restored.preferences.window.maximized);
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
     }
 }

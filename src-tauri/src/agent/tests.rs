@@ -222,6 +222,7 @@ async fn permission_hook_can_deny_without_creating_or_approving_a_human_request(
             session: &session,
             tool: &tool,
             options: &approval_options,
+            computer: None,
             policy: None,
             sandbox: None,
             project_id: None,
@@ -278,6 +279,7 @@ async fn mandatory_authoring_reviews_emit_permission_hooks_even_in_yolo() {
                     session: &session,
                     tool: &tool,
                     options: &selected,
+                    computer: None,
                     policy: None,
                     sandbox: None,
                     project_id: None,
@@ -2125,6 +2127,7 @@ async fn an_approved_decision_creates_a_reusable_project_grant() {
                 session: &task_session,
                 tool: &task_tool,
                 options: &approval_options,
+                computer: None,
                 policy: Some(policy),
                 sandbox: None,
                 project_id: Some("project"),
@@ -2220,6 +2223,112 @@ async fn terminal_control_is_preapproved_in_yolo_and_waits_in_manual_mode() {
 }
 
 #[tokio::test]
+async fn computer_manual_requires_once_only_user_review_even_in_yolo_and_policy_fallbacks() {
+    for executor in [
+        crate::claude::Executor::Jarvis,
+        crate::claude::Executor::Claude,
+    ] {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let mut automatic = options(ApprovalMode::Yolo);
+        automatic.executor = executor;
+        let signal = session
+            .reserve("Clicar no aplicativo".into(), automatic.clone())
+            .unwrap();
+        let tool = ToolCall {
+            id: "native-click".into(),
+            name: "computer_click".into(),
+            args: json!({"targetId":"window","observationId":"seen","element":"button"}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let prepared = tool_contract::Orchestrator::new(&computer::definitions(Mode::Build))
+            .preflight(&tool)
+            .unwrap();
+        let task_session = session.clone();
+        let task_tool = tool.clone();
+        let pending = tokio::spawn(async move {
+            authorize_prepared(
+                ApprovalRequest {
+                    session: &task_session,
+                    tool: &task_tool,
+                    options: &automatic,
+                    computer: Some(computer::ready_state(computer::ComputerMode::Manual)),
+                    policy: None,
+                    sandbox: None,
+                    project_id: Some("project"),
+                    manual_hooks: None,
+                    explicit_video_approval: false,
+                    signal,
+                },
+                prepared,
+                true,
+                true,
+                true,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while session.snapshot().unwrap().pending_approval.is_none() {
+                assert!(
+                    !pending.is_finished(),
+                    "input must not be silently preauthorized"
+                );
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+        for scope in [
+            ApprovalGrantScope::Conversation,
+            ApprovalGrantScope::Project,
+            ApprovalGrantScope::Repository,
+        ] {
+            assert!(answer_approval_decision(
+                &execution_grants::GrantStore::default(),
+                &session,
+                &turn,
+                &tool.id,
+                ApprovalDecision {
+                    approved: true,
+                    grant: Some(ApprovalGrantRequest {
+                        scope,
+                        duration: ApprovalGrantDuration::Session,
+                        match_kind: execution_grants::GrantMatch::Exact,
+                    })
+                }
+            )
+            .is_err());
+            assert!(session.snapshot().unwrap().pending_approval.is_some());
+        }
+        answer_approval(&session, &turn, &tool.id, true).unwrap();
+        assert!(pending.await.unwrap().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn computer_yolo_preauthorizes_native_input_for_jarvis_and_cli_executors() {
+    for executor in [crate::claude::Executor::Jarvis, crate::claude::Executor::Claude] {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let mut selected = options(ApprovalMode::Manual);
+        selected.executor = executor;
+        let signal = session.reserve("Usar o computador".into(), selected.clone()).unwrap();
+        let computer = computer::ready_state(computer::ComputerMode::Yolo);
+        let tool = ToolCall { id: "click".into(), name: "computer_click".into(), args: json!({"targetId":"window","observationId":"fresh","element":"button"}), status: "pending".into(), output: String::new(), duration_ms: 0 };
+        let prepared = tool_contract::Orchestrator::new(&computer::definitions(Mode::Build)).preflight(&tool).unwrap();
+        let permitted = tokio::time::timeout(Duration::from_millis(200), authorize_prepared(
+            ApprovalRequest { session: &session, tool: &tool, options: &selected, computer: Some(computer), policy: None, sandbox: None, project_id: Some("project"), manual_hooks: None, explicit_video_approval: false, signal },
+            prepared, true, true, true,
+        )).await.expect("computer YOLO must not wait for an action approval").unwrap();
+        assert!(permitted);
+        assert!(session.snapshot().unwrap().pending_approval.is_none());
+    }
+}
+
+#[tokio::test]
 async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() {
     for executor in [
         crate::claude::Executor::Jarvis,
@@ -2270,6 +2379,7 @@ async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() 
                     session: &session,
                     tool: &tool,
                     options: &automatic,
+                    computer: None,
                     policy: Some(policy),
                     sandbox: Some(&sandbox),
                     project_id: Some("project"),
@@ -2300,6 +2410,62 @@ async fn yolo_executes_native_sandbox_recovery_without_waiting_for_permission() 
             .unwrap()
             .contains("yolo"));
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn permission_hook_allow_cannot_replace_native_input_user_review() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let selected = options(ApprovalMode::Yolo);
+    let signal = session
+        .reserve("Clicar no aplicativo".into(), selected.clone())
+        .unwrap();
+    let hooks = manual_hook_runtime(
+        &fixture, &session, crate::hooks::Event::PermissionRequest,
+        "cat >/dev/null; printf '%s' '{\"hookSpecificOutput\":{\"decision\":{\"behavior\":\"allow\"}}}'",
+        "computer_click",
+    );
+    let call = ToolCall {
+        id: "hook-native".into(),
+        name: "computer_click".into(),
+        args: json!({"targetId":"window","observationId":"seen","element":"button"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let task_session = session.clone();
+    let task_call = call.clone();
+    let pending = tokio::spawn(async move {
+        authorize_declared(
+            ApprovalRequest {
+                session: &task_session,
+                tool: &task_call,
+                options: &selected,
+                computer: None,
+                policy: None,
+                sandbox: None,
+                project_id: None,
+                manual_hooks: Some(&hooks),
+                explicit_video_approval: false,
+                signal,
+            },
+            tool_contract::ApprovalPolicy::Never,
+            tool_contract::Handler::Workflow,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while session.snapshot().unwrap().pending_approval.is_none() {
+            assert!(!pending.is_finished(), "hook allow must not dispatch input");
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let turn = session.snapshot().unwrap().active_turn_id.unwrap();
+    answer_approval(&session, &turn, &call.id, false).unwrap();
+    assert!(!pending.await.unwrap().unwrap());
 }
 
 #[tokio::test]
@@ -2366,6 +2532,7 @@ async fn openmontage_execution_and_stages_are_preapproved_in_yolo() {
                         session: &session,
                         tool: &call,
                         options: &automatic,
+                        computer: None,
                         policy: None,
                         sandbox: None,
                         project_id: None,
@@ -2416,6 +2583,7 @@ async fn openmontage_execution_and_stages_wait_for_manual_acceptance_or_denial()
                             session: &task_session,
                             tool: &task_call,
                             options: &manual,
+                            computer: None,
                             policy: None,
                             sandbox: None,
                             project_id: None,

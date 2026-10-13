@@ -173,6 +173,14 @@ impl Role {
         flow.delegations().contains(&(self, role))
     }
     pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if super::catalog::permissions::required(tool)
+            && (tool.starts_with("computer_") || tool.starts_with("browser_"))
+        {
+            return true;
+        }
+        if crate::agent::computer::mutating(tool) {
+            return broad && matches!(self, Self::Builder | Self::Designer | Self::Video);
+        }
         if tool == "jarvis_propose_project_instructions" {
             return broad
                 && flow != Flow::Publication

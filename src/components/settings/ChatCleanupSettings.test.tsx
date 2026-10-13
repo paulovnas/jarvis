@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
@@ -76,6 +76,24 @@ describe("conversation cleanup", () => {
     reject(new Error("offline"));
     expect(await screen.findByRole("alert")).toHaveTextContent("offline");
     expect(screen.getByRole("button", { name: "Revisar limpeza" })).toBeEnabled();
+  });
+  it("keeps journal loading state available until maintenance metrics arrive", async () => {
+    let resolveJournals: (value: typeof emptyJournals) => void = () => {};
+    call.mockImplementation((command) => {
+      if (command === "get_skill_cache_status") return Promise.resolve(emptyCache);
+      if (command === "get_journal_maintenance_status") return new Promise(resolve => { resolveJournals = resolve; });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    render(<ChatCleanupSettings />);
+    const region = screen.getByRole("region", { name: "Otimização dos históricos" });
+    expect(within(region).getByRole("status", { name: "Analisando arquivos de histórico" })).toBeInTheDocument();
+    expect(within(region).getByRole("button", { name: "Otimizar históricos" })).toBeDisabled();
+
+    await act(() => { resolveJournals({ ...emptyJournals, files: 3, currentBytes: 1024 }); });
+    expect(within(region).queryByRole("status", { name: "Analisando arquivos de histórico" })).not.toBeInTheDocument();
+    expect(within(region).getByText("3 arquivos de histórico analisados")).toBeInTheDocument();
+    expect(within(region).getByText("1 KB")).toBeInTheDocument();
+    expect(call.mock.calls.filter(([command]) => command === "optimize_journals")).toHaveLength(0);
   });
   it("shows repository cache usage and clears it only after confirmation", async () => {
     const cache = { bytes: 2 * 1024 * 1024 * 1024, repositories: 4, residues: 2 };

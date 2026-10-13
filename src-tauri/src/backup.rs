@@ -51,6 +51,7 @@ pub enum ModelTargetKind {
     BuiltinAgent,
     CustomAgent,
     ChatTitle,
+    PromptRefinement,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -275,14 +276,26 @@ fn chat_title_target() -> ModelTarget {
     }
 }
 
+fn prompt_refinement_target() -> ModelTarget {
+    ModelTarget {
+        id: system::PROMPT_REFINEMENT_MODEL_KEY.into(),
+        kind: ModelTargetKind::PromptRefinement,
+        label: "Refinar prompt".into(),
+        details: vec!["Configurações gerais".into()],
+    }
+}
+
 fn clean_system_preferences(
     mut system: system::Preferences,
     targets: &mut Vec<ModelTarget>,
 ) -> system::Preferences {
     if system.chat_title_model.take().is_some() {
         targets.push(chat_title_target());
-        targets.sort_by(|left, right| left.id.cmp(&right.id));
     }
+    if system.prompt_refinement_model.take().is_some() {
+        targets.push(prompt_refinement_target());
+    }
+    targets.sort_by(|left, right| left.id.cmp(&right.id));
     system
 }
 
@@ -320,6 +333,11 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
     if payload.system.chat_title_model.is_some() {
         return Err(error(
             "O backup contém um provedor nos títulos das conversas.",
+        ));
+    }
+    if payload.system.prompt_refinement_model.is_some() {
+        return Err(error(
+            "O backup contém um provedor no refinamento de prompts.",
         ));
     }
     if payload.catalog.revision != 0
@@ -401,6 +419,11 @@ fn validate_payload(payload: &SettingsPayload) -> Result<(), BackupError> {
             ModelTargetKind::ChatTitle => {
                 if *target != chat_title_target() {
                     return Err(error("O destino dos títulos das conversas é inválido."));
+                }
+            }
+            ModelTargetKind::PromptRefinement => {
+                if *target != prompt_refinement_target() {
+                    return Err(error("O destino de refinamento de prompts é inválido."));
                 }
             }
             ModelTargetKind::BuiltinAgent => {
@@ -993,7 +1016,7 @@ fn prepare_import(
         workflow::catalog::Catalog,
         workflow::settings::ModelSettings,
         Vec<String>,
-        Option<workflow::settings::ModelChoice>,
+        system::Preferences,
     ),
     BackupError,
 > {
@@ -1013,6 +1036,9 @@ fn prepare_import(
         if mapping.target_id == system::CHAT_TITLE_MODEL_KEY {
             system::validate_chat_title_model(&mapping.choice).map_err(error)?;
         }
+        if mapping.target_id == system::PROMPT_REFINEMENT_MODEL_KEY {
+            system::validate_prompt_refinement_model(&mapping.choice).map_err(error)?;
+        }
         workflow::settings::validate_choice(state, oauth, home, &mapping.choice)
             .map_err(|cause| error(cause.message()))?;
         selected.insert(mapping.target_id, mapping.choice);
@@ -1026,10 +1052,12 @@ fn prepare_import(
         .checked_add(1)
         .ok_or_else(|| error("A revisão do catálogo de agentes atingiu o limite."))?;
     let mut native = loaded.payload.executor_models.clone();
-    let mut chat_title_model = None;
+    let mut preferences = loaded.payload.system.clone();
     for (target, choice) in selected {
         if target == system::CHAT_TITLE_MODEL_KEY {
-            chat_title_model = Some(choice);
+            preferences.chat_title_model = Some(choice);
+        } else if target == system::PROMPT_REFINEMENT_MODEL_KEY {
+            preferences.prompt_refinement_model = Some(choice);
         } else if let Some(key) = target.strip_prefix("builtin:") {
             native.insert(key.to_owned(), choice);
         } else if let Some(id) = target.strip_prefix("custom:") {
@@ -1058,6 +1086,7 @@ fn prepare_import(
             .map(|agent| format!("custom:{}", agent.id)),
     );
     bindings.insert(system::CHAT_TITLE_MODEL_KEY.into());
+    bindings.insert(system::PROMPT_REFINEMENT_MODEL_KEY.into());
     for key in [
         "standard/builder",
         "designer/designer",
@@ -1081,12 +1110,7 @@ fn prepare_import(
             .map(|key| format!("{key}:fallback"))
             .collect::<Vec<_>>(),
     );
-    Ok((
-        catalog,
-        native,
-        bindings.into_iter().collect(),
-        chat_title_model,
-    ))
+    Ok((catalog, native, bindings.into_iter().collect(), preferences))
 }
 
 fn apply_import(
@@ -1106,9 +1130,9 @@ fn apply_import(
             .as_ref()
             .map(|platform| platform.id.as_str()),
     );
-    let (catalog, native, bindings, chat_title_model) =
+    let (catalog, native, bindings, preferences) =
         prepare_import(&loaded, home, state, oauth, mappings)?;
-    loaded.payload.system.chat_title_model = chat_title_model;
+    loaded.payload.system = preferences;
     let jarvis = crate::data_dir::root(home);
     fs::create_dir_all(&jarvis)
         .map_err(|_| error("Não foi possível acessar a pasta de configuração do Jarvis."))?;
@@ -1192,6 +1216,7 @@ fn apply_import(
     }
 
     let mapped_models = usize::from(loaded.payload.system.chat_title_model.is_some())
+        + usize::from(loaded.payload.system.prompt_refinement_model.is_some())
         + native.len()
         + catalog
             .agents

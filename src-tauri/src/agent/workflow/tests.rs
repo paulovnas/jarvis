@@ -604,6 +604,7 @@ fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
         Role::Orchestrator,
         Role::Designer,
         Role::Video,
+        Role::ImageGenerator,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -618,6 +619,20 @@ fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
             Flow::Custom,
         ] {
             assert!(role.allows(flow, "progress_checkpoint", false));
+            for name in [
+                "browser_list",
+                "browser_snapshot",
+                "browser_wait",
+                "browser_screenshot",
+                "computer_status",
+                "computer_list_apps",
+                "computer_select",
+                "computer_observe",
+                "computer_stop",
+            ] {
+                assert!(role.allows(flow, name, false), "{flow:?} {role:?} {name}");
+                assert!(recovery_inspection_tool(name, false));
+            }
         }
     }
     for capability in [
@@ -628,6 +643,73 @@ fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
         let mut agent = catalog::tests::example().agents.remove(0);
         agent.capability = capability;
         assert!(custom::allowed(&agent, "progress_checkpoint"));
+        for name in [
+            "computer_status",
+            "computer_list_apps",
+            "computer_select",
+            "computer_observe",
+            "computer_stop",
+        ] {
+            agent.denied_tools = vec![name.into()];
+            assert!(custom::allowed(&agent, name));
+        }
+    }
+}
+
+#[test]
+fn plan_restricts_native_inputs_and_control_selection_even_for_a_builder() {
+    let (_fixture, hub) = hub();
+    hub.mutate(|state| {
+        state.options.mode = Mode::Plan;
+        Ok(())
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let mut definitions = tools::definitions(Mode::Plan);
+    exec.filter(&mut definitions);
+    assert!(definitions
+        .iter()
+        .any(|definition| definition["name"] == "computer_observe"));
+    assert!(!definitions
+        .iter()
+        .any(|definition| definition["name"] == "computer_click"));
+    let selection = ToolCall {
+        id: "select".into(),
+        name: "computer_select".into(),
+        args: json!({"appId":"app","windowId":1,"access":"control"}),
+        status: "pending".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    assert!(exec.preflight(&selection).is_some());
+    assert!(!exec.allowed("computer_click"));
+    hub.mutate(|state| {
+        state.options.mode = Mode::Build;
+        Ok(())
+    })
+    .unwrap();
+    assert!(exec.preflight(&selection).is_none());
+    assert!(exec.allowed("computer_click"));
+    for capability in [
+        catalog::Capability::ReadOnly,
+        catalog::Capability::WriteFiles,
+        catalog::Capability::Commands,
+    ] {
+        let mut agent = catalog::tests::example().agents.remove(0);
+        agent.native_role = Some(Role::Builder);
+        agent.capability = capability;
+        assert_eq!(
+            custom::allowed(&agent, "computer_click"),
+            capability == catalog::Capability::Commands
+        );
+        agent.denied_tools = vec!["computer_click".into()];
+        assert!(!custom::allowed(&agent, "computer_click"));
     }
 }
 
@@ -1630,6 +1712,11 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "browser_attach",
         "browser_evaluate",
         "browser_devtools",
+        "computer_click",
+        "computer_type",
+        "computer_press",
+        "computer_scroll",
+        "computer_drag",
     ] {
         assert!(!definitions.iter().any(|d| d["name"] == name));
         assert!(exec
@@ -1659,6 +1746,11 @@ fn delegated_design_discovery_enforces_read_only_and_parent_questions_even_with_
         "browser_discover",
         "browser_network",
         "browser_response_body",
+        "computer_status",
+        "computer_list_apps",
+        "computer_select",
+        "computer_observe",
+        "computer_stop",
     ] {
         assert!(
             definitions.iter().any(|d| d["name"] == name),

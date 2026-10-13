@@ -10,6 +10,7 @@ import { HooksSettings } from "./HooksSettings";
 import { PluginsSettings } from "./PluginsSettings";
 import { SkillsSettings } from "./SkillsSettings";
 import { CoreSettings } from "./CoreSettings";
+import { ComputerUseSettings } from "./ComputerUseSettings";
 import { ChatCleanupSettings } from "./ChatCleanupSettings";
 import { SystemSettings } from "./SystemSettings";
 import { TerminalSettings } from "./TerminalSettings";
@@ -67,18 +68,18 @@ import { Hint } from "@/components/ui/hint";
 
 
 const SETTINGS_SECTIONS = [
-              { value: "general", label: "Geral", Icon: Settings, description: "Preferências do aplicativo e organização das conversas." },
-              { value: "terminal", label: "Terminal", Icon: TerminalIcon, description: "Shell interativo, argumentos e aparência do terminal integrado." },
-              { value: "browser", label: "Navegador", Icon: Globe, description: "Navegação integrada ou controle do seu navegador pela extensão." },
-              { value: "voice", label: "Jarvis Voice", Icon: Mic, description: "Dite mensagens no chat e ajuste a voz das notificações do Jarvito." },
-              { value: "workspaces", label: "Espaços", Icon: Layers, description: "Projetos, conversas e armazenamento local." },
-              { value: "tools", label: "Ferramentas", Icon: Plug, description: "Prepare e acompanhe as ferramentas do ambiente." },
-              { value: "agents", label: "Fluxos", Icon: Users, description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
-              { value: "providers", label: "Provedores", Icon: Sparkles, description: "Contas, modelos e recursos de inteligência artificial." },
-              { value: "skills", label: "Skills", Icon: BookOpen, description: "Instruções especializadas disponíveis para os agentes." },
-              { value: "mcps", label: "MCPs", Icon: Plug, description: "Conecte ferramentas e serviços aos seus agentes." },
-              { value: "hooks", label: "Hooks", Icon: Anchor, description: "Comandos automáticos nos eventos das conversas." },
-              { value: "plugins", label: "Plugins", Icon: Package, description: "Pacotes de skills, MCPs, hooks e apps para os agentes." },
+              { value: "general", label: "Geral", Icon: Settings, iconClassName: "bg-muted-foreground/55", description: "Preferências do aplicativo e organização das conversas." },
+              { value: "terminal", label: "Terminal", Icon: TerminalIcon, iconClassName: "bg-secondary", description: "Shell interativo, argumentos e aparência do terminal integrado." },
+              { value: "browser", label: "Navegador", Icon: Globe, iconClassName: "bg-primary", description: "Navegação integrada ou controle do seu navegador pela extensão." },
+              { value: "voice", label: "Jarvis Voice", Icon: Mic, iconClassName: "bg-onedark-purple/55", description: "Dite mensagens no chat e ajuste a voz das notificações do Jarvito." },
+              { value: "workspaces", label: "Espaços", Icon: Layers, iconClassName: "bg-onedark-cyan/55", description: "Projetos, conversas e armazenamento local." },
+              { value: "tools", label: "Ferramentas", Icon: Plug, iconClassName: "bg-onedark-yellow/55", description: "Prepare e acompanhe as ferramentas do ambiente." },
+              { value: "agents", label: "Fluxos", Icon: Users, iconClassName: "bg-onedark-green/55", description: "Organize fluxos e agentes para o seu jeito de trabalhar." },
+              { value: "providers", label: "Provedores", Icon: Sparkles, iconClassName: "bg-primary", description: "Contas, modelos e recursos de inteligência artificial." },
+              { value: "skills", label: "Skills", Icon: BookOpen, iconClassName: "bg-onedark-purple/55", description: "Instruções especializadas disponíveis para os agentes." },
+              { value: "mcps", label: "MCPs", Icon: Plug, iconClassName: "bg-onedark-cyan/55", description: "Conecte ferramentas e serviços aos seus agentes." },
+              { value: "hooks", label: "Hooks", Icon: Anchor, iconClassName: "bg-onedark-yellow/55", description: "Comandos automáticos nos eventos das conversas." },
+              { value: "plugins", label: "Plugins", Icon: Package, iconClassName: "bg-onedark-purple/55", description: "Pacotes de skills, MCPs, hooks e apps para os agentes." },
             ];
 
 const ALIAS_SUFFIX_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -115,6 +116,7 @@ type ActiveConnection = ConnectionStart & {
 };
 
 type SettingsDialogProps = {
+  initialSection?: "computer";
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAccountsChange?: (accounts: ProviderAccount[]) => void;
@@ -148,14 +150,31 @@ function SettingsSurface({ embedded, standalone, open, onOpenChange, children }:
   return <Dialog open={open} onOpenChange={(next, details) => { if (details.reason !== "outside-press" && details.reason !== "escape-key") onOpenChange(next); }}><DialogContent showCloseButton className="settings-panel dark flex h-[min(960px,94dvh)] max-h-[94dvh] w-[calc(100vw-2rem)] max-w-none sm:max-w-[1400px] flex-col gap-0 border-border bg-background p-0 text-foreground shadow-2xl overflow-hidden motion-reduce:transition-none">{children}</DialogContent></Dialog>;
 }
 
+function SettingsPage({ value, children }: { value: string; children: ReactNode }) {
+  return <TabsContent value={value} className="settings-scroll-pane m-0 min-h-0 min-w-0 w-full overflow-y-auto"><div className="settings-page p-4 sm:p-6">{children}</div></TabsContent>;
+}
+
 export function SettingsDialog(props: SettingsDialogProps) {
   return props.open ? <SettingsSession {...props} /> : null;
 }
 
-function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProviders = false, standalone = false, onBusyChange, onCloseRequestChange }: SettingsDialogProps) {
+function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProviders = false, standalone = false, onBusyChange, onCloseRequestChange, initialSection }: SettingsDialogProps) {
   const compactSettingsNavigation = useCompactSettingsNavigation();
   const bootstrap = useBootstrapResources();
-  const [activeTab, setTab] = useState("general");
+  const [activeTab, setTab] = useState(initialSection === "computer" || window.location.hash === "#computer" ? "tools" : "general");
+  const [computerNavigation, setComputerNavigation] = useState(initialSection === "computer" || window.location.hash === "#computer" ? 1 : 0);
+  useEffect(() => {
+    const subscription = listen("settings:navigate", event => {
+      if (event.payload === "computer") { setTab("tools"); setComputerNavigation(value => value + 1); }
+    });
+    return () => { void subscription.then(stop => stop()).catch(() => {}); };
+  }, []);
+  useEffect(() => {
+    if (activeTab !== "tools" || !computerNavigation) return;
+    const section = document.getElementById("computer-use-settings");
+    section?.scrollIntoView({ block: "start" });
+    section?.focus({ preventScroll: true });
+  }, [activeTab, computerNavigation]);
   const [workflowInitialTab, setWorkflowInitialTab] = useState<"flows" | "agents">("flows");
   const setActiveTab = (value: string) => {
     if (value !== "general" && value !== "terminal" && value !== "browser" && value !== "voice" && value !== "tools" && value !== "providers" && value !== "agents" && value !== "skills" && value !== "mcps" && value !== "hooks" && value !== "plugins" && value !== "workspaces") return;
@@ -566,15 +585,15 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
   const renderList = () => {
     if (listState === "loading") {
       return (
-        <CardsSkeleton label="Carregando contas conectadas" columns />
+        <CardsSkeleton label="Carregando contas conectadas" />
       );
     }
 
     if (listState === "error") {
       return (
-        <Card className="border-[#e06c75]/40 bg-[#e06c75]/5" role="alert">
+        <Card className="border-destructive/40 bg-destructive/5" role="alert">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm text-[#e06c75]">
+            <CardTitle className="flex items-center gap-2 text-sm text-destructive">
               <AlertTriangle className="size-4" />
               Não foi possível carregar as contas
             </CardTitle>
@@ -589,7 +608,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
                 setListError(null);
                 void loadAccounts();
               }}
-              className="cursor-pointer border-[#e06c75]/40 text-[#e06c75] hover:bg-[#e06c75]/10"
+              className="cursor-pointer border-destructive/40 text-destructive hover:bg-destructive/10"
             >
               Tentar novamente
             </Button>
@@ -602,19 +621,19 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
       <div className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="micro-label text-muted-foreground">Provedores</h2>
+            <h2 className="settings-section-title text-muted-foreground">Provedores</h2>
           </div>
             <Button
               type="button"
               onClick={openAddView}
-              className="cursor-pointer gap-1.5 bg-[#61afef] text-xs font-medium text-primary-foreground hover:bg-[#61afef]/90"
+              className="cursor-pointer gap-1.5 bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90"
             >
               <Plus className="size-3.5" />
               Adicionar conta
             </Button>
         </div>
 
-          <div className="grid items-start gap-3 sm:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-3">
             <ClaudeProviderCard />
             {accounts.map((account) => (
               <ProviderAccountCard
@@ -636,7 +655,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
               />
             ))}
           </div>
-        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="micro-label text-muted-foreground">Ferramentas</h3><div className="grid gap-3 sm:grid-cols-3"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
+        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="settings-section-title text-muted-foreground">Ferramentas</h3><div className="settings-card-grid"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
       </div>
     );
   };
@@ -669,7 +688,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
               </Label>
               <InputGroup className="border-border bg-sidebar">
                 <InputGroupAddon className="border-r border-border bg-secondary/50 pl-2.5">
-                  <InputGroupText className="font-mono text-xs text-[#56b6c2]">
+                  <InputGroupText className="font-mono text-xs text-onedark-cyan">
                     {aliasPrefix}
                   </InputGroupText>
                 </InputGroupAddon>
@@ -689,17 +708,17 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
                 Use 1–32 caracteres: letras minúsculas, números e hífens internos.
               </p>
               {suffixError && (
-                <p id="provider-alias-error" role="alert" className="text-xs text-[#e06c75]">
+                <p id="provider-alias-error" role="alert" className="text-xs text-destructive">
                   {suffixError}
                 </p>
               )}
               <p className="text-xs text-foreground">
-                Alias completo: <code className="font-mono text-[#61afef]">{computedAlias}</code>
+                Alias completo: <code className="font-mono text-primary">{computedAlias}</code>
               </p>
             </div>
 
             {connectionError && (
-              <div role="alert" className="flex items-start gap-2 rounded-lg border border-[#e06c75]/35 bg-[#e06c75]/5 p-3 text-xs text-[#e06c75]">
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/35 bg-destructive/5 p-3 text-xs text-destructive">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                 <span>{connectionError}</span>
               </div>
@@ -719,7 +738,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-[#61afef] text-primary-foreground hover:bg-[#61afef]/90">
+            <Button type="submit" disabled={starting} className="cursor-pointer gap-2 text-xs bg-primary text-primary-foreground hover:bg-primary/90">
               <ShieldCheck className="size-3.5" />
               {starting ? "Iniciando conexão…" : connectionError ? "Tentar novamente" : `Conectar com ${connectionLabel}`}
             </Button>
@@ -756,14 +775,14 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
         </DialogDescription>
       </DialogHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-3 rounded-lg border border-[#61afef]/25 bg-[#61afef]/5 p-4" aria-live="polite">
-          <Spinner aria-label="Aguardando autenticação no navegador" className="size-5 text-[#61afef]" />
+        <div className="flex items-center gap-3 rounded-lg border border-primary/25 bg-primary/5 p-4" aria-live="polite">
+          <Spinner aria-label="Aguardando autenticação no navegador" className="size-5 text-primary" />
           <div>
             <p className="text-sm font-medium text-foreground">Aguardando autenticação no navegador</p>
           </div>
         </div>
         {connectionError && (
-          <p role="alert" className="text-xs text-[#e06c75]">
+          <p role="alert" className="text-xs text-destructive">
             {connectionError}
           </p>
         )}
@@ -774,7 +793,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
           variant="outline"
           onClick={() => void cancelActiveConnection(false)}
           disabled={cancelling}
-          className="cursor-pointer border-[#e06c75]/40 text-xs text-[#e06c75] hover:bg-[#e06c75]/10"
+          className="cursor-pointer border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
         >
           {cancelling ? "Cancelando conexão…" : "Cancelar conexão"}
         </Button>
@@ -801,32 +820,32 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
           </DialogHeader>}
 
           <SettingsTabs.Root orientation="vertical" value={activeTab} onValueChange={value => { if (typeof value === "string") setActiveTab(value); }} className="group/tabs flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
-            <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-48 sm:p-3">
+              <div className="settings-navigation w-14 shrink-0 overflow-y-auto border-r border-border bg-sidebar p-2 sm:w-60 sm:p-3">
               <TabsList aria-label="Configurações" className="h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
-                {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} disabled={hooksBusy || pluginsBusy} className="h-10 flex-none cursor-pointer justify-center gap-2.5 px-2 text-xs sm:justify-start">
-                  <section.Icon aria-hidden="true" className="size-4" />
+                  {SETTINGS_SECTIONS.map(section => <Hint key={section.value} content={section.label} disabled={!compactSettingsNavigation}><TabsTrigger value={section.value} disabled={hooksBusy || pluginsBusy} className="h-9 flex-none cursor-pointer justify-center gap-2.5 px-3 text-sm sm:justify-start">
+                    <span className={`flex size-6 shrink-0 items-center justify-center rounded-md text-primary-foreground ${section.iconClassName}`}><section.Icon aria-hidden="true" className="size-4" /></span>
                   <span className="sr-only min-w-0 flex-1 text-left sm:not-sr-only">{section.label}</span>
                   <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">{section.value === "providers" && listState === "ready" ? accounts.length + 1 : section.value === "skills" ? visibleSkillCount : section.value === "mcps" ? mcpCount : null}</span>
                 </TabsTrigger></Hint>)}
               </TabsList>
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="shrink-0 border-b border-border px-4 py-4 sm:px-6">
-                <h2 className="text-sm font-medium">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
+                <div className="shrink-0 border-b border-border px-4 py-5 sm:px-6">
+                  <h2 className="text-lg font-semibold">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
-              <TabsContent value="general" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "general" && <div className="w-full"><SystemSettings accounts={accounts} /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</TabsContent>
-              <TabsContent value="terminal" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "terminal" && <TerminalSettings />}</TabsContent>
-              <TabsContent value="browser" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "browser" && <BrowserSettings />}</TabsContent>
-              <TabsContent value="voice" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "voice" && <VoiceSettings />}</TabsContent>
-              <TabsContent value="workspaces" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "workspaces" && <WorkspaceSettings />}</TabsContent>
-              <TabsContent value="tools" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "tools" && <CoreSettings />}</TabsContent>
-              <TabsContent value="agents" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "agents" && <WorkflowSettings accounts={accounts} initialTab={workflowInitialTab} />}</TabsContent>
-              <TabsContent value="skills" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</TabsContent>
-              <TabsContent value="providers" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{renderList()}</TabsContent>
-              <TabsContent value="mcps" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "mcps" && <div className="w-full"><McpSettings onCountChange={updateMcpCount} /></div>}</TabsContent>
-              <TabsContent value="hooks" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "hooks" && <HooksSettings onBusyChange={setHooksBusy} />}</TabsContent>
-              <TabsContent value="plugins" className="m-0 min-h-0 min-w-0 overflow-y-auto p-4 sm:p-6">{activeTab === "plugins" && <PluginsSettings accounts={accounts} onBusyChange={setPluginsBusy} />}</TabsContent>
+                <SettingsPage value="general">{activeTab === "general" && <div className="w-full"><SystemSettings accounts={accounts} /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</SettingsPage>
+                <SettingsPage value="terminal">{activeTab === "terminal" && <TerminalSettings />}</SettingsPage>
+                <SettingsPage value="browser">{activeTab === "browser" && <BrowserSettings />}</SettingsPage>
+                <SettingsPage value="voice">{activeTab === "voice" && <VoiceSettings />}</SettingsPage>
+                <SettingsPage value="workspaces">{activeTab === "workspaces" && <WorkspaceSettings />}</SettingsPage>
+                <SettingsPage value="tools">{activeTab === "tools" && <div className="space-y-6"><ComputerUseSettings /><CoreSettings /></div>}</SettingsPage>
+                <SettingsPage value="agents">{activeTab === "agents" && <WorkflowSettings accounts={accounts} initialTab={workflowInitialTab} />}</SettingsPage>
+                <SettingsPage value="skills">{activeTab === "skills" && <SkillsSettings onCountChange={updateSkillCount} />}</SettingsPage>
+                <SettingsPage value="providers">{renderList()}</SettingsPage>
+                <SettingsPage value="mcps">{activeTab === "mcps" && <div className="w-full"><McpSettings onCountChange={updateMcpCount} /></div>}</SettingsPage>
+                <SettingsPage value="hooks">{activeTab === "hooks" && <HooksSettings onBusyChange={setHooksBusy} />}</SettingsPage>
+                <SettingsPage value="plugins">{activeTab === "plugins" && <PluginsSettings accounts={accounts} onBusyChange={setPluginsBusy} />}</SettingsPage>
             </div>
           </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>

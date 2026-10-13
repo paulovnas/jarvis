@@ -30,19 +30,19 @@ Jarvis é uma GUI de coding agent construída com **Tauri v2 (Rust) + React 19 +
 - NADA é criado do zero "na unha" (botões, inputs, modais, menus...). Exceção única: o shadcn não oferece o componente; nesse caso, construa-o COMPONdo primitivos shadcn/Radix existentes, dentro de `src/components/`.
 - **cursor-pointer obrigatório:** todo componente interativo (button, select, menu item, tab, switch, checkbox, link, card clicável, etc.) DEVE indicar interatividade com cursor pointer. O CSS base (`src/index.css`) já cobre elementos nativos, mas qualquer elemento customizado clicável DEVE receber explicitamente a classe `cursor-pointer`.
 - Componentes gerados pelo shadcn (`src/components/ui`, hooks gerados como `use-mobile`) são código de registry: não reestilizar à mão nem "consertar" lint neles — já estão isentos no eslint config.
-### Design System: Precision Industrial / Cyber-Deck
+### Design System: Native macOS
 
-- **Direção de arte:** siga `DESIGN.md`. Superfícies de grafite, bisel superior sutil e módulos compactos; preserve o neon arco-íris do composer em execução.
-- **Tipografia:** **Roboto** na interface e prosa; **JetBrains Mono** nos metadados, caminhos, modelos, tokens e durações. Fontes locais em `src/index.css`.
+- **Direção de arte:** siga `DESIGN.md`. A referência principal é o aplicativo macOS fornecido pelo usuário: cinzas neutros, navegação persistente, seleção suave, grupos de configurações com linhas separadas e controles discretos. Em 12/10/2026, o usuário escolheu explicitamente um indicador discreto no composer; não restaurar neon ou bordas arco-íris.
+- **Tipografia:** fonte de sistema na interface e prosa, com **Roboto** local como fallback; **JetBrains Mono** nos metadados técnicos, caminhos, modelos, tokens e durações. Fontes definidas em `src/index.css`.
 - **Cores e Tema:** use tokens semânticos em vez de hexadecimais nos componentes:
-  - Background principal: `#181b20`
-  - Superfícies/Cards: `#20242b`; sidebar: `#14171b`
-  - Painéis secundários: `#292e37`
-  - Bordas: branco com 9% de opacidade; destaque superior inset de 1px
-  - Texto principal: `#d7dce5`; secundário: `#969eac`
-  - Destaques semânticos: Azul `#61afef` (primário/ações), Verde `#98c379` (sucesso/terminal), Ciano `#56b6c2` (info/workspace), Amarelo `#e5c07b` (atenção/chaves), Vermelho `#e06c75` (destrutivo/erro), Roxo `#c678dd`.
+  - Background principal: `#242526`
+  - Superfícies/Cards: `#2b2d2e`; sidebar: `#282a2b`
+  - Painéis secundários: `#343637`; seleção: `#404345`
+  - Bordas: branco com 9% de opacidade; elevação sutil com sombra deslocada
+  - Texto principal: `#ededed`; secundário: `#b0b3b7`
+  - Ações preenchidas: Azul `#0071e3` com texto branco. Destaques de texto usam os tokens semânticos legíveis: Azul `#69b0ff`, Verde `#84d18a`, Ciano `#75d5de`, Amarelo `#edc46a`, Vermelho `#ff9096`, Roxo `#d5a6f3`.
 - **Feedback visual:** Use o componente Sonner (`toast` / `Toaster`) para notificações de ação do usuário.
-- **Forma:** cards e painéis de 6–8px; cápsula de 22px apenas no composer. Micro-labels curtas em caixa alta; textos úteis e concisos.
+- **Forma:** grupos de configurações com 10–12px; composer com 16px; controles compactos e separadores finos. Títulos em caixa normal; textos úteis e concisos.
 - **Loading states:** Use structural shadcn Skeletons for content loading, preserving the expected layout. Reuse `src/components/layout/LoadingSkeletons.tsx`; keep accessible status labels and respect reduced motion. Reserve spinners for ongoing actions or execution without a predictable content structure.
 
 ### Testes são OBRIGATÓRIOS (não opcionais)

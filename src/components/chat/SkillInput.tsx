@@ -21,9 +21,9 @@ import { skillError, skillsSnapshotSchema, type Skill } from "@/core/skills";
 function SkillNode({ node, deleteNode, editor }: NodeViewProps) {
   const name = typeof node.attrs.name === "string" ? node.attrs.name : "Skill";
   return <NodeViewWrapper as="span" className="inline" contentEditable={false}>
-    <Badge variant="outline" className="mx-0.5 inline-flex gap-1 border-[#c678dd]/30 bg-[#c678dd]/10 align-baseline text-[#c678dd]">
+    <Badge variant="outline" className="mx-0.5 inline-flex gap-1 border-onedark-purple/30 bg-onedark-purple/10 align-baseline text-onedark-purple">
       <BookOpen aria-hidden="true" />{name}
-      <Hint content={`Remover ${name}`}><Button type="button" variant="ghost" size="icon" className="size-4 cursor-pointer rounded-full p-0 text-current hover:bg-[#c678dd]/20" aria-label={`Remover skill ${name}`} disabled={!editor.isEditable} onClick={() => { if (editor.isEditable) { deleteNode(); editor.view.focus(); } }}><X /></Button></Hint>
+      <Hint content={`Remover ${name}`}><Button type="button" variant="ghost" size="icon" className="size-4 cursor-pointer rounded-full p-0 text-current hover:bg-onedark-purple/20" aria-label={`Remover skill ${name}`} disabled={!editor.isEditable} onClick={() => { if (editor.isEditable) { deleteNode(); editor.view.focus(); } }}><X /></Button></Hint>
     </Badge>
   </NodeViewWrapper>;
 }
@@ -147,12 +147,14 @@ interface Props {
   working: boolean;
   children: ReactNode;
   attachments?: ReactNode;
+  actions?: ReactNode;
+  loading?: ReactNode;
   onFiles?: (files: File[]) => void;
   loadHistory?: (before?: number) => Promise<{ messages: string[]; before: number }>;
   ref?: Ref<{ focus: () => void }>;
 }
 
-export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, onFiles, loadHistory, ref }: Props) {
+export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, actions, loading, onFiles, loadHistory, ref }: Props) {
   const [query, setQuery] = useState<Query | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{ skills?: Skill[]; error?: string } | null>(null);
@@ -198,7 +200,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
   useEffect(() => {
     if (disabled) cancelHistory();
     if (!editor || editor.isDestroyed) return;
-    editor.setEditable(!disabled);
+    editor.setEditable(!disabled, false);
     editor.view.dom.setAttribute("aria-disabled", String(disabled));
   }, [editor, disabled, cancelHistory]);
   async function navigateHistory(direction: -1 | 1) {
@@ -290,13 +292,17 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     {open && <Command label="Skills disponíveis" shouldFilter={false} value={activeSkill?.id ?? ""} onValueChange={setSelected} className="mx-3 mb-1 h-auto w-auto rounded-lg border border-border bg-card p-1 shadow-lg">
       <CommandList id={listId} aria-label="Skills disponíveis" className="max-h-52">
         {!catalog ? <div role="status" aria-label="Carregando skills" className="flex flex-col gap-3 p-3">{[0, 1, 2].map(i => <div key={i} className="flex gap-3"><Skeleton className="size-5" /><Skeleton className="h-4 w-1/3" /><Skeleton className="h-4 flex-1" /></div>)}</div> : catalog.error ? <p role="alert" className="p-3 text-xs text-destructive">{catalog.error}</p> : attached.length >= 8 ? <p className="p-3 text-xs text-muted-foreground">Limite de 8 skills por mensagem.</p> : choices.length === 0 ? <p className="p-3 text-xs text-muted-foreground">Nenhuma skill encontrada.</p> : choices.map(skill => <CommandItem id={`${listId}-${skill.id}`} key={skill.id} value={skill.id} onSelect={() => choose(skill)} onMouseDown={event => event.preventDefault()} className="cursor-pointer gap-2 py-2 text-xs [&>svg:last-child]:hidden">
-          <BookOpen className="text-[#c678dd]" aria-hidden="true" /><span className="max-w-[40%] truncate font-medium">{skill.name}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{skill.description}</span><span className="shrink-0 text-[10px] text-muted-foreground">{origins[skill.origin]}</span>
+          <BookOpen className="text-onedark-purple" aria-hidden="true" /><span className="max-w-[40%] truncate font-medium">{skill.name}</span><span className="min-w-0 flex-1 truncate text-muted-foreground">{skill.description}</span><span className="shrink-0 text-[10px] text-muted-foreground">{origins[skill.origin]}</span>
         </CommandItem>)}
       </CommandList>
     </Command>}
-    <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch rounded-[22px] border-border bg-card shadow-2xl shadow-black/30 focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
+    <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting || Boolean(loading)} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch rounded-2xl border-border bg-card focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
       {attachments}
-      <EditorContent editor={editor} className="min-w-0 w-full" />
+      <div className={`relative min-w-0 w-full ${actions ? "[&_.skill-editor]:pr-14" : ""}`}>
+        <EditorContent editor={editor} aria-hidden={Boolean(loading)} className={loading ? "invisible" : undefined} />
+        {loading && <div className="absolute inset-0 bg-card">{loading}</div>}
+      </div>
+      {actions && <InputGroupAddon align="inline-end" className="absolute right-3 top-3 z-10 p-0">{actions}</InputGroupAddon>}
       <InputGroupAddon align="block-end" className="p-0 font-normal select-auto">{children}</InputGroupAddon>
     </InputGroup>
   </div>;

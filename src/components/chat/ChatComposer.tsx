@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { ArrowUp, Globe, LoaderCircle, MousePointer2, Paperclip, Plus, Send, Square } from "lucide-react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowUp, Globe, LoaderCircle, MousePointer2, Paperclip, Plus, Send, Sparkles, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/TextInput";
@@ -9,7 +9,8 @@ import { toast } from "sonner";
 import { attachmentSchema, uploadFile } from "@/core/attachments";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { FlowPicker } from "./FlowPicker";
-import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
+import { ComposerSkeleton, PromptRefinementSkeleton } from "@/components/layout/LoadingSkeletons";
+import { refinePrompt } from "@/core/prompt-refinement";
 import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
 import { claudeModels, executionChoice, executionSelection, executorOf, fastModeUnavailable, selectModelChoice, type ExecutionChoice } from "@/core/executors";
@@ -42,6 +43,7 @@ import type { ImpeccableLiveController } from "@/hooks/use-impeccable-live";
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  computerControl?: ReactNode;
   draftInsertion?: { id: string; text: string };
   onOpenBrowser?: () => void;
   browserBusy?: boolean;
@@ -76,6 +78,7 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  computerControl,
   draftInsertion,
   onOpenBrowser,
   browserBusy = false,
@@ -116,6 +119,12 @@ export function ChatComposer({
   const importing = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const refinementControl = useRef({ request: 0, locked: false });
+  useEffect(() => {
+    const control = refinementControl.current;
+    return () => { control.request++; control.locked = false; };
+  }, []);
   const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
   const removeLocks = useRef(new Set<string>());
   const lastInsertion = useRef<string | null>(null);
@@ -134,8 +143,28 @@ export function ChatComposer({
     if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
     updateDraft(value);
   };
+  const handleRefine = async () => {
+    if (refinementControl.current.locked || disabled || compacting || sending || uploading || !draftRef.current.content.trim()) return;
+    refinementControl.current.locked = true;
+    const request = ++refinementControl.current.request;
+    setRefining(true);
+    try {
+      await stopDictation(draftKey ? `chat:${draftKey}` : undefined);
+      if (request !== refinementControl.current.request) return;
+      const submitted = draftRef.current;
+      const refined = await refinePrompt(submitted);
+      if (request !== refinementControl.current.request) return;
+      if (draftRef.current !== submitted) { toast.info("O rascunho mudou durante o refinamento. Seu texto atual foi mantido."); return; }
+      setDraft(refined);
+      requestAnimationFrame(() => input.current?.focus());
+    } catch (cause) {
+      if (request === refinementControl.current.request) toast.error(libraryError(cause, "Não foi possível refinar o prompt. Seu texto foi mantido."));
+    } finally {
+      if (request === refinementControl.current.request) { refinementControl.current.locked = false; setRefining(false); }
+    }
+  };
   async function addFiles(files: File[]) {
-    if (!draftKey || disabled || compacting || importing.current || !files.length) return;
+    if (!draftKey || disabled || compacting || refinementControl.current.locked || importing.current || !files.length) return;
     const existing = draftRef.current.parts?.filter(part => part.type === "attachment") ?? [];
     if (files.length + existing.length > 8 || files.reduce((sum, file) => sum + file.size, existing.reduce((sum, part) => sum + part.attachment.size, 0)) > 50 * 1024 * 1024) { toast.error("Anexe até 8 arquivos, somando no máximo 50 MB."); return; }
     importing.current = true; setUploading(true);
@@ -193,7 +222,7 @@ export function ChatComposer({
     const submitted = draftRef.current;
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
     if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return false; }
-    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
+    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || refinementControl.current.locked || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
     const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" } : {}) });
     if (choice.executor === "jarvis" && !choice.account) return false;
     sendLock.current = true;
@@ -344,11 +373,11 @@ export function ChatComposer({
         onReorder={onReorderQueued}
         onResume={onResumeQueue}
       />}
-      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting} compacting={compacting} working={running || compacting}>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} actions={<Hint content="Refinar prompt"><Button type="button" variant="ghost" size="icon" aria-label="Refinar prompt" aria-busy={refining} disabled={!text.trim() || disabled || compacting || refining || sending || uploading} className="size-7 cursor-pointer rounded-lg text-muted-foreground hover:text-primary" onClick={() => { void handleRefine(); }}><Sparkles aria-hidden="true" className="size-4" /></Button></Hint>} loading={refining ? <PromptRefinementSkeleton /> : undefined} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending || refining} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting || refining} compacting={compacting} working={running || compacting}>
 
         <div className="flex w-full min-w-0 flex-col">
         {draftKey && <div className="px-4"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}
-        {/* Linha de controles inferior no padrão Metis */}
+        {compacting && <p role="status" aria-label="Estado da execução" className="flex items-center gap-2 px-4 pb-2 text-xs text-muted-foreground"><span aria-hidden="true" className="size-1.5 rounded-full bg-onedark-blue" />Organizando contexto</p>}
         <div className="composer-controls flex w-full items-center justify-between gap-1 px-3 pb-3 pt-1">
           <DropdownMenu>
             <Hint content="Mais ações"><DropdownMenuTrigger render={<Button
@@ -360,7 +389,7 @@ export function ChatComposer({
             />}><Plus className="stroke-[2.2]" /></DropdownMenuTrigger></Hint>
             <DropdownMenuContent side="top" align="start" className="w-60">
               <DropdownMenuGroup>
-                <DropdownMenuItem className="cursor-pointer" disabled={disabled || compacting || uploading || !draftKey} onClick={() => fileInput.current?.click()}><Paperclip />Anexar arquivos</DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer" disabled={disabled || compacting || refining || uploading || !draftKey} onClick={() => fileInput.current?.click()}><Paperclip />Anexar arquivos</DropdownMenuItem>
                 {onOpenBrowser && <DropdownMenuItem className="cursor-pointer" disabled={browserBusy} onClick={onOpenBrowser}><Globe />Nova aba de navegador</DropdownMenuItem>}
                 {onOpenHttp && <DropdownMenuItem className="cursor-pointer" disabled={httpBusy} onClick={onOpenHttp}><Send />Nova requisição HTTP</DropdownMenuItem>}
               </DropdownMenuGroup>
@@ -369,7 +398,8 @@ export function ChatComposer({
           <Input ref={fileInput} type="file" multiple className="hidden" aria-label="Selecionar anexos" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.pdf,.docx,.odt,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.ts,.tsx,.js,.css,.html,.rs,.py" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
 
           {/* Canto inferior direito: seletor de modo/agente, seletor de modelo e botão redondo de envio */}
-          {draftKey && <VoiceControls target={`chat:${draftKey}`} disabled={disabled || compacting || sending || !selectionReady} onDictation={text => { setDraft(mergeDrafts(draftRef.current, { content: text })); input.current?.focus(); }} />}
+          {draftKey && <VoiceControls target={`chat:${draftKey}`} disabled={disabled || compacting || sending || refining || !selectionReady} onDictation={text => { setDraft(mergeDrafts(draftRef.current, { content: text })); input.current?.focus(); }} />}
+          {computerControl}
           {designLive && <Hint content={designLive.active ? "Desligar Impeccable Live" : "Editar o projeto visualmente com Impeccable Live"}><Button type="button" variant="ghost" size="icon" aria-label={designLive.active ? "Desligar Impeccable Live" : "Ativar Impeccable Live"} aria-pressed={designLive.active} disabled={!designLive.loaded || designLive.busy || (!designLive.active && (disabled || sending || !liveOptions))} className={`size-7.5 cursor-pointer rounded-full ${designLive.active ? "bg-onedark-purple/15 text-onedark-purple" : "text-muted-foreground hover:text-onedark-purple"}`} onClick={() => {
             if (liveOptions || designLive.active) void designLive.toggle(liveOptions, liveUrl);
           }}>{designLive.busy ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <MousePointer2 className="size-3.5" />}</Button></Hint>}
@@ -380,16 +410,16 @@ export function ChatComposer({
             <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) } : effectiveSelection} onSelect={chooseModel} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity allowFastMode onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 
             {/* Botão redondo com seta pra cima no canto inferior direito */}
-            {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="destructive" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5" /></Button></Hint>}
+            {running && !compacting && <Hint content="Interromper execução"><Button type="button" size="icon" variant="secondary" className="size-7.5 cursor-pointer rounded-full" aria-label="Interromper execução" onClick={() => { void onStop?.(); }}><Square className="size-3.5 text-onedark-red/80" /></Button></Hint>}
             <Hint content={running ? "Agendar mensagem" : "Enviar mensagem"}><Button
               type="button"
               size="icon"
               onClick={() => { void handleSend(); }}
-              disabled={(!text.trim() && !attachments.length) || disabled || !selectionReady || Boolean(modelError) || customUnavailable || compacting || choosingModel || sending || uploading || !currentModelDef}
+              disabled={(!text.trim() && !attachments.length) || disabled || !selectionReady || Boolean(modelError) || customUnavailable || compacting || refining || choosingModel || sending || uploading || !currentModelDef}
               aria-label={running ? "Agendar mensagem" : "Enviar mensagem"}
               className={`size-7.5 cursor-pointer rounded-full transition-all ${
                 text.trim() || attachments.length
-                  ? "bg-[#61afef] text-primary-foreground shadow-sm shadow-[#61afef]/30 hover:bg-[#61afef]/90 active:scale-95"
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95"
                   : "cursor-not-allowed bg-secondary text-muted-foreground"
               }`}
             >

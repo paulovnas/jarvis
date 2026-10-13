@@ -38,6 +38,10 @@ use objc2_quartz_core::{CALayer, CATransaction};
 struct SurfaceIvars {
   browser: RefCell<Option<Browser>>,
   closed: Cell<bool>,
+  #[cfg(feature = "browser-probe")]
+  paint_count: Cell<NSUInteger>,
+  #[cfg(feature = "browser-probe")]
+  resize_count: Cell<NSUInteger>,
   input: RefCell<input::InputState>,
   popup_layer: Retained<CALayer>,
   accessibility: RefCell<accessibility::State>,
@@ -50,6 +54,12 @@ define_class!(
   struct SurfaceView;
 
   impl SurfaceView {
+    #[cfg(feature = "browser-probe")]
+    #[unsafe(method(jarvisPaintCount))]
+    fn paint_count(&self) -> NSUInteger { self.ivars().paint_count.get() }
+    #[cfg(feature = "browser-probe")]
+    #[unsafe(method(jarvisFrameSizeCalls))]
+    fn resize_count(&self) -> NSUInteger { self.ivars().resize_count.get() }
     #[unsafe(method(isOpaque))]
     fn is_opaque(&self) -> bool { false }
     #[unsafe(method(isFlipped))]
@@ -80,6 +90,8 @@ define_class!(
     fn moved_to_window(&self) { self.screen_changed(); }
     #[unsafe(method(setFrameSize:))]
     fn set_frame_size(&self, size: NSSize) {
+      #[cfg(feature = "browser-probe")]
+      self.ivars().resize_count.set(self.ivars().resize_count.get().saturating_add(1));
       // The superclass updates its backing layer before CEF asks for the next view rectangle.
       unsafe { let _: () = msg_send![super(self), setFrameSize: size]; }
       if let Some(host) = self.host() { host.was_resized(); }
@@ -240,6 +252,10 @@ impl OffscreenView {
     let allocated = SurfaceView::alloc(mtm).set_ivars(SurfaceIvars {
       browser: RefCell::new(None),
       closed: Cell::new(false),
+      #[cfg(feature = "browser-probe")]
+      paint_count: Cell::new(0),
+      #[cfg(feature = "browser-probe")]
+      resize_count: Cell::new(0),
       input: RefCell::new(input::InputState::default()),
       popup_layer,
       accessibility: RefCell::new(accessibility::State::default()),
@@ -405,6 +421,10 @@ wrap_render_handler! {
       // CGImage is a supported, retained CALayer contents object.
       unsafe { layer.setContents(Some(&*(image.as_ref() as *const CGImage).cast::<AnyObject>())); }
       CATransaction::commit();
+      #[cfg(feature = "browser-probe")]
+      if kind == PaintElementType::VIEW {
+        view.ivars().paint_count.set(view.ivars().paint_count.get().saturating_add(1));
+      }
     }
 
     fn on_ime_composition_range_changed(&self, browser: Option<&mut Browser>, range: Option<&Range>, bounds: Option<&[Rect]>) {

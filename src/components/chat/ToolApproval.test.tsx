@@ -1,8 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { computerSnapshot, computerTarget } from "@/test/computer-fixtures";
 import type { PendingApproval } from "@/core/chat";
 import { ToolApproval } from "./ToolApproval";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(computerSnapshot({ targets: [computerTarget] })); });
 
 const commandRequest = (overrides?: Partial<NonNullable<PendingApproval["policy"]>>): PendingApproval => ({
   tool: {
@@ -26,6 +31,47 @@ const commandRequest = (overrides?: Partial<NonNullable<PendingApproval["policy"
     sandbox: { backend: "macosSeatbelt", availability: "full", filesystemIsolated: true, network: "allowed", processTreeIsolated: true, reason: null },
     ...overrides,
   },
+});
+
+it("reviews native input once without offering a broader execution grant", async () => {
+  const user = userEvent.setup();
+  const onAnswer = vi.fn().mockResolvedValue(true);
+  const request = commandRequest();
+  request.tool = { ...request.tool, name: "computer_click", args: { targetId: "safari-window", observationId: "observation-1", element: "submit" } };
+  render(<ToolApproval request={request} projectPath="/projeto" conversationId="c1" onAnswer={onAnswer} />);
+  expect(await screen.findByText("Safari")).toBeVisible();
+  expect(screen.getByText("Documentação")).toBeVisible();
+  expect(screen.getByText("Autorizar interação no aplicativo?")).toBeVisible();
+  expect(screen.getByText("Alvo autorizado")).toBeVisible();
+  expect(screen.getAllByText("safari-window")).toHaveLength(2);
+  expect(screen.queryByRole("switch", { name: "Lembrar esta autorização" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Escopo da autorização" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Autorizar uma vez" }));
+  await waitFor(() => expect(onAnswer).toHaveBeenCalledWith({ approved: true, grant: null }));
+});
+
+it("keeps a refused native input action unapproved", async () => {
+  const user = userEvent.setup();
+  const onAnswer = vi.fn().mockResolvedValue(true);
+  const request = commandRequest();
+  request.tool = { ...request.tool, name: "computer_type", args: { targetId: "safari-window", observationId: "observation-1", text: "Texto proposto" } };
+  render(<ToolApproval request={request} projectPath="/projeto" conversationId="c1" onAnswer={onAnswer} />);
+  expect(screen.getByText("Texto proposto")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Recusar" }));
+  expect(onAnswer).toHaveBeenCalledWith({ approved: false, grant: null });
+});
+
+it("does not approve a native action when its verified target has disappeared", async () => {
+  const user = userEvent.setup();
+  const onAnswer = vi.fn().mockResolvedValue(true);
+  vi.mocked(invoke).mockResolvedValue(computerSnapshot());
+  const request = commandRequest();
+  request.tool = { ...request.tool, name: "computer_press", args: { targetId: "missing", observationId: "observation-1", key: "Enter", appName: "Untrusted Safari" } };
+  render(<ToolApproval request={request} projectPath="/projeto" conversationId="c1" onAnswer={onAnswer} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("O alvo desta ação não está disponível para revisão.");
+  expect(screen.getByRole("button", { name: "Autorizar uma vez" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Recusar" }));
+  expect(onAnswer).toHaveBeenCalledWith({ approved: false, grant: null });
 });
 
 it("explains and submits a one-time approval for a terminal owned by another context", async () => {

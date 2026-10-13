@@ -22,6 +22,7 @@ pub enum Kind {
     Vision,
     ImageGeneration,
     ChatTitle,
+    PromptRefinement,
     BuiltinAgent,
     CustomAgent,
     Conversation,
@@ -218,6 +219,7 @@ fn conversations(db: &Connection) -> Result<Vec<Conversation>, ProviderError> {
 
 struct InventorySources {
     title: Option<ModelChoice>,
+    refinement: Option<ModelChoice>,
     profiles: workflow::settings::ModelSettings,
     catalog: workflow::catalog::Catalog,
     conversations: Vec<Conversation>,
@@ -229,9 +231,9 @@ impl InventorySources {
         mut conversations: Vec<Conversation>,
         mut read_choices: impl FnMut(&Path) -> Result<Vec<(TurnOptions, bool)>, ProviderError>,
     ) -> Result<Self, ProviderError> {
-        let title = crate::system::backup_preferences(home)
-            .map_err(storage)?
-            .chat_title_model;
+        let preferences = crate::system::backup_preferences(home).map_err(storage)?;
+        let title = preferences.chat_title_model;
+        let refinement = preferences.prompt_refinement_model;
         let profiles = workflow::settings::read(home).map_err(storage)?;
         let catalog = workflow::catalog::read(home).map_err(storage)?;
         for conversation in &mut conversations {
@@ -249,6 +251,7 @@ impl InventorySources {
         }
         Ok(Self {
             title,
+            refinement,
             profiles,
             catalog,
             conversations,
@@ -269,6 +272,7 @@ fn inventory_from_sources(
 ) -> Result<Vec<Reference>, ProviderError> {
     let InventorySources {
         title,
+        refinement,
         profiles,
         catalog,
         conversations,
@@ -280,6 +284,16 @@ fn inventory_from_sources(
             crate::system::CHAT_TITLE_MODEL_KEY.into(),
             Kind::ChatTitle,
             "Títulos das conversas".into(),
+            vec!["Configurações gerais".into()],
+            choice,
+        )?);
+    }
+    if let Some(choice) = refinement {
+        references.push(reference(
+            db,
+            crate::system::PROMPT_REFINEMENT_MODEL_KEY.into(),
+            Kind::PromptRefinement,
+            "Refinar prompt".into(),
             vec!["Configurações gerais".into()],
             choice,
         )?);
@@ -573,7 +587,11 @@ fn apply(
         if replacement.choice.executor != crate::claude::Executor::Jarvis
             && matches!(
                 item.kind,
-                Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle
+                Kind::WebSearch
+                    | Kind::Vision
+                    | Kind::ImageGeneration
+                    | Kind::ChatTitle
+                    | Kind::PromptRefinement
             )
         {
             return Err(error(
@@ -798,7 +816,11 @@ pub async fn remove(
             if replacement.choice.executor != crate::claude::Executor::Jarvis {
                 if matches!(
                     item.kind,
-                    Kind::WebSearch | Kind::Vision | Kind::ImageGeneration | Kind::ChatTitle
+                    Kind::WebSearch
+                        | Kind::Vision
+                        | Kind::ImageGeneration
+                        | Kind::ChatTitle
+                        | Kind::PromptRefinement
                 ) {
                     return Err(error(
                         "Esta ferramenta requer um provedor Jarvis, não um executor externo.",

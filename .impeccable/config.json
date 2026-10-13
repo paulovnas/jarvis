@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-10-09T13:09:43.579Z",
+        "reason": "Agent review: reasoning-shimmer is an existing active execution indicator, with reduced-motion fallback and a regression test in WorkflowAgents.test.tsx; no decorative heading gradient."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-10-09T13:10:52.907Z",
+        "reason": "Agent review: the only match is .markdown-editor-prose blockquote, a neutral semantic quote marker, not an accent tab or card."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "browser-extension/page.test.ts"
+        ],
+        "createdAt": "2026-10-11T16:22:53.969Z",
+        "reason": "Agent review: the existing img without src is an intentional accessible-name fixture; it is never rendered in product UI."
+      }
+    ]
+  }
+}

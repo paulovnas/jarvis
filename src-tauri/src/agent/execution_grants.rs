@@ -1,8 +1,11 @@
 //! Scoped execution grants.
 //!
-//! Grants can only turn a policy `Ask` into `Allow`; a policy `Deny` is final.
+//! Execution grants can only turn a policy `Ask` into `Allow`; a policy `Deny` is final.
+//! Native app grants grant session access to one exact app in one conversation;
+//! they never replace per-input human review.
 //! Command-prefix matching uses argv element boundaries, never raw text.
 
+use super::computer::{AppIdentity, ComputerAccess};
 use super::execution_policy::{CommandPlan, ExecutionDecision, ExecutionEffects, PolicyOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -68,6 +71,10 @@ impl GrantDuration {
     rename_all_fields = "camelCase"
 )]
 pub(super) enum GrantSubject {
+    NativeApp {
+        identity: AppIdentity,
+        access: ComputerAccess,
+    },
     CommandExact {
         plan: CommandPlan,
     },
@@ -208,15 +215,20 @@ impl GrantStore {
         if stored.version != STORE_VERSION {
             return Err("A versão das autorizações de execução não é compatível.".into());
         }
-        stored
-            .grants
-            .retain(|grant| grant.duration.persisted() && !grant.expired(now));
+        stored.grants.retain(|grant| {
+            grant.duration.persisted()
+                && !grant.expired(now)
+                && !matches!(grant.subject, GrantSubject::NativeApp { .. })
+        });
         state.path = Some(path);
         state.grants = stored.grants;
         persist(&state)
     }
 
     pub(super) fn create(&self, request: CreateGrant<'_>) -> Result<ExecutionGrant, String> {
+        if request.tool_name.starts_with("computer_") {
+            return Err("O acesso a aplicativos exige autorização explícita na conversa; inputs não permitem regras reutilizáveis.".into());
+        }
         if request.outcome.decision != ExecutionDecision::Ask {
             return Err("Somente decisões que pedem autorização podem gerar um grant.".into());
         }
@@ -257,7 +269,7 @@ impl GrantStore {
         context: GrantContext<'_>,
         now: u64,
     ) -> Result<Option<String>, String> {
-        if outcome.decision != ExecutionDecision::Ask {
+        if outcome.decision != ExecutionDecision::Ask || tool_name.starts_with("computer_") {
             return Ok(None);
         }
         let mut state = self
@@ -280,6 +292,116 @@ impl GrantStore {
             persist(&state)?;
         }
         Ok(result)
+    }
+
+    pub(super) fn create_computer(
+        &self,
+        conversation: &str,
+        identity: AppIdentity,
+        access: ComputerAccess,
+        now: u64,
+    ) -> Result<ExecutionGrant, String> {
+        let scope = GrantScope::Conversation {
+            conversation_id: conversation.into(),
+        };
+        validate_scope(&scope, now, GrantDuration::Session)?;
+        let normalized = |text: &str| {
+            !text.is_empty()
+                && text.len() <= 4096
+                && !text.contains('\0')
+                && Path::new(text).is_absolute()
+                && !Path::new(text).components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )
+                })
+        };
+        if identity.bundle_id.trim().is_empty()
+            || identity.bundle_id.len() > 256
+            || identity.bundle_id.contains('\0')
+            || !normalized(&identity.bundle_path)
+            || !normalized(&identity.executable_path)
+            || Path::new(&identity.bundle_path)
+                .extension()
+                .is_none_or(|ext| ext != "app")
+            || !Path::new(&identity.executable_path).starts_with(&identity.bundle_path)
+            || identity.executable_path == identity.bundle_path
+        {
+            return Err("A identidade canônica do aplicativo é inválida.".into());
+        }
+        let grant = ExecutionGrant {
+            id: crate::library::new_id().map_err(|_| {
+                "Não foi possível identificar a autorização do aplicativo.".to_owned()
+            })?,
+            scope,
+            subject: GrantSubject::NativeApp {
+                identity: identity.clone(),
+                access,
+            },
+            effects: ExecutionEffects::default(),
+            duration: GrantDuration::Session,
+            created_at: now,
+            last_used_at: None,
+            uses: 0,
+        };
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| "Não foi possível salvar a autorização do aplicativo.".to_owned())?;
+        state.grants.retain(|existing| !(existing.scope == grant.scope
+            && matches!(&existing.subject, GrantSubject::NativeApp { identity: stored, .. } if stored == &identity)));
+        state.grants.push(grant.clone());
+        Ok(grant)
+    }
+
+    pub(super) fn computer_grants(
+        &self,
+        conversation: &str,
+        now: u64,
+    ) -> Result<Vec<ExecutionGrant>, String> {
+        Ok(self.list(now)?.into_iter().filter(|grant| {
+            grant.duration == GrantDuration::Session
+                && matches!(&grant.scope, GrantScope::Conversation { conversation_id } if conversation_id == conversation)
+                && matches!(grant.subject, GrantSubject::NativeApp { .. })
+        }).collect())
+    }
+
+    pub(super) fn computer_authorized(
+        &self,
+        conversation: &str,
+        identity: &AppIdentity,
+        access: ComputerAccess,
+        now: u64,
+    ) -> Result<bool, String> {
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| "Não foi possível consultar a autorização do aplicativo.".to_owned())?;
+        let matched = state.grants.iter_mut().find(|grant| {
+            grant.duration == GrantDuration::Session && !grant.expired(now)
+                && matches!(&grant.scope, GrantScope::Conversation { conversation_id } if conversation_id == conversation)
+                && matches!(&grant.subject, GrantSubject::NativeApp { identity: stored, access: granted }
+                    if stored == identity && (*granted == access || *granted == ComputerAccess::Control))
+        });
+        if let Some(grant) = matched {
+            grant.uses = grant.uses.saturating_add(1);
+            grant.last_used_at = Some(now);
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(super) fn revoke_computer(&self, conversation: &str, id: &str) -> Result<bool, String> {
+        let mut state = self
+            .inner
+            .lock()
+            .map_err(|_| "Não foi possível revogar a autorização do aplicativo.".to_owned())?;
+        let before = state.grants.len();
+        state.grants.retain(|grant| !(grant.id == id
+            && matches!(&grant.scope, GrantScope::Conversation { conversation_id } if conversation_id == conversation)
+            && matches!(grant.subject, GrantSubject::NativeApp { .. })));
+        Ok(before != state.grants.len())
     }
 
     pub(super) fn list(&self, now: u64) -> Result<Vec<ExecutionGrant>, String> {
@@ -348,6 +470,9 @@ impl From<ExecutionGrant> for ExecutionGrantSummary {
             ),
         };
         let (match_kind, subject) = match &grant.subject {
+            GrantSubject::NativeApp { identity, .. } => {
+                (GrantMatch::Exact, identity.bundle_id.clone())
+            }
             GrantSubject::CommandExact { plan } => {
                 (GrantMatch::Exact, display_command(plan, false))
             }
@@ -494,6 +619,7 @@ fn subject_matches(
     tool_arguments: &Value,
 ) -> bool {
     match subject {
+        GrantSubject::NativeApp { .. } => false,
         GrantSubject::CommandExact { plan } => {
             outcome.native_working_directory.is_none() && outcome.command.as_ref() == Some(plan)
         }
@@ -588,7 +714,10 @@ fn persist(state: &GrantState) -> Result<(), String> {
         grants: state
             .grants
             .iter()
-            .filter(|grant| grant.duration.persisted())
+            .filter(|grant| {
+                grant.duration.persisted()
+                    && !matches!(grant.subject, GrantSubject::NativeApp { .. })
+            })
             .cloned()
             .collect(),
     };
@@ -644,6 +773,145 @@ mod tests {
             project_id: "project",
             working_directory: Path::new("/project/backend"),
         }
+    }
+
+    fn app_identity() -> super::super::computer::AppIdentity {
+        super::super::computer::AppIdentity {
+            bundle_id: "com.example.Editor".into(),
+            bundle_path: "/Applications/Editor.app".into(),
+            executable_path: "/Applications/Editor.app/Contents/MacOS/Editor".into(),
+        }
+    }
+
+    #[test]
+    fn native_app_access_is_exact_conversation_scoped_and_revocable() {
+        use super::super::computer::ComputerAccess::{Control, Observe};
+        let store = GrantStore::default();
+        let identity = app_identity();
+        store
+            .create_computer("chat", identity.clone(), Observe, 10)
+            .unwrap();
+        assert!(store
+            .computer_authorized("chat", &identity, Observe, 11)
+            .unwrap());
+        assert!(!store
+            .computer_authorized("chat", &identity, Control, 11)
+            .unwrap());
+        assert!(!store
+            .computer_authorized("other", &identity, Observe, 11)
+            .unwrap());
+        let mut other = identity.clone();
+        other.executable_path = "/Applications/Editor.app/Contents/MacOS/Replacement".into();
+        assert!(!store
+            .computer_authorized("chat", &other, Observe, 11)
+            .unwrap());
+        other = identity.clone();
+        other.bundle_id = "com.example.Other".into();
+        assert!(!store
+            .computer_authorized("chat", &other, Observe, 11)
+            .unwrap());
+        other = identity.clone();
+        other.bundle_path = "/Applications/Other.app".into();
+        assert!(!store
+            .computer_authorized("chat", &other, Observe, 11)
+            .unwrap());
+        let grant = store
+            .create_computer("chat", identity.clone(), Control, 12)
+            .unwrap();
+        assert!(store
+            .computer_authorized("chat", &identity, Observe, 13)
+            .unwrap());
+        assert!(store
+            .computer_authorized("chat", &identity, Control, 13)
+            .unwrap());
+        assert_eq!(store.computer_grants("chat", 13).unwrap().len(), 1);
+        assert!(!store.revoke_computer("other", &grant.id).unwrap());
+        assert!(store.revoke_computer("chat", &grant.id).unwrap());
+        assert!(!store
+            .computer_authorized("chat", &identity, Observe, 14)
+            .unwrap());
+    }
+
+    #[test]
+    fn native_app_grants_do_not_persist_or_authorize_generic_execution() {
+        use super::super::computer::ComputerAccess::Control;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("grants.json");
+        let store = GrantStore::default();
+        store.setup(path.clone(), 10).unwrap();
+        let identity = app_identity();
+        store
+            .create_computer("conversation", identity.clone(), Control, 10)
+            .unwrap();
+        let original = outcome("npm test");
+        assert!(store
+            .authorize(&original, "bash", &Value::Null, context(), 11)
+            .unwrap()
+            .is_none());
+        let restored = GrantStore::default();
+        restored.setup(path, 12).unwrap();
+        assert!(!restored
+            .computer_authorized("conversation", &identity, Control, 12)
+            .unwrap());
+        let generic = outcome("npm test");
+        store
+            .create(CreateGrant {
+                scope: GrantScope::Project {
+                    project_id: "project".into(),
+                },
+                match_kind: GrantMatch::Exact,
+                duration: GrantDuration::Persistent,
+                outcome: &generic,
+                tool_name: "bash",
+                tool_arguments: &Value::Null,
+                now: 12,
+            })
+            .unwrap();
+        assert!(!store
+            .computer_authorized("other-conversation", &identity, Control, 12)
+            .unwrap());
+        assert!(store
+            .authorize(
+                &generic,
+                "computer_click",
+                &serde_json::json!({"targetId":"target","observationId":"seen","element":"button"}),
+                context(),
+                12
+            )
+            .unwrap()
+            .is_none());
+        assert!(store.create(CreateGrant {
+            scope: GrantScope::Project { project_id: "project".into() },
+            match_kind: GrantMatch::Exact,
+            duration: GrantDuration::Persistent,
+            outcome: &original,
+            tool_name: "computer_click",
+            tool_arguments: &serde_json::json!({"targetId":"target","observationId":"seen","element":"button"}),
+            now: 12,
+        }).is_err());
+    }
+
+    #[test]
+    fn selecting_observation_access_downgrades_control_without_broadening_identity() {
+        use super::super::computer::ComputerAccess::{Control, Observe};
+        let store = GrantStore::default();
+        let mut identity = app_identity();
+        store
+            .create_computer("chat", identity.clone(), Control, 10)
+            .unwrap();
+        store
+            .create_computer("chat", identity.clone(), Observe, 11)
+            .unwrap();
+        assert!(!store
+            .computer_authorized("chat", &identity, Control, 12)
+            .unwrap());
+        identity.bundle_path = "../Editor.app".into();
+        assert!(store
+            .create_computer("chat", identity, Control, 12)
+            .is_err());
+        assert!(store
+            .create_computer("", app_identity(), Observe, 12)
+            .is_err());
     }
 
     #[test]

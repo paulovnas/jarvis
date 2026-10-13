@@ -13,6 +13,26 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("keeps a collapsed activity section across tab changes and a restored layout", async () => {
+    const user = userEvent.setup();
+    let layout: DesktopLayout = DEFAULT_DESKTOP_LAYOUT;
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "get_desktop_layout") return layout;
+      if (command === "save_desktop_layout") layout = (args as { layout: DesktopLayout }).layout;
+      return [];
+    });
+    const first = render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} /></DesktopLayoutProvider>);
+    await user.click(await screen.findByRole("button", { name: "Tarefas" }));
+    await waitFor(() => expect(layout.activitySections.Tarefas).toBe(false));
+    await waitFor(() => expect(screen.queryByText("Nenhuma tarefa registrada nesta solicitação.")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("tab", { name: "Designer" }));
+    await user.click(screen.getByRole("tab", { name: "Inspector" }));
+    expect(screen.getByRole("button", { name: "Tarefas" })).toHaveAttribute("aria-expanded", "false");
+    first.unmount();
+    render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} /></DesktopLayoutProvider>);
+    expect(await screen.findByRole("button", { name: "Tarefas" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Nenhuma tarefa registrada nesta solicitação.")).not.toBeInTheDocument();
+  });
   it("persists the Designer tab and never shows another conversation's Live requests", async () => {
     const user = userEvent.setup();
     let layout: DesktopLayout = DEFAULT_DESKTOP_LAYOUT;

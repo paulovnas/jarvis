@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createRef } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
+import { SkillInput } from "./SkillInput";
 import { chatOptions } from "@/test/chat-fixtures";
 import type { ChatDraft, MessagePart } from "@/core/chat";
 import type { Skill } from "@/core/skills";
@@ -22,6 +24,26 @@ async function renderComposer(element: React.ReactElement) {
 
 describe("Explicit skill input", () => {
   beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(snapshot); });
+  it("bloqueia e libera a edição sem alterar o rascunho", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const inputRef = createRef<{ focus: () => void }>();
+    const draft: ChatDraft = { content: "Meu pedido" };
+    const renderInput = (disabled: boolean) => <SkillInput ref={inputRef} draft={draft} onChange={onChange} onSend={vi.fn()} disabled={disabled} compacting={false} working={false}>{null}</SkillInput>;
+    const { rerender } = render(renderInput(false));
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    onChange.mockClear();
+    rerender(renderInput(true));
+    expect(field).toHaveAttribute("contenteditable", "false");
+    rerender(renderInput(false));
+    expect(field).toHaveAttribute("contenteditable", "true");
+    expect(field).toHaveTextContent("Meu pedido");
+    expect(onChange).not.toHaveBeenCalled();
+    // jsdom has no click geometry; use the composer's public focus behavior.
+    act(() => { inputRef.current?.focus(); });
+    await user.keyboard(" claro");
+    expect(onChange).toHaveBeenLastCalledWith({ content: "Meu pedido claro" });
+  });
   it("permite selecionar uma skill de plugin sem impedir o carregamento das demais", async () => {
     const plugin = { ...react, id: "firebase-plugin", name: "firebase@firebase:deploy", origin: "plugin", managed: true };
     vi.mocked(invoke).mockResolvedValue({ ...snapshot, skills: [react, plugin] });

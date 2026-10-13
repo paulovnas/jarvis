@@ -134,6 +134,52 @@ fn dedicated_chat_title_model_defaults_to_automatic_and_survives_restart() {
 }
 
 #[test]
+fn prompt_refinement_model_defaults_to_unconfigured_and_preserves_reasoning_across_restart() {
+    let home = tempfile::tempdir().unwrap();
+    let path = crate::data_dir::root(home.path()).join("system.json");
+    let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
+    assert!(legacy.prompt_refinement_model.is_none());
+    let choice: crate::agent::workflow::settings::ModelChoice = serde_json::from_value(
+        serde_json::json!({"account":"refiner-provider","model":"refiner-model","reasoning":"high"}),
+    ).unwrap();
+    let preferences = Preferences {
+        prompt_refinement_model: Some(choice.clone()),
+        ..legacy
+    };
+    let mut store = Store::open(path.clone()).unwrap();
+    store.save(preferences).unwrap();
+    let restored = Store::open(path.clone()).unwrap().preferences;
+    assert_eq!(restored.prompt_refinement_model, Some(choice.clone()));
+    assert!(restored.chat_title_model.is_none());
+    assert_eq!(
+        backup_preferences(home.path())
+            .unwrap()
+            .prompt_refinement_model,
+        Some(choice.clone())
+    );
+    let mut invalid = choice.clone();
+    invalid.executor = crate::claude::Executor::Claude;
+    invalid.account.clear();
+    invalid.model = "sonnet".into();
+    assert!(validate_prompt_refinement_model(&invalid).is_err());
+    invalid = choice.clone();
+    invalid.fallback = Some(Box::new(choice));
+    assert!(store
+        .save(Preferences {
+            prompt_refinement_model: Some(invalid),
+            ..restored.clone()
+        })
+        .is_err());
+    assert_eq!(Store::open(path.clone()).unwrap().preferences, restored);
+    store.save(Preferences::default()).unwrap();
+    assert!(Store::open(path)
+        .unwrap()
+        .preferences
+        .prompt_refinement_model
+        .is_none());
+}
+
+#[test]
 fn browser_preferences_default_to_embedded_and_persist_without_pairing_credentials() {
     use crate::agent::browser::{BrowserApplication, BrowserMode};
     let legacy: Preferences = serde_json::from_str(r#"{"notifications":false}"#).unwrap();
@@ -294,6 +340,8 @@ fn preferences_restore_all_modes_without_touching_layout() {
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
+            prompt_refinement_model: None,
+            computer_use_mode: crate::agent::computer::ComputerMode::Yolo,
         };
         store.save(preferences.clone()).unwrap();
         assert_eq!(Store::open(path.clone()).unwrap().preferences, preferences);
@@ -329,6 +377,8 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
+            prompt_refinement_model: None,
+            computer_use_mode: crate::agent::computer::ComputerMode::Manual,
         })
         .is_err());
     assert_eq!(store.preferences, Preferences::default());
