@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CEF_BINDINGS_VERSION, prepareCefCi } from "./prepare-cef-ci";
@@ -23,6 +23,7 @@ async function fixture(platform: "darwin" | "win32" | "linux", exporterVersion =
       await chmod(path.join(root, "bin", binary), 0o755);
       await writeFile(path.join(root, ".crates2.json"), JSON.stringify({ installs: { [`export-cef-dir ${exporterVersion} (registry+https://github.com/rust-lang/crates.io-index)`]: { bins: [binary] } } }));
     } else {
+      if (await stat(directory).then(() => true, () => false) && !args.includes("--force")) throw new Error("target directory already exists");
       await mkdir(path.dirname(marker), { recursive: true });
       await writeFile(marker, "CEF native distribution fixture");
     }

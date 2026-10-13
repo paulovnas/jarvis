@@ -52,7 +52,7 @@ export async function prepareCefCi(projectRoot: string, options: Options): Promi
       await run("cargo", ["install", "export-cef-dir", "--version", `=${CEF_BINDINGS_VERSION}`, "--locked", "--root", exporter, "--bin", "export-cef-dir", "--force"], { cwd: projectRoot, env });
       if (!await installedExporter(exporter, binary)) throw new Error("O exportador CEF instalado não corresponde à versão fixada.");
     }
-    await run(path.join(exporter, "bin", binary), [directory], { cwd: projectRoot, env });
+    await run(path.join(exporter, "bin", binary), ["--force", directory], { cwd: projectRoot, env });
     const library = await stat(marker);
     if (!library.isFile() || library.size === 0) throw new Error("A distribuição CEF exportada está incompleta.");
     await writeFile(receipt, JSON.stringify({ version: CEF_BINDINGS_VERSION, platform, arch }));
