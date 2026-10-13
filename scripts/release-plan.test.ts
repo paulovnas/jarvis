@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { artifactNames, desktopManifest, localValidationTrailer, notesFromTag, parseReleaseArguments, releaseManifest, releaseTargets, releaseVersion, replaceCargoVersion, requireLocalValidation, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
+import { artifactNames, desktopManifest, localValidationTrailer, notesFromTag, parseReleaseArguments, releaseManifest, releaseTargets, releaseVersion, replaceCargoVersion, requireLocalValidation, selectedReleaseTargets, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 
 it("publishes all desktop packages together with distinct updater URLs and signatures", () => {
   const assets = releaseTargets.map(target => ({ target, archive: artifactNames("0.9.0-beta", target).archive, signature: `signature-${target}` }));
@@ -23,6 +23,20 @@ it("publishes all desktop packages together with distinct updater URLs and signa
   expect(supportedTarget("x86_64-pc-windows-msvc")).toBe("x86_64-pc-windows-msvc");
 });
 
+it("publishes only macOS packages and updater keys when Apple Silicon is selected", () => {
+  const targets = selectedReleaseTargets("aarch64-apple-darwin");
+  expect(targets).toEqual(["aarch64-apple-darwin"]);
+  const assets = releaseTargets.map(target => ({ target, archive: artifactNames("2.0.0", target).archive, signature: `signature-${target}` }));
+  const manifest = desktopManifest("2.0.0", assets.slice(0, 1), "macOS only", new Date(), targets);
+  expect(Object.keys(manifest.platforms)).toEqual(["darwin-aarch64"]);
+  expect(manifest.platforms["darwin-aarch64"].url).toContain("Jarvis_2.0.0_aarch64-apple-darwin.app.tar.gz");
+  expect(() => desktopManifest("2.0.0", assets, "", new Date(), targets)).toThrow("cada plataforma");
+  expect(() => desktopManifest("2.0.0", [assets[1]], "", new Date(), targets)).toThrow("cada plataforma");
+  expect(() => desktopManifest("2.0.0", [], "", new Date(), targets)).toThrow("cada plataforma");
+  for (const selection of [undefined, "", "all"]) expect(selectedReleaseTargets(selection)).toEqual(releaseTargets);
+  for (const selection of ["macos", "x86_64-pc-windows-msvc", "universal-apple-darwin", "unknown"]) expect(() => selectedReleaseTargets(selection)).toThrow("Seleção");
+});
+
 it("keeps publication restricted to the official main and explicit version tags", () => {
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "", false)).not.toThrow();
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "v0.8.3-beta.1", true)).not.toThrow();
@@ -34,7 +48,8 @@ it("keeps publication restricted to the official main and explicit version tags"
 
 it("parses launcher options without allowing ambiguous or unsupported release targets", () => {
   expect(parseReleaseArguments(["0.8.3-beta.1", "--notes-file", "/a path/notes.md", "--dry-run"])).toEqual({ version: "0.8.3-beta.1", notesFile: "/a path/notes.md", dryRun: true });
-  for (const options of [["--notes-file"], ["--notes-file", "--dry-run"], ["--target", "universal-apple-darwin"], ["--dry-run", "--dry-run"], ["--force"]]) expect(() => parseReleaseArguments(["0.8.3", ...options])).toThrow();
+  expect(parseReleaseArguments(["2.0.0", "--target", "aarch64-apple-darwin"]).target).toBe("aarch64-apple-darwin");
+  for (const options of [["--notes-file"], ["--notes-file", "--dry-run"], ["--target"], ["--target", "universal-apple-darwin"], ["--target", "aarch64-apple-darwin", "--target", "aarch64-apple-darwin"], ["--dry-run", "--dry-run"], ["--force"]]) expect(() => parseReleaseArguments(["0.8.3", ...options])).toThrow();
   expect(notesFromTag("Jarvis 0.8.3\n\nNotas em português.\n", "0.8.3")).toBe("Notas em português.");
   expect(notesFromTag("Jarvis 0.8.3\n", "0.8.3")).toBe("");
   expect(() => notesFromTag("Jarvis 0.8.2\nNotas", "0.8.3")).toThrow();

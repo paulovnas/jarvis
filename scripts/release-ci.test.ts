@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.stubEnv("RELEASE_TAG", "");
   vi.stubEnv("RELEASE_SHA", sha);
   vi.stubEnv("RELEASE_PUBLISH", "false");
+  vi.stubEnv("RELEASE_SELECTION", "all");
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.argv = ["bun", "scripts/release-ci.ts", "stage"];
@@ -63,6 +64,14 @@ it.each(["signature", "ambiguous", "missing-deb"])("rejects incomplete or ambigu
   await import("./release-ci");
   expect(process.exitCode).toBe(1);
   expect(verifyReleaseArtifacts).not.toHaveBeenCalled();
+});
+
+it("rejects a Linux artifact before staging when the release selects only macOS", async () => {
+  vi.stubEnv("RELEASE_SELECTION", "aarch64-apple-darwin");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(1);
+  expect(verifyReleaseArtifacts).not.toHaveBeenCalled();
+  expect(existsSync(path.join(state.root, "release-artifacts"))).toBe(false);
 });
 
 function preparePublication(contents: string, taggedSha = sha) {
@@ -132,7 +141,7 @@ it.each(["missing", "different-validation", "different-tag"])("rejects an unvali
   expect(state.command.mock.calls.some(([program]) => program === "gh")).toBe(false);
 });
 
-function publicationWithNotes(notes: string) {
+function publicationWithNotes(notes: string, extraAssets: { name: string; size: number }[] = []) {
   preparePublication(`Jarvis 1.4.0\n\n${notes}\n\nJarvis-Local-Checks-v1: ${sha}\n`);
   process.argv[2] = "publish";
   const output = path.join(state.root, "release-artifacts");
@@ -147,7 +156,9 @@ function publicationWithNotes(notes: string) {
   const original = state.command.getMockImplementation()!;
   state.command.mockImplementation((program: string, args: string[]) => {
     if (program === "gh" && args[0] === "release" && args[1] === "view") {
-      return JSON.stringify({ isDraft: true, assets: readdirSync(output).map(name => ({ name, size: statSync(path.join(output, name)).size })) });
+      const upload = state.command.mock.calls.find(([tool, input]) => tool === "gh" && (input as string[])[1] === "upload");
+      const files = (upload?.[1] as string[] | undefined)?.filter(file => file.startsWith(`${output}${path.sep}`)) ?? [];
+      return JSON.stringify({ isDraft: true, assets: [...files.map(file => ({ name: path.basename(file), size: statSync(file).size })), ...extraAssets] });
     }
     return original(program, args);
   });
@@ -167,6 +178,49 @@ it.each(["## Novidades\n\n- Alteração completa.\n\n## Correções\n\n- Última
   expect(verifyReleaseArtifacts).toHaveBeenCalledTimes(releaseTargets.length);
   expect(state.command.mock.calls.some(([, args]) => (args as string[]).includes("--generate-notes"))).toBe(false);
   expect(state.command).toHaveBeenCalledWith("gh", ["release", "edit", "v1.4.0", "--repo", "paulovnas/jarvis", "--draft=false", "--latest=true"]);
+});
+
+it("verifies and uploads only macOS packages and updater manifests for a selected release", async () => {
+  const output = publicationWithNotes("Somente macOS.");
+  vi.stubEnv("RELEASE_SELECTION", "aarch64-apple-darwin");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(0);
+  expect(verifyReleaseArtifacts).toHaveBeenCalledTimes(1);
+  expect(verifyReleaseArtifacts).toHaveBeenCalledWith(output, "1.4.0", sha, "aarch64-apple-darwin", "test-public-key");
+  expect(Object.keys(JSON.parse(readFileSync(path.join(output, "latest.json"), "utf8")).platforms)).toEqual(["darwin-aarch64"]);
+  expect(Object.keys(JSON.parse(readFileSync(path.join(output, "latest-darwin-aarch64.json"), "utf8")).platforms)).toEqual(["darwin-aarch64"]);
+  expect(readdirSync(output).some(name => /windows|linux|\.exe|\.deb|\.AppImage/.test(name))).toBe(false);
+  expect(state.command).toHaveBeenCalledWith("gh", ["release", "upload", "v1.4.0", "--repo", "paulovnas/jarvis", "--clobber", ...[...artifactNames("1.4.0", "aarch64-apple-darwin").names, "latest.json", "latest-darwin-aarch64.json"].map(name => path.join(output, name))]);
+  expect(state.command).toHaveBeenCalledWith("gh", ["release", "edit", "v1.4.0", "--repo", "paulovnas/jarvis", "--draft=false", "--latest=true"]);
+});
+
+it.each(["Jarvis_1.4.0_x86_64-pc-windows-msvc-setup.exe", "latest-linux-x86_64.json"])("keeps a macOS-only draft private when it contains an unselected asset: %s", async name => {
+  publicationWithNotes("Somente macOS.", [{ name, size: 100 }]);
+  vi.stubEnv("RELEASE_SELECTION", "aarch64-apple-darwin");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(1);
+  expect(state.command.mock.calls.some(([program, args]) => program === "gh" && (args as string[])[1] === "edit")).toBe(false);
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fora da seleção macOS"));
+});
+
+it("keeps the default full-platform release private if a required platform is unavailable", async () => {
+  publicationWithNotes("Todas as plataformas.");
+  vi.mocked(verifyReleaseArtifacts).mockImplementationOnce((directory, version, _sha, releaseTarget) => {
+    const names = artifactNames(version, releaseTarget);
+    return { version, target: releaseTarget, archive: names.archive, signature: "signature", names: names.names };
+  }).mockImplementationOnce(() => { throw new Error("Windows package missing"); });
+  await import("./release-ci");
+  expect(process.exitCode).toBe(1);
+  expect(state.command.mock.calls.some(([program]) => program === "gh")).toBe(false);
+});
+
+it("rejects an unknown selection before checking out a tag or creating package metadata", async () => {
+  preparePublication(`Jarvis 1.4.0\n\nNotas.\n\nJarvis-Local-Checks-v1: ${sha}\n`);
+  vi.stubEnv("RELEASE_SELECTION", "unknown");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(1);
+  expect(state.command).not.toHaveBeenCalled();
+  expect(existsSync(path.join(state.root, "release-artifacts"))).toBe(false);
 });
 
 it.each(["missing", "different-version", "different-notes", "edited-draft"])("keeps the release private when the canonical notes disagree with the package: %s", async reason => {

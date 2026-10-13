@@ -12,6 +12,13 @@ on:
         description: Publicar a release após verificar os instaladores
         type: boolean
         default: false
+      target:
+        description: Plataformas da release
+        type: choice
+        default: all
+        options:
+          - all
+          - aarch64-apple-darwin
 
 permissions:
   contents: read
@@ -24,6 +31,7 @@ env:
   CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ inputs.tag }}
   RELEASE_PUBLISH: ${{ inputs.publish }}
+  RELEASE_SELECTION: ${{ inputs.target }}
 
 jobs:
   build:
@@ -31,13 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            target: aarch64-apple-darwin
-          - runner: windows-2022
-            target: x86_64-pc-windows-msvc
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
+        include: ${{ fromJSON(inputs.target == 'aarch64-apple-darwin' && '[{"runner":"macos-15","target":"aarch64-apple-darwin"}]' || '[{"runner":"macos-15","target":"aarch64-apple-darwin"},{"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: macos-release

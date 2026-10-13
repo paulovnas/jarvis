@@ -15,7 +15,7 @@ function verifySource(sha: string) {
 function main() {
   const args = process.argv.slice(2).filter(arg => arg !== "--");
   if (!args.length || args.includes("--help")) {
-    console.info("Uso: bun run release 1.8.3 [--notes-file arquivo.md] [--dry-run]\nPrepara a versão e executa os checks completos localmente antes de criar/enviar a tag. O Actions compila, assina e publica os instaladores. Requer Bun, Git, gh autenticado, Rust/Clippy e as dependências nativas da plataforma; as chaves de assinatura ficam no CI.");
+    console.info("Uso: bun run release 1.8.3 [--notes-file arquivo.md] [--target aarch64-apple-darwin] [--dry-run]\nSem --target, publica macOS Apple Silicon, Windows x64 e Linux x64; com --target, publica apenas macOS Apple Silicon. Prepara a versão e executa os checks completos localmente antes de criar/enviar a tag. O Actions compila, assina e publica os instaladores. Requer Bun, Git, gh autenticado, Rust/Clippy e as dependências nativas da plataforma; as chaves de assinatura ficam no CI.");
     return;
   }
   const options = parseReleaseArguments(args);
@@ -23,7 +23,7 @@ function main() {
   const version = releaseVersion(options.version, pkg.version);
   const tag = `v${version}`;
   if (options.dryRun) {
-    console.info(`${tag} → ${RELEASE_REPOSITORY}\nmacOS Apple Silicon + Windows x64 + Linux x64\nVersão → checks locais (bun run check, Clippy e testes Rust) → tag do commit validado → push → Actions: DMG/NSIS/DEB/AppImage e atualizadores assinados → publicação conjunta.\nNenhum arquivo foi alterado ou publicado.`);
+    console.info(`${tag} → ${RELEASE_REPOSITORY}\n${options.target ? "Somente macOS Apple Silicon" : "macOS Apple Silicon + Windows x64 + Linux x64"}\nVersão → checks locais (bun run check, Clippy e testes Rust) → tag do commit validado → push → Actions: ${options.target ? "DMG e atualizador assinado" : "DMG/NSIS/DEB/AppImage e atualizadores assinados"} → publicação.\nNenhum arquivo foi alterado ou publicado.`);
     return;
   }
   if (command("git", ["status", "--porcelain"], true)) throw new Error("Faça commit das alterações antes de gerar um release.");
@@ -85,7 +85,7 @@ function main() {
   }
   verifySource(releaseCommit);
   command("git", ["push", "--atomic", "origin", `${releaseCommit}:refs/heads/main`, `refs/tags/${tag}`]);
-  command("gh", ["workflow", "run", releaseWorkflow, "--repo", RELEASE_REPOSITORY, "--ref", "main", "-f", `tag=${tag}`, "-f", "publish=true"]);
+  command("gh", ["workflow", "run", releaseWorkflow, "--repo", RELEASE_REPOSITORY, "--ref", "main", "-f", `tag=${tag}`, "-f", "publish=true", ...(options.target ? ["-f", `target=${options.target}`] : [])]);
   console.info(`Checks locais concluídos. Release enviado ao CI: https://github.com/${RELEASE_REPOSITORY}/actions/workflows/${releaseWorkflow}\nO GitHub publicará ${tag} após compilar e verificar os instaladores assinados. Para acompanhar: gh run list --workflow ${releaseWorkflow}`);
 }
 try { main(); } catch (error) { console.error(error instanceof Error ? error.message : "Não foi possível iniciar o release."); process.exitCode = 1; }

@@ -2,7 +2,7 @@ import { appendFileSync, copyFileSync, mkdirSync, readdirSync, statSync, writeFi
 import path from "node:path";
 import { prerelease } from "semver";
 import { command, configuration, optionalRelease, root } from "./release-common";
-import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, releaseTargets, requireLocalValidation, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
+import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, requireLocalValidation, selectedReleaseTargets, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 import { verifyReleaseArtifacts } from "./release-artifacts";
 import { readInstalledRelease } from "./installed-release";
 
@@ -23,6 +23,7 @@ function verifyTag() {
 }
 function prepare() {
   validateCIRequest(process.env.GITHUB_REPOSITORY, process.env.GITHUB_REF, tag, publish);
+  selectedReleaseTargets(process.env.RELEASE_SELECTION);
   if (tag) {
     const commit = command("git", ["rev-parse", `refs/tags/${tag}^{commit}`], true);
     command("git", ["merge-base", "--is-ancestor", commit, "HEAD"], true);
@@ -40,6 +41,7 @@ function prepare() {
 function stage() {
   const { config, sha } = verifyTag();
   const releaseTarget = supportedTarget(process.env.RELEASE_TARGET);
+  if (!selectedReleaseTargets(process.env.RELEASE_SELECTION).includes(releaseTarget)) throw new Error("O artefato não pertence às plataformas selecionadas para esta release.");
   const bundle = path.join(root, "src-tauri/target", releaseTarget, "release/bundle");
   mkdirSync(artifactDirectory, { recursive: true });
   const { archive, signature } = artifactNames(config.version, releaseTarget);
@@ -85,7 +87,7 @@ function stage() {
 }
 function verifyAssets() {
   const { config, sha } = verifyTag();
-  return { version: config.version, platforms: releaseTargets.map(target => verifyReleaseArtifacts(artifactDirectory, config.version, sha, target, config.plugins.updater.pubkey)) };
+  return { version: config.version, platforms: selectedReleaseTargets(process.env.RELEASE_SELECTION).map(target => verifyReleaseArtifacts(artifactDirectory, config.version, sha, target, config.plugins.updater.pubkey)) };
 }
 function tagNotes(version: string): string {
   return notesFromTag(command("git", ["for-each-ref", "--format=%(contents)", `refs/tags/${tag}`], true) + "\n", version);
@@ -108,19 +110,21 @@ function publishArtifacts() {
   const release = optionalRelease(tag);
   if (!release?.isDraft) throw new Error("A release deixou de ser um rascunho antes do upload.");
   if (release.body.trim() !== notes) throw new Error("As notas do rascunho diferem das notas empacotadas; o rascunho foi preservado.");
-  const manifest = desktopManifest(assets.version, assets.platforms, notes);
+  const targets = selectedReleaseTargets(process.env.RELEASE_SELECTION);
+  const manifest = desktopManifest(assets.version, assets.platforms, notes, new Date(), targets);
   const manifests = ["latest.json"];
   writeFileSync(path.join(artifactDirectory, "latest.json"), JSON.stringify(manifest, null, 2) + "\n");
-  for (const platform of releaseTargets.flatMap(targetPlatforms)) {
+  for (const platform of targets.flatMap(targetPlatforms)) {
     const name = `latest-${platform}.json`;
     manifests.push(name);
     writeFileSync(path.join(artifactDirectory, name), JSON.stringify({ ...manifest, platforms: { [platform]: manifest.platforms[platform] } }, null, 2) + "\n");
   }
   const files = [...assets.platforms.flatMap(asset => asset.names), ...manifests];
   command("gh", ["release", "upload", tag, "--repo", RELEASE_REPOSITORY, "--clobber", ...files.map(name => path.join(artifactDirectory, name))]);
-  // Publish all platforms atomically from one draft, after every required upload.
+  // Publish the selected platforms atomically from one draft, after every required upload.
   const remote = JSON.parse(command("gh", ["release", "view", tag, "--repo", RELEASE_REPOSITORY, "--json", "assets,isDraft"], true)) as { isDraft: boolean; assets: { name: string; size: number }[] };
   if (!remote.isDraft || files.some(name => !remote.assets.some(asset => asset.name === name && asset.size === statSync(path.join(artifactDirectory, name)).size))) throw new Error("O upload está incompleto; o rascunho foi preservado.");
+  if (targets.length === 1 && remote.assets.some(asset => !files.includes(asset.name))) throw new Error("O rascunho contém artefatos fora da seleção macOS; a release foi preservada sem publicação.");
   command("gh", ["release", "edit", tag, "--repo", RELEASE_REPOSITORY, "--draft=false", `--latest=${!beta}`]);
   console.info(`Publicado: https://github.com/${RELEASE_REPOSITORY}/releases/tag/${tag}`);
 }

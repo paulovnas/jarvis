@@ -94,6 +94,15 @@ it("preserves complete custom notes in the tag without generating a different ch
   expect(state.command).toHaveBeenCalledWith("git", expect.arrayContaining(["tag", "--cleanup=verbatim"]));
   expect(state.command.mock.calls.some(([program, args]) => program === "gh" && (args as string[])[0] === "api")).toBe(false);
 });
+it("dispatches an explicitly selected macOS release after the unchanged local gates", async () => {
+  process.argv.push("--target", "aarch64-apple-darwin");
+  await import("./release");
+  expect(process.exitCode).toBe(0);
+  expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.4-beta", "-f", "publish=true", "-f", "target=aarch64-apple-darwin"]);
+  expect(state.tagContents).toContain(`Jarvis-Local-Checks-v1: ${releaseSha}`);
+  expect(state.command).toHaveBeenCalledWith("cargo", expect.arrayContaining(["clippy", "--all-targets", "-D", "warnings"]), false, expect.objectContaining({ CI: "true" }));
+  expect(state.command).toHaveBeenCalledWith("cargo", expect.arrayContaining(["test", "--locked"]), false, expect.objectContaining({ CI: "true" }));
+});
 it("stops before changing the version when automatic notes generation fails", async () => {
   const original = state.command.getMockImplementation()!;
   state.command.mockImplementation((program, args, ...rest) => {
@@ -148,6 +157,19 @@ it("allows enough time to upload every signed release artifact", () => {
   expect(publishJob).toBeDefined();
   expect(publishJob).toContain("timeout-minutes: 30");
 });
+it("selects one macOS runner while retaining all three runners in the default release workflow", () => {
+  const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  expect(workflow).toContain("RELEASE_SELECTION: ${{ inputs.target }}");
+  expect(workflow).toContain("default: all");
+  const matrix = workflow.match(/include: \$\{\{ fromJSON\(inputs\.target == 'aarch64-apple-darwin' && '([^']+)' \|\| '([^']+)'\) \}\}/);
+  expect(matrix).not.toBeNull();
+  expect(JSON.parse(matrix![1])).toEqual([{ runner: "macos-15", target: "aarch64-apple-darwin" }]);
+  expect(JSON.parse(matrix![2])).toEqual([
+    { runner: "macos-15", target: "aarch64-apple-darwin" },
+    { runner: "windows-2022", target: "x86_64-pc-windows-msvc" },
+    { runner: "ubuntu-24.04", target: "x86_64-unknown-linux-gnu" },
+  ]);
+});
 it("prepares matching native Chromium libraries and the pinned bundler for every CI platform", () => {
   const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
   const release = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
@@ -195,6 +217,14 @@ it("keeps dry-run entirely local and read-only", async () => {
   expect(process.exitCode).toBe(0);
   expect(state.command).not.toHaveBeenCalled();
   expect(readFileSync(path.join(state.root, "package.json"), "utf8")).toContain("0.8.3-beta.1");
+});
+it("shows only the selected macOS packages in a read-only dry-run", async () => {
+  process.argv.push("--target", "aarch64-apple-darwin", "--dry-run");
+  await import("./release");
+  expect(process.exitCode).toBe(0);
+  expect(state.command).not.toHaveBeenCalled();
+  expect(console.info).toHaveBeenCalledWith(expect.stringContaining("Somente macOS Apple Silicon"));
+  expect(console.info).not.toHaveBeenCalledWith(expect.stringMatching(/Windows|Linux|NSIS|DEB|AppImage/));
 });
 it("does not mutate version files or dispatch when a version is already public", async () => {
   state.optionalRelease.mockReturnValue({ isDraft: false });
