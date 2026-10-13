@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
@@ -102,7 +102,14 @@ describe("app-owned Impeccable preparation", () => {
     expect(manifest.files.some((file) => file.path.endsWith("reference/new-work.md"))).toBe(true);
     expect(manifest.files.some((file) => file.path.endsWith("reference/live.md"))).toBe(true);
     expect(manifest.files.some((file) => file.path.endsWith("LICENSE"))).toBe(true);
-    const index = JSON.parse(await readFile(path.join(IMPECCABLE_RESOURCE_DIRECTORY, "jarvis-design.json"), "utf8")) as { resources: { id: string; files: string[] }[] };
+    const { directory } = await nativeFixture();
+    await Promise.all(["manifest.json", ...manifest.files.map((file) => file.path)].map(async (relative) => {
+      const destination = path.join(directory, relative);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await copyFile(path.join(IMPECCABLE_RESOURCE_DIRECTORY, relative), destination);
+    }));
+    await prepareImpeccable({ destination: directory, offline: true });
+    const index = JSON.parse(await readFile(path.join(directory, "jarvis-design.json"), "utf8")) as { resources: { id: string; files: string[] }[] };
     expect(index.resources.find((resource) => resource.id === "impeccable/skill")?.files).toEqual([`${SKILL_DIRECTORY}/SKILL.md`]);
     expect(index.resources.find((resource) => resource.id === "impeccable/new-work")?.files).toEqual([`${SKILL_DIRECTORY}/reference/new-work.md`]);
     const ui = await readFile(path.join(IMPECCABLE_RESOURCE_DIRECTORY, SKILL_DIRECTORY, "scripts/live-browser.js"), "utf8");

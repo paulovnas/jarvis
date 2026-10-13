@@ -161,11 +161,12 @@ describe("page snapshots and locators", () => {
     expect(prepared(id)).toMatchObject({ ready: false, code: "browser_ambiguous_element" });
   });
 
+  // This 5,005-node jsdom fixture needs a larger budget under parallel CI load.
   it("bounds traversal and refuses to claim uniqueness from a truncated tree", () => {
     document.body.innerHTML = '<button>Primeiro</button>' + '<div></div>'.repeat(5005) + '<button>Final</button>';
     expect(snapshot()).toMatchObject({ total: 1, truncated: true });
     expect(pageOperation({ action: "prepare", locator: { role: "button", name: "Primeiro" }, mode: "click" })).toMatchObject({ ready: false, code: "browser_snapshot_truncated" });
-  });
+  }, 15_000);
 });
 
 describe("actionability preparation", () => {
