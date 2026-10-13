@@ -11,6 +11,7 @@
   <a href="https://github.com/paulovnas/jarvis/releases"><img src="https://img.shields.io/github/v/release/paulovnas/jarvis?include_prereleases&label=vers%C3%A3o&color=61afef&style=flat-square" alt="Versão do Jarvis" /></a>
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-969eac?style=flat-square&logo=apple&logoColor=white" alt="Disponível para macOS com Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-61afef?style=flat-square&logo=windows&logoColor=white" alt="Disponível para Windows x64" />
+  <img src="https://img.shields.io/badge/Linux-x64-98c379?style=flat-square&logo=linux&logoColor=white" alt="Disponível para Linux x64" />
   <img src="https://img.shields.io/badge/idioma-pt--BR-98c379?style=flat-square" alt="Interface em português do Brasil" />
 </p>
 
@@ -40,12 +41,12 @@ O Jarvis evolui continuamente. Relate problemas e sugestões nas [issues do proj
 | **Vídeos** | Composições editáveis com Hyperframes, validação e renderização MP4 pelo agente Gerador de vídeos, reprodução em uma aba do chat e ações para salvar ou abrir externamente. |
 | **Imagens** | Gerador de imagens especializado, variações com o provedor configurado e preparação local no ComfyUI: tamanho, remoção de fundo e exportação PNG, JPG ou WEBP. Resultados podem ser ampliados e salvos pelo chat. |
 | **Detalhes do projeto** | Métricas de uso, atividade dos agentes, Kanban e opções próprias de publicação para cada projeto. |
-| **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. Assistente flutuante opcional no macOS e Windows. |
+| **Desktop** | Notificações do sistema, badges de mensagens não lidas, prevenção de repouso, atalhos controlados, backup de configurações e atualização automática do aplicativo e dos recursos. Assistente flutuante opcional no macOS, Windows e Linux com X11. |
 
 ### Jarvito desktop companion
 
-Enable **Configurações → Geral → Assistente na área de trabalho** on macOS or
-Windows. Drag the original, transparent robot to place it; its position survives
+Enable **Configurações → Geral → Assistente na área de trabalho** on macOS,
+Windows or Linux with X11. Drag the original, transparent robot to place it; its position survives
 restarts. Click it to expand the animated island around its current screen position;
 Jarvito keeps the nearest corner as the island opens and closes. It shows agents,
 subagents, active time, questions, recent results and provider usage. Speech bubbles
@@ -71,7 +72,7 @@ The companion remains available while Jarvis is minimized, never resumes chats
 just by observing them and does not activate another window on activity updates.
 On macOS, an independent nonactivating panel handles companion interactions; the
 Dock restores the main window even while the companion remains visible. Closing
-Jarvis still exits the application. Linux is not supported by this feature.
+Jarvis still exits the application. Linux companion interactions are validated in X11 sessions.
 
 ## Fluxos e agentes
 
@@ -155,6 +156,7 @@ O botão **Publicar** no Inspector pede que a IA prepare uma proposta com os arq
 Baixe a versão mais recente em [Releases](https://github.com/paulovnas/jarvis/releases):
 
 - **macOS Apple Silicon, versão 13 ou superior:** abra o `.dmg` e copie o Jarvis para **Aplicativos**.
+- **Linux x64, com GTK 4.14 ou superior:** instale o `.deb` pelo gerenciador de pacotes ou torne o `.AppImage` executável. O Chromium já está incluído no aplicativo.
 - **Windows x64:** execute o instalador `-setup.exe`. O Chromium já está incluído no aplicativo. O Windows pode exibir um aviso de editor desconhecido enquanto o projeto não possui assinatura Authenticode.
 
 O onboarding conduz cinco etapas:
@@ -171,7 +173,7 @@ Não é necessário instalar Bun, Node.js, Python, Rust, Cargo, Visual Studio, C
 
 O macOS pode pedir autorização adicional porque as versões atuais ainda não possuem notarização Apple. Use **Ajustes do Sistema → Privacidade e Segurança** se necessário. Atualmente não são distribuídos pacotes para macOS Intel, Windows ARM64 ou Linux ARM64.
 
-**Linux x64:** the pipeline now prepares DEB and AppImage packages, available once a release containing this change is published. Use a desktop session with an unlocked Secret Service wallet (GNOME Keyring or a compatible service). Install DEB with the distribution package manager, or make the AppImage executable. Automatic updates require a writable AppImage and parent directory; DEB updates use the package manager. See the [Linux preparation and validation guide](docs/PLAN-VALIDACAO-LINUX.md) for prerequisites and tested scope.
+**Linux x64:** use uma sessão desktop com o cofre Secret Service desbloqueado (GNOME Keyring ou serviço compatível). Atualizações automáticas exigem um AppImage e uma pasta com permissão de escrita; atualizações do DEB usam o gerenciador de pacotes. Consulte o [guia de preparação e validação Linux](docs/PLAN-VALIDACAO-LINUX.md) para os pré-requisitos e o escopo testado.
 
 ## Conversas e experiência desktop
 

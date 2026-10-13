@@ -483,7 +483,6 @@ export function Companion() {
       const target = event.target;
       if (geometry.dragAxis !== "horizontal" || event.button !== 0 || !(target instanceof Element) || !target.closest(".companion-header, .companion-compact-open")) return;
       if (target.closest("button, input, textarea, [role=tab], [data-slot=select-trigger]") && !target.closest(".companion-compact-open")) return;
-      event.currentTarget.setPointerCapture?.(event.pointerId);
       pointer.current = { x: event.screenX, dragging: false }; dragged.current = false;
     }} onPointerMove={event => {
       if (!(event.buttons & 1)) { finishDrag(); return; }
@@ -491,6 +490,7 @@ export function Companion() {
       if (!start) return;
       if (!start.dragging) {
         if (Math.abs(event.screenX - start.x) < 5) return;
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         start.dragging = true; dragged.current = true; setDragging(true); geometryRevision.current++;
         moveInFlight.current = true;
         dragOperation.current = dragOperation.current.then(() => invoke("companion_start_drag")).then(() => invoke("companion_move_horizontal")).catch(cause => { setDragging(false); setError(companionError(cause, "Não foi possível mover a ilha.")); }).finally(() => { moveInFlight.current = false; });

@@ -5,9 +5,31 @@ use tauri_runtime_cef::WebviewCefExt;
 
 #[cfg(target_os = "macos")]
 mod island;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux_agent;
+#[cfg(target_os = "linux")]
+mod linux_island;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn observe_companion(app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    if std::env::var("JARVIS_COMPANION_SMOKE").is_ok_and(|value| value == "1") {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = linux_island::smoke_actual(&app).await;
+            crate::app_exit::allow(&app);
+            match result {
+                Ok(()) => app.exit(0),
+                Err(cause) => {
+                    eprintln!("Real Linux companion failed: {}", cause.message);
+                    app.exit(1);
+                }
+            }
+        });
+    }
+    #[cfg(target_os = "macos")]
     if std::env::var("JARVIS_COMPANION_OBSERVE").is_ok_and(|value| value == "1") {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -21,6 +43,8 @@ pub(crate) fn observe_companion(app: &tauri::AppHandle) {
 const PAGE: &str = r#"<!doctype html><html><head><title>Browser probe</title><style>body{background:#181b20;color:#d7dce5;font:18px system-ui;padding:32px}button,input{font:inherit;padding:12px;border-radius:6px}h1{color:#61afef}</style></head><body><h1>Jarvis native browser</h1><label>Nome <input id="name" aria-label="Nome"></label><button id="action">Testar</button><p id="result">Pronto</p><a href="/next">Próxima página</a><script>
 window.__probeInputTrusted=false;
 window.__probeClickTrusted=false;
+document.addEventListener('pointerdown',event=>{window.__probePointer={target:event.target.id,x:event.clientX,y:event.clientY,trusted:event.isTrusted}},true);
+document.addEventListener('keydown',event=>{window.__probeKey={key:event.key,target:event.target.id,trusted:event.isTrusted}},true);
 document.querySelector('#name').addEventListener('input',event=>{
   window.__probeInputTrusted=event.isTrusted===true;
 });
@@ -46,7 +70,9 @@ html,body{margin:0;height:100%;color:#d7dce5;font:16px system-ui}
 body{display:grid;grid-template-columns:100px minmax(0,1fr) 120px;grid-template-rows:80px minmax(0,1fr) 80px;background:#14171b}
 header,footer{grid-column:1/-1;background:#292e37;padding:20px;box-sizing:border-box}
 aside{padding:12px;box-sizing:border-box}main{background:#61afef;min-width:0;min-height:0}
-</style></head><body><header>Jarvis browser integration probe</header><aside>Workspace</aside><main id="viewport"></main><aside>Inspector</aside><footer>Jarvis status bar</footer></body></html>"#;
+</style></head><body><header>Jarvis browser integration probe</header><aside>Workspace</aside><main id="viewport"></main><aside>Inspector</aside><footer><label>Nome <input id="name"></label></footer><script>
+document.querySelector('#name').addEventListener('input',event=>{window.__probeInputTrusted=event.isTrusted===true});
+</script></body></html>"#;
 
 fn server() -> (String, std::net::TcpListener) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
@@ -57,6 +83,10 @@ fn server() -> (String, std::net::TcpListener) {
 }
 
 fn fixture_response(request: &str) -> (&'static str, &'static str) {
+    #[cfg(target_os = "linux")]
+    if request.starts_with("GET /island ") {
+        return ("text/html; charset=utf-8", linux_island::PAGE);
+    }
     #[cfg(target_os = "macos")]
     if request.starts_with("GET /island ") {
         return ("text/html; charset=utf-8", island::PAGE);
@@ -184,6 +214,10 @@ async fn check(
     std::fs::create_dir_all(output).map_err(|_| AgentError::storage())?;
     // The production UI opens tabs only after its main webview has loaded.
     wait_page(&app.get_webview("main").unwrap(), "Browser host").await?;
+    #[cfg(target_os = "linux")]
+    linux::check_idle().await?;
+    #[cfg(target_os = "linux")]
+    linux::check_keyboard(&app.get_webview("main").unwrap(), true).await?;
     #[cfg(target_os = "macos")]
     {
         let window = app.get_webview_window("main").unwrap();
@@ -266,6 +300,12 @@ async fn check(
     }
     wait_page(&view, "Browser probe").await?;
     check_layout(app, &tab, &view, output).await?;
+    #[cfg(target_os = "linux")]
+    linux::check_keyboard(&view, false).await?;
+    #[cfg(target_os = "linux")]
+    linux::check_keyboard(&app.get_webview("main").unwrap(), true).await?;
+    #[cfg(target_os = "linux")]
+    linux::check_stacking(&view).await?;
     let snapshot = cdp_action(&view, json!({"action":"snapshot"})).await?;
     let element = |name: &str| {
         snapshot["elements"]
@@ -419,8 +459,12 @@ async fn check(
     if app.get_webview(&label(&tab.id)).is_some() {
         return Err(error("Closed native tab remains registered"));
     }
+    #[cfg(target_os = "linux")]
+    linux::check_keyboard(&app.get_webview("main").unwrap(), false).await?;
     #[cfg(target_os = "macos")]
     island::check(app, base, output).await?;
+    #[cfg(target_os = "linux")]
+    linux_island::check(app, base, output).await?;
     std::fs::write(output.join("native-report.json"), serde_json::to_vec_pretty(&json!({"passed":true,"engine":"CEF/Chromium","platform":std::env::consts::OS,"checks":["native load","native main-thread getters","CEF child parent and visibility","native viewport bounds","page viewport bounds","host viewport slot","main interface resize","CDP snapshot","trusted CDP fill","trusted CDP click","CDP evaluate","CDP network","CDP response body","CDP devtools","console","screenshot","hidden screenshot","app IPC denied","plugin IPC denied","navigate","back","stale element rejection","native close"],"cdp":{"fill":fill,"click":click,"input":input,"network":network,"responseBody":body,"devtools":devtools},"width":image.width(),"height":image.height(),"pngBytes":bytes.len()})).unwrap()).map_err(|_| AgentError::storage())?;
     Ok(())
 }
@@ -435,26 +479,13 @@ fn probe_context() -> tauri::Context {
 pub fn run() {
     let passed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let completed = passed.clone();
-    let (base, listener) = server();
-    std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let mut request = [0; 4096];
-            let count = stream.read(&mut request).unwrap_or(0);
-            let request = String::from_utf8_lossy(&request[..count]);
-            let (content_type, body) = fixture_response(&request);
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-        }
-    });
     let context = probe_context();
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.codex/browser-review");
     tauri::Builder::default()
         .runtime(tauri_runtime_cef::Cef::default())
         .manage(BrowserState::default())
         .manage(crate::companion::CompanionState::default())
+        .manage(crate::desktop::DesktopState::default())
         .invoke_handler(|invoke| {
             crate::main_only(invoke, |invoke| {
                 invoke.resolver.resolve("main-only probe");
@@ -462,6 +493,47 @@ pub fn run() {
             })
         })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            {
+                crate::initialize_linux_async_runtime();
+                if std::env::var("JARVIS_AGENT_PIPELINE_PROBE").is_ok_and(|value| value == "1") {
+                    app.manage(AppState::default());
+                    app.manage(crate::agent::AgentState::default());
+                    app.manage(crate::agent::computer::ComputerState::default());
+                    app.manage(crate::core::CoreState::default());
+                    app.manage(crate::core::impeccable_live::ImpeccableLiveState::default());
+                    app.manage(extension::ExtensionState::default());
+                    app.manage(crate::mcp::McpState::default());
+                    linux_agent::initialize(app)
+                        .map_err(|cause| std::io::Error::other(cause.message))?;
+                }
+                let preferences = tempfile::tempdir()?;
+                app.state::<crate::desktop::DesktopState>()
+                    .initialize_probe(preferences.path().join("desktop.json"))
+                    .map_err(std::io::Error::other)?;
+                app.manage(preferences);
+            }
+            // CEF subprocesses must enter Chromium before starting fixture threads.
+            let (base, listener) = server();
+            std::thread::spawn(move || {
+                for mut stream in listener.incoming().flatten() {
+                    let mut request = [0; 4096];
+                    let count = stream.read(&mut request).unwrap_or(0);
+                    let request = String::from_utf8_lossy(&request[..count]);
+                    let (content_type, body) = fixture_response(&request);
+                    #[cfg(target_os = "linux")]
+                    let dynamic = request.starts_with("GET /agent ")
+                        .then(linux_agent::page)
+                        .flatten();
+                    #[cfg(target_os = "linux")]
+                    let body = dynamic.as_deref().unwrap_or(body);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            });
             tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -474,6 +546,13 @@ pub fn run() {
             .build()?;
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                #[cfg(target_os = "linux")]
+                let result = if std::env::var("JARVIS_AGENT_PIPELINE_PROBE").is_ok_and(|value| value == "1") {
+                    linux_agent::check(&app, &base, &output).await
+                } else {
+                    check(&app, &base, &output).await
+                };
+                #[cfg(not(target_os = "linux"))]
                 let result = check(&app, &base, &output).await;
                 match result {
                     Ok(()) => {
@@ -489,6 +568,7 @@ pub fn run() {
             });
             Ok(())
         })
+        .on_window_event(crate::companion::on_window_event)
         .run(context)
         .expect("run browser probe");
     if !passed.load(std::sync::atomic::Ordering::SeqCst) {

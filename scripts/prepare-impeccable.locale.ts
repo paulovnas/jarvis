@@ -201,7 +201,7 @@ export const liveTemplatePortuguese: Readonly<Record<string, string>> = {
   "No PRODUCT.md found. Variants will be brand-agnostic. Run ": "PRD do projeto não encontrado. As alternativas não terão contexto de marca. Peça ao agente ",
   " init to generate one.": " init para criá-lo.",
   "<strong>No DESIGN.md yet</strong>Create one by running <code>": "<strong>DESIGN.md ainda não existe</strong>Peça ao agente <code>",
-  " document</code> in your terminal, then re-open this panel.": " document</code> no chat do Jarvis e abra este painel novamente.",
+  " document</code> in your terminal, then re-open this panel.": " document</code> no chat do Jarvis. O painel é atualizado automaticamente ao salvar ou vincular o design em Conhecimento do projeto.",
   "<strong>DESIGN.md is newer than .impeccable/design.json.</strong> Run <code>": "<strong>DESIGN.md é mais recente que .impeccable/design.json.</strong> Peça ao agente <code>",
   " document</code> to refresh the sidecar.</span>": " document</code> para atualizar os dados.</span>",
   "<strong>Basic view</strong>This panel reads the tokens in your <code>DESIGN.md</code> frontmatter. Running <code>": "<strong>Visão básica</strong>Este painel lê os tokens do seu <code>DESIGN.md</code>. Peça ao agente <code>",

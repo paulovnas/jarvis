@@ -22,7 +22,11 @@ function componentFor(tool: ToolCallItem, activities?: CoreActivity[]): CoreId |
   if (tool.name.startsWith("ctx_")) return "context-mode";
   if (tool.name.startsWith("graft_")) return "graft";
   if (tool.name === "impeccable") return "impeccable";
-  if (tool.name.startsWith("design_")) return activities?.some(activity => activity.component === "impeccable") ? "impeccable" : "open-design";
+  if (tool.name.startsWith("design_")) {
+    const current = activities?.some(activity => activity.component === "impeccable");
+    const legacy = activities?.some(activity => activity.component === "open-design");
+    return legacy && !current ? "open-design" : "impeccable";
+  }
   if (tool.name.startsWith("context7_")) return "context7";
   if (tool.name.startsWith("beads_")) return "beads";
   if (tool.name.startsWith("lsp_")) return "lsp";

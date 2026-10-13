@@ -1,7 +1,7 @@
 # Jarvis desktop companion — Coucou research
 
 Research date: 2026-10-01. The optional floating companion is implemented for
-macOS and Windows; the broader recommendations below describe future possibilities.
+macOS, Windows and Linux/X11; the broader recommendations below describe future possibilities.
 Coucou reference: `docs/coucou`, commit `835421c7fff260f0f0be48927591b96bfad81cad`.
 Jarvis reference: `c9f8df7`, using Tauri 2.11.5, Wry 0.55.1 and Tao 0.35.3.
 
@@ -126,8 +126,9 @@ an ongoing agent's execution.
 
 ## Implemented scope
 
-- One disposable Tauri window, separate lazy renderer and original SVG robot.
-  Opt-in under General settings, unavailable on Linux.
+- One disposable Tauri window, separate lazy renderer and the shared Jarvito
+  Rive character with an SVG fallback.
+  Opt-in under General settings on macOS, Windows and Linux/X11.
 - Saved physical robot anchor, monitor work-area fitting and scale-aware expansion
   toward the available space; compact dragging does not navigate or open the panel.
 - Passive loaded-state projection with bounded recent root summaries, active
@@ -140,6 +141,14 @@ an ongoing agent's execution.
   remain unable to call application commands.
 - macOS nonactivating display uses AppKit ordering. Windows virtual desktops and
   macOS fullscreen Spaces remain subject to native window-manager behavior.
+- Linux keeps the existing windowed CEF renderer and clips its visual and input
+  regions with X11 Shape, equivalent to the Windows rounded native region.
+  Nonactivating window hints preserve keyboard focus until explicit text input;
+  horizontal dragging and external-interaction collapse reuse the companion commands.
+  The pointer watch sleeps while compact and idle. A missing X11 display or Shape
+  extension is reported through the existing companion error in General settings.
+  Native validation runs with the opt-in `browser-probe` feature; Wayland compositor
+  behavior is not covered by the X11 integration probe.
 - Closing the main application still quits. A background tray mode, anchored
   hardware-notch presentation and sound are outside this implementation.
 

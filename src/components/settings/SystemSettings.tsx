@@ -123,7 +123,7 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
         {snapshot.companionSupported && <div className="settings-row">
           <div className="settings-row-copy">
             <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Bot aria-hidden="true" className="size-4 text-muted-foreground" />Assistente na área de trabalho</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste o robô para reposicionar.</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste a área preta do cabeçalho para reposicionar.</p>
           </div>
           <div className="settings-row-control"><Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" /></div>
         </div>}

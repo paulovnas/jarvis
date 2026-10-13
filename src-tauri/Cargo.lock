@@ -3020,12 +3020,13 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jarvis"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "block2",
+ "cef",
  "cpal",
  "dispatch2",
  "flate2",
@@ -3054,6 +3055,7 @@ dependencies = [
  "portable-pty",
  "process-wrap",
  "quick-xml 0.42.0",
+ "raw-window-handle",
  "regex",
  "reqwest",
  "rmcp",
@@ -3087,6 +3089,7 @@ dependencies = [
  "windows 0.61.3",
  "windows-registry",
  "windows-sys 0.61.2",
+ "x11-dl",
  "zbus 5.19.0",
  "zip",
 ]
@@ -6514,6 +6517,7 @@ dependencies = [
  "dirs",
  "dispatch2",
  "dlopen2",
+ "gdk4-x11",
  "gtk4",
  "html5ever 0.29.1",
  "http",

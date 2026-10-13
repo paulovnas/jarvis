@@ -134,6 +134,23 @@ fn bounded(value: &mut Option<String>, limit: usize) {
     }
 }
 
+pub(crate) fn design_changed(app: &tauri::AppHandle, conversation: &str, tab: &str) {
+    let state = app.state::<BrowserState>();
+    let Ok(owned) = state.tab(app, conversation, tab) else {
+        return;
+    };
+    let Some(view) = app.get_webview(&label(tab)) else {
+        return;
+    };
+    if view
+        .url()
+        .ok()
+        .is_some_and(|url| same_origin(&owned.url, url.as_str()))
+    {
+        let _ = view.eval("window.dispatchEvent(new Event('jarvis-live:design-changed'))");
+    }
+}
+
 /// Called only by the native Live owner. No arbitrary page or renderer payload is accepted.
 pub(crate) fn project(app: &tauri::AppHandle, status: &Value) {
     let Ok(mut projection) = serde_json::from_value::<Projection>(status.clone()) else {

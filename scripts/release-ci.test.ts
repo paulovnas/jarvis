@@ -194,13 +194,35 @@ it("verifies and uploads only macOS packages and updater manifests for a selecte
   expect(state.command).toHaveBeenCalledWith("gh", ["release", "edit", "v1.4.0", "--repo", "paulovnas/jarvis", "--draft=false", "--latest=true"]);
 });
 
+it("publishes the two selected platforms and their updater manifests together", async () => {
+  const output = publicationWithNotes("macOS e Linux.");
+  vi.stubEnv("RELEASE_SELECTION", "macos-linux");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(0);
+  expect(verifyReleaseArtifacts).toHaveBeenCalledTimes(2);
+  expect(verifyReleaseArtifacts).toHaveBeenCalledWith(output, "1.4.0", sha, "x86_64-unknown-linux-gnu", "test-public-key");
+  expect(Object.keys(JSON.parse(readFileSync(path.join(output, "latest.json"), "utf8")).platforms)).toEqual(["darwin-aarch64", "linux-x86_64"]);
+  expect(Object.keys(JSON.parse(readFileSync(path.join(output, "latest-linux-x86_64.json"), "utf8")).platforms)).toEqual(["linux-x86_64"]);
+  expect(readdirSync(output).some(name => /windows|\.exe/.test(name))).toBe(false);
+  expect(state.command).toHaveBeenCalledWith("gh", ["release", "edit", "v1.4.0", "--repo", "paulovnas/jarvis", "--draft=false", "--latest=true"]);
+});
+
+it("keeps a combined release private when an unselected Windows package remains in the draft", async () => {
+  publicationWithNotes("macOS e Linux.", [{ name: "Jarvis_1.4.0_x86_64-pc-windows-msvc-setup.exe", size: 100 }]);
+  vi.stubEnv("RELEASE_SELECTION", "macos-linux");
+  await import("./release-ci");
+  expect(process.exitCode).toBe(1);
+  expect(state.command.mock.calls.some(([program, args]) => program === "gh" && (args as string[])[1] === "edit")).toBe(false);
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fora da seleção de plataformas"));
+});
+
 it.each(["Jarvis_1.4.0_x86_64-pc-windows-msvc-setup.exe", "latest-linux-x86_64.json"])("keeps a macOS-only draft private when it contains an unselected asset: %s", async name => {
   publicationWithNotes("Somente macOS.", [{ name, size: 100 }]);
   vi.stubEnv("RELEASE_SELECTION", "aarch64-apple-darwin");
   await import("./release-ci");
   expect(process.exitCode).toBe(1);
   expect(state.command.mock.calls.some(([program, args]) => program === "gh" && (args as string[])[1] === "edit")).toBe(false);
-  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fora da seleção macOS"));
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("fora da seleção de plataformas"));
 });
 
 it("keeps the default full-platform release private if a required platform is unavailable", async () => {

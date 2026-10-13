@@ -297,6 +297,12 @@ pub struct DesktopState {
 }
 
 impl DesktopState {
+    #[cfg(all(feature = "browser-probe", target_os = "linux"))]
+    pub(crate) fn initialize_probe(&self, path: PathBuf) -> Result<(), String> {
+        *self.store.lock().map_err(|_| "Desktop lock poisoned")? = Some(Store::open(path)?);
+        Ok(())
+    }
+
     pub(crate) fn companion_sound_enabled(&self) -> bool {
         self.store.lock().ok().is_none_or(|guard| {
             guard

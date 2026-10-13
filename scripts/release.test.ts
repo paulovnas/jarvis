@@ -103,6 +103,13 @@ it("dispatches an explicitly selected macOS release after the unchanged local ga
   expect(state.command).toHaveBeenCalledWith("cargo", expect.arrayContaining(["clippy", "--all-targets", "-D", "warnings"]), false, expect.objectContaining({ CI: "true" }));
   expect(state.command).toHaveBeenCalledWith("cargo", expect.arrayContaining(["test", "--locked"]), false, expect.objectContaining({ CI: "true" }));
 });
+it("dispatches the combined macOS and Linux release after the local gates", async () => {
+  process.argv.push("--target", "macos-linux");
+  await import("./release");
+  expect(process.exitCode).toBe(0);
+  expect(state.command).toHaveBeenCalledWith("gh", ["workflow", "run", "release-macos.yml", "--repo", "paulovnas/jarvis", "--ref", "main", "-f", "tag=v0.8.4-beta", "-f", "publish=true", "-f", "target=macos-linux"]);
+  expect(state.tagContents).toContain(`Jarvis-Local-Checks-v1: ${releaseSha}`);
+});
 it("stops before changing the version when automatic notes generation fails", async () => {
   const original = state.command.getMockImplementation()!;
   state.command.mockImplementation((program, args, ...rest) => {
@@ -161,7 +168,7 @@ it("selects one macOS runner while retaining all three runners in the default re
   const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
   expect(workflow).toContain("RELEASE_SELECTION: ${{ inputs.target }}");
   expect(workflow).toContain("default: all");
-  const matrix = workflow.match(/include: \$\{\{ fromJSON\(inputs\.target == 'aarch64-apple-darwin' && '([^']+)' \|\| '([^']+)'\) \}\}/);
+  const matrix = workflow.match(/include: \$\{\{ fromJSON\(inputs\.target == 'aarch64-apple-darwin' && '([^']+)' \|\| inputs\.target == 'macos-linux' && '[^']+' \|\| '([^']+)'\) \}\}/);
   expect(matrix).not.toBeNull();
   expect(JSON.parse(matrix![1])).toEqual([{ runner: "macos-15", target: "aarch64-apple-darwin" }]);
   expect(JSON.parse(matrix![2])).toEqual([
@@ -169,6 +176,21 @@ it("selects one macOS runner while retaining all three runners in the default re
     { runner: "windows-2022", target: "x86_64-pc-windows-msvc" },
     { runner: "ubuntu-24.04", target: "x86_64-unknown-linux-gnu" },
   ]);
+});
+it("selects only the macOS and Linux runners for the combined release", () => {
+  const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  const matrix = workflow.match(/inputs\.target == 'macos-linux' && '([^']+)'/);
+  expect(matrix).not.toBeNull();
+  expect(JSON.parse(matrix![1])).toEqual([
+    { runner: "macos-15", target: "aarch64-apple-darwin" },
+    { runner: "ubuntu-24.04", target: "x86_64-unknown-linux-gnu" },
+  ]);
+});
+it("declares Linux desktop and Chromium dependencies for a clean DEB installation", () => {
+  const config = JSON.parse(readFileSync(path.join(process.cwd(), "src-tauri/tauri.linux.conf.json"), "utf8")) as { bundle: { linux: { deb: { depends: string[] } } } };
+  for (const dependency of ["libgtk-4-1 (>= 4.14)", "libnss3", "libgbm1", "libasound2t64 | libasound2"]) {
+    expect(config.bundle.linux.deb.depends).toContain(dependency);
+  }
 });
 it("prepares matching native Chromium libraries and the pinned bundler for every CI platform", () => {
   const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");

@@ -618,7 +618,11 @@ impl<'a> Bridge<'a> {
                 session: self.session,
                 tool,
                 options: &self.options,
-                computer: self.execution.as_ref().and_then(workflow::Execution::native_app).map(|app| app.state::<computer::ComputerState>().inner().clone()),
+                computer: self
+                    .execution
+                    .as_ref()
+                    .and_then(workflow::Execution::native_app)
+                    .map(|app| app.state::<computer::ComputerState>().inner().clone()),
                 policy,
                 sandbox: sandbox.as_ref(),
                 project_id: Some(&project_id),
@@ -672,18 +676,6 @@ impl<'a> Bridge<'a> {
                 .as_ref()
                 .map_or_else(|error| error.message.as_str(), String::as_str),
         );
-        if let Some(exec) = &self.execution {
-            exec.observe_recovery_result(
-                tool,
-                tool.name.starts_with("mcp_") && requires_task,
-                result.is_ok(),
-                |name| {
-                    self.clients
-                        .tool_metadata(name)
-                        .map(|(server, _, _)| server.to_owned())
-                },
-            )?;
-        }
         result
     }
 

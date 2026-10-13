@@ -9,7 +9,17 @@ use std::sync::{
 use std::time::Duration;
 use tauri::{Emitter, Listener, Manager, PhysicalPosition, PhysicalSize};
 
-pub(crate) const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+pub(crate) const SUPPORTED: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux"
+));
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as native;
+#[cfg(target_os = "windows")]
+use windows as native;
 const LABEL: &str = "companion";
 const COMPACT_WIDTH: f64 = 288.0;
 const COMPACT_HEIGHT: f64 = 32.0;
@@ -245,18 +255,18 @@ pub(crate) struct CompanionState {
     drag_origin: Mutex<Option<(CompanionPosition, Screen, i32)>>,
     error: Mutex<Option<String>>,
     usage: Mutex<Vec<CompanionUsage>>,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     expected_position: Mutex<Option<PhysicalPosition<i32>>>,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pointer_worker_started: AtomicBool,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     pointer_wake: tokio::sync::Notify,
     #[cfg(target_os = "macos")]
     panel: Mutex<Option<macos::Panel>>,
 }
 
 impl CompanionState {
-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
     fn request_external_collapse(&self) -> bool {
         self.expanded.load(Ordering::SeqCst)
             && !self.dragging.load(Ordering::SeqCst)
@@ -330,8 +340,8 @@ pub(crate) fn configure(app: &tauri::AppHandle) {
         });
     }
     state.wake.notify_one();
-    #[cfg(target_os = "windows")]
-    windows::start_pointer_watch(app);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    native::start_pointer_watch(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -366,6 +376,18 @@ fn screens(window: &tauri::WebviewWindow) -> Result<Vec<Screen>, String> {
 }
 
 fn create(app: &tauri::AppHandle) -> Result<(), String> {
+    create_at(
+        app,
+        tauri::WebviewUrl::App("index.html".into()),
+        app.config().build.dev_url.clone(),
+    )
+}
+
+fn create_at(
+    app: &tauri::AppHandle,
+    url: tauri::WebviewUrl,
+    development_origin: Option<tauri::Url>,
+) -> Result<(), String> {
     if app.get_webview_window(LABEL).is_some() {
         return Ok(());
     }
@@ -376,27 +398,33 @@ fn create(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|_| "Posição do assistente indisponível.")? = app
         .state::<crate::desktop::DesktopState>()
         .companion_position();
-    let development_origin = app.config().build.dev_url.clone();
-    let builder =
-        tauri::WebviewWindowBuilder::new(app, LABEL, tauri::WebviewUrl::App("index.html".into()))
-            .on_navigation(move |url| local_navigation(url, development_origin.as_ref()))
-            .title("Jarvis · Assistente flutuante")
-            .inner_size(COMPACT_WIDTH, COMPACT_HEIGHT)
-            .transparent(true)
-            .background_color(tauri::utils::config::Color(0, 0, 0, 0))
-            .decorations(false)
-            .resizable(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .focusable(false)
-            .visible(false)
-            .shadow(false);
+    let builder = tauri::WebviewWindowBuilder::new(app, LABEL, url)
+        .on_navigation(move |url| local_navigation(url, development_origin.as_ref()))
+        .title("Jarvis · Assistente flutuante")
+        .inner_size(COMPACT_WIDTH, COMPACT_HEIGHT)
+        .transparent(true)
+        .background_color(tauri::utils::config::Color(0, 0, 0, 0))
+        .decorations(false)
+        .resizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .focusable(false)
+        .visible(false)
+        .shadow(false);
     #[cfg(target_os = "macos")]
     let builder = builder
         .visible_on_all_workspaces(true)
         .accept_first_mouse(true);
+    // Windowed CEF is opaque on X11; the native shape removes the outer canvas.
+    #[cfg(target_os = "linux")]
+    let builder = builder.background_color(tauri::utils::config::Color(0, 0, 0, 255));
     let window = builder.build().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    if let Err(error) = set_focusable(&window.as_ref().window(), false) {
+        let _ = window.close();
+        return Err(error);
+    }
     let saved = *state
         .anchor
         .lock()
@@ -421,8 +449,24 @@ fn show_nonactivating(window: &tauri::WebviewWindow) -> Result<(), String> {
     {
         macos::show(window.app_handle())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let visible = window.is_visible().map_err(|error| error.to_string())?;
+        window.show().map_err(|error| error.to_string())?;
+        if !visible {
+            // GTK writes its default input hint while mapping the toplevel.
+            set_focusable(&window.as_ref().window(), false)?;
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     window.show().map_err(|e| e.to_string())
+}
+
+fn set_focusable(window: &tauri::Window, focusable: bool) -> Result<(), String> {
+    window
+        .set_focusable(focusable)
+        .map_err(|error| error.to_string())
 }
 
 fn local_navigation(url: &tauri::Url, development: Option<&tauri::Url>) -> bool {
@@ -482,7 +526,7 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
     macos::set_geometry(&window, &placement)?;
     #[cfg(not(target_os = "macos"))]
     {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             *state
                 .expected_position
@@ -492,15 +536,25 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
                     .then_some(placement.position);
             state.pointer_wake.notify_one();
         }
+        #[cfg(target_os = "linux")]
+        {
+            // GTK fixes nonresizable WM bounds to its current minimum request.
+            window
+                .set_min_size(Some(placement.size))
+                .map_err(|error| error.to_string())?;
+            window
+                .set_max_size(Some(placement.size))
+                .map_err(|error| error.to_string())?;
+        }
         window
             .set_position(placement.position)
             .map_err(|e| e.to_string())?;
         window.set_size(placement.size).map_err(|e| e.to_string())?;
         if !expanded {
-            window.set_focusable(false).map_err(|e| e.to_string())?;
+            set_focusable(&window.as_ref().window(), false)?;
         }
-        #[cfg(target_os = "windows")]
-        windows::apply_hit_rect(
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        native::apply_hit_rect(
             &window,
             [
                 0.0,
@@ -585,7 +639,7 @@ fn schedule_anchor_save(app: &tauri::AppHandle) {
     });
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn collapse_on_external_interaction(app: &tauri::AppHandle) {
     let state = app.state::<CompanionState>();
     if state.request_external_collapse() {
@@ -600,7 +654,7 @@ fn collapse_on_external_interaction(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
 fn contains_point(rect: [f64; 4], point: [f64; 2]) -> bool {
     point[0] >= rect[0]
         && point[0] < rect[0] + rect[2]
@@ -624,7 +678,7 @@ pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent
     let state = app.state::<CompanionState>();
     match event {
         tauri::WindowEvent::Moved(position) if !cfg!(target_os = "macos") => {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 if let Ok(mut expected) = state.expected_position.lock() {
                     if let Some(target) = *expected {
@@ -649,8 +703,8 @@ pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent
             }
         }
         tauri::WindowEvent::Focused(false) => {
-            let _ = window.set_focusable(false);
-            #[cfg(target_os = "windows")]
+            let _ = set_focusable(window, false);
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             collapse_on_external_interaction(app);
         }
         #[cfg(target_os = "macos")]
@@ -721,12 +775,12 @@ pub(crate) fn companion_set_hit_rect(
         .map_err(|_| "Tamanho da ilha indisponível.")?
         .ok_or("Tamanho da ilha indisponível.")?;
     let rect = validated_hit_rect([x, y, width, height], canvas)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let window = app
             .get_webview_window(LABEL)
             .ok_or("Assistente flutuante indisponível.")?;
-        windows::apply_hit_rect(&window, rect)?;
+        native::apply_hit_rect(&window, rect)?;
         state.pointer_wake.notify_one();
     }
     *state
@@ -799,7 +853,7 @@ pub(crate) fn companion_start_drag(
     // Retain the optional arguments for old renderers; dragging is now owned by
     // the black header and never uses the character's visual position.
     let _ = (robot_x, robot_y);
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let window = app
             .get_webview_window(LABEL)
@@ -827,7 +881,7 @@ pub(crate) fn companion_start_drag(
             })
             .copied()
             .ok_or("Nenhuma tela disponível.")?;
-        let cursor = windows::cursor_x()?;
+        let cursor = native::cursor_x()?;
         *state
             .drag_origin
             .lock()
@@ -835,12 +889,12 @@ pub(crate) fn companion_start_drag(
         state.dragging.store(true, Ordering::SeqCst);
         state.pointer_wake.notify_one();
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     let _ = app;
     Ok(())
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 fn horizontal_anchor(origin: CompanionPosition, screen: Screen, delta: i64) -> CompanionPosition {
     let width = ((COMPACT_WIDTH * screen.scale).round().max(1.0) as u32).min(screen.width);
     let x = (i64::from(origin.x) + delta).clamp(
@@ -855,7 +909,7 @@ fn horizontal_anchor(origin: CompanionPosition, screen: Screen, delta: i64) -> C
 
 #[tauri::command]
 pub(crate) fn companion_move_horizontal(app: tauri::AppHandle) -> Result<Geometry, String> {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         let state = app.state::<CompanionState>();
         let origin = *state
@@ -865,7 +919,7 @@ pub(crate) fn companion_move_horizontal(app: tauri::AppHandle) -> Result<Geometr
         let Some((origin, screen, start)) = origin else {
             return apply_geometry(&app, state.expanded.load(Ordering::SeqCst));
         };
-        let current = windows::cursor_x()?;
+        let current = native::cursor_x()?;
         let anchor = horizontal_anchor(origin, screen, i64::from(current) - i64::from(start));
         *state
             .anchor
@@ -875,7 +929,7 @@ pub(crate) fn companion_move_horizontal(app: tauri::AppHandle) -> Result<Geometr
         schedule_anchor_save(&app);
         Ok(geometry)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     apply_geometry(
         &app,
         app.state::<CompanionState>()
@@ -917,7 +971,7 @@ pub(crate) fn companion_set_interacting(app: tauri::AppHandle, active: bool) -> 
             let window = app
                 .get_webview_window(LABEL)
                 .ok_or("Assistente flutuante indisponível.")?;
-            window.set_focusable(true).map_err(|e| e.to_string())?;
+            set_focusable(&window.as_ref().window(), true)?;
             window.set_focus().map_err(|e| e.to_string())?;
             Ok(())
         }
@@ -969,6 +1023,47 @@ pub(crate) mod probe {
     pub(crate) fn close(window: &tauri::WebviewWindow) -> Result<(), String> {
         macos::close(window.app_handle(), false);
         window.close().map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(all(feature = "browser-probe", target_os = "linux"))]
+pub(crate) mod probe {
+    use super::*;
+
+    pub(crate) fn geometry_pending(app: &tauri::AppHandle) -> bool {
+        app.state::<CompanionState>()
+            .expected_position
+            .lock()
+            .is_ok_and(|position| position.is_some())
+    }
+
+    pub(crate) fn show_actual(app: &tauri::AppHandle) -> Result<(), String> {
+        super::create(app)?;
+        app.state::<CompanionState>()
+            .enabled
+            .store(true, Ordering::SeqCst);
+        linux::start_pointer_watch(app);
+        Ok(())
+    }
+
+    pub(crate) fn create(app: &tauri::AppHandle, url: tauri::Url) -> Result<(), String> {
+        create_at(app, tauri::WebviewUrl::External(url.clone()), Some(url))?;
+        app.state::<CompanionState>()
+            .enabled
+            .store(true, Ordering::SeqCst);
+        linux::start_pointer_watch(app);
+        set_companion_expanded(app.clone(), false, None)?;
+        Ok(())
+    }
+
+    pub(crate) fn close(app: &tauri::AppHandle) -> Result<(), String> {
+        app.state::<CompanionState>()
+            .enabled
+            .store(false, Ordering::SeqCst);
+        app.get_webview_window(LABEL)
+            .ok_or("Missing companion")?
+            .close()
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1757,6 +1852,15 @@ pub(crate) async fn companion_pause_question(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_exposes_the_existing_companion() {
+        assert!(
+            std::hint::black_box(SUPPORTED),
+            "Linux must expose Jarvito in system settings"
+        );
+    }
 
     #[test]
     fn companion_file_links_can_reveal_files_without_opening_or_executing_them() {

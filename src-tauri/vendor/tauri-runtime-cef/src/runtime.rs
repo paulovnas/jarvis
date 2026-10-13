@@ -1339,6 +1339,8 @@ pub(crate) type AfterWindowCreationCallback = Box<dyn for<'a> Fn(RawWindow<'a>) 
 
 pub(crate) enum Message<T: UserEvent> {
   EventLoop(EventLoopMessage),
+  #[cfg(target_os = "linux")]
+  WebviewFocused(u32),
   BrowserClosed(WindowId, u32),
   PopupPending(crate::popup::PopupRequest, Arc<crate::popup::PopupFamily>),
   PopupCreated(
@@ -1647,6 +1649,16 @@ impl<T: UserEvent> WinitCefApp<T> {
       Message::PopupClosed(id) => {
         self.state.live_popups.remove(&id);
         self.exit_if_done(event_loop);
+      }
+      #[cfg(target_os = "linux")]
+      Message::WebviewFocused(webview_id) => {
+        // CEF callbacks retain their original window id when a webview is reparented.
+        if let Some(window) = self.state.windows.values_mut().find(|window| {
+          window.children.iter().any(|child| child.webview_id == webview_id)
+        }) {
+          window.focused_webview = Some(webview_id);
+          window.restore_webview_stacking();
+        }
       }
       Message::BrowserClosed(_window_id, webview_id) => {
         // Standalone webview.close() and app shutdown keep the child in state
@@ -2186,6 +2198,10 @@ impl<T: UserEvent> ApplicationHandler for WinitCefApp<T> {
         );
       }
       WinitWindowEvent::Focused(focused) => {
+        #[cfg(target_os = "linux")]
+        if focused {
+          appwindow.focus_webview();
+        }
         self.emit_window_event(window_id, WindowEvent::Focused(focused));
       }
       WinitWindowEvent::ThemeChanged(theme) => {
@@ -3422,6 +3438,23 @@ impl<T: UserEvent> Runtime<T> for CefRuntime<T> {
       Box::new(callback),
       self.scheme_registry,
     );
+    #[cfg(target_os = "linux")]
+    {
+      use winit::event_loop::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+
+      let mut event_loop = self.event_loop;
+      let mut app = app;
+      loop {
+        if let PumpStatus::Exit(_) = event_loop.pump_app_events(Some(Duration::ZERO), &mut app) {
+          break;
+        }
+        // CEF's inherited GLib source requests a zero timeout even without work.
+        if !gtk::glib::MainContext::default().pending() {
+          std::thread::sleep(Duration::from_millis(1));
+        }
+      }
+    }
+    #[cfg(not(target_os = "linux"))]
     let _ = self.event_loop.run_app(app);
     cef::shutdown();
     #[cfg(target_os = "macos")]

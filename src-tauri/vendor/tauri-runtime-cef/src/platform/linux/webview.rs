@@ -12,31 +12,37 @@ use crate::{webview::AppWebview, window::AppWindow};
 
 use super::utils::{atom, with_cef_display};
 
+pub(super) fn native_parent_matches(xid: c_ulong, parent: c_ulong) -> Option<bool> {
+  if xid == 0 {
+    return None;
+  }
+  with_cef_display(None, |xlib, display| unsafe {
+    let mut root = 0;
+    let mut native_parent = 0;
+    let mut children = std::ptr::null_mut();
+    let mut count = 0;
+    let status = (xlib.XQueryTree)(
+      display,
+      xid as xlib::Window,
+      &mut root,
+      &mut native_parent,
+      &mut children,
+      &mut count,
+    );
+    if !children.is_null() {
+      (xlib.XFree)(children.cast());
+    }
+    // Browsers are created under (and reparented into) the X11 host, not the GTK toplevel.
+    (status != 0).then_some(native_parent == parent)
+  })
+}
+
 impl AppWebview {
   pub(crate) fn native_parent_matches(&self, parent: &AppWindow) -> Option<bool> {
-    let xid = self.host.window_handle();
-    if xid == 0 {
-      return None;
-    }
-    with_cef_display(None, |xlib, display| unsafe {
-      let mut root = 0;
-      let mut native_parent = 0;
-      let mut children = std::ptr::null_mut();
-      let mut count = 0;
-      let status = (xlib.XQueryTree)(
-        display,
-        xid as xlib::Window,
-        &mut root,
-        &mut native_parent,
-        &mut children,
-        &mut count,
-      );
-      if !children.is_null() {
-        (xlib.XFree)(children.cast());
-      }
-      // Browsers are created under (and reparented into) the X11 host, not the GTK toplevel.
-      (status != 0).then_some(native_parent == parent.cef_host_handle() as xlib::Window)
-    })
+    native_parent_matches(
+      self.host.window_handle() as c_ulong,
+      parent.cef_host_handle() as c_ulong,
+    )
   }
 
   pub(crate) fn native_visible(&self) -> Option<bool> {

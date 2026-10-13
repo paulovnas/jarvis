@@ -8,7 +8,7 @@
 //! <https://github.com/chromiumembedded/cef/blob/b41c5c64fc50871630678e3d0c8c9bfe77cc6353/tests/shared/browser/main_message_loop_external_pump_linux.cc>
 //!
 //! Mirrors cefclient's `main_message_loop_external_pump_linux.cc`: a custom
-//! low-priority `GSource` is attached to the default GLib context, delayed work
+//! `GSource` is attached to the default GLib context, delayed work
 //! is tracked as an absolute deadline, and cross-thread scheduling wakes the
 //! GLib poll through a pipe.
 
@@ -34,6 +34,7 @@ struct SourceState {
 
   // The time when we need to do delayed work.
   delayed_work_time: Option<Instant>,
+  scheduled_work: [Option<i64>; 2],
 
   // We use a wakeup pipe to make sure we'll get out of the glib polling phase
   // when another thread has scheduled us to do some work. There is a glib
@@ -71,6 +72,7 @@ impl PlatformPump {
     let mut source_state = Box::new(SourceState {
       state,
       delayed_work_time: None,
+      scheduled_work: [None; 2],
       wakeup_pipe_read: fds[0],
       wakeup_pipe_write: fds[1],
       wakeup_gpollfd: Box::new(ffi::GPollFD {
@@ -92,8 +94,8 @@ impl PlatformPump {
 
       (*(source as *mut WorkSource)).source_state = &mut *source_state;
       ffi::g_source_add_poll(source, &mut *source_state.wakeup_gpollfd);
-      // Use a low priority so that we let other events in the queue go first.
-      ffi::g_source_set_priority(source, ffi::G_PRIORITY_DEFAULT_IDLE);
+      // GTK/Chromium X11 sources can stay ready; idle priority would starve CEF work.
+      ffi::g_source_set_priority(source, ffi::G_PRIORITY_DEFAULT);
       // This is needed to allow Run calls inside Dispatch.
       ffi::g_source_set_can_recurse(source, ffi::GTRUE);
       ffi::g_source_attach(source, context.to_glib_none().0);
@@ -190,6 +192,9 @@ unsafe fn source_state(source: *mut ffi::GSource) -> *mut SourceState {
 
 // Return the timeout we want passed to poll.
 unsafe fn handle_prepare(source_state: *mut SourceState) -> c_int {
+  if unsafe { (*source_state).scheduled_work.iter().any(Option::is_some) } {
+    return 0;
+  }
   // We don't think we have work to do, but make sure not to block longer than
   // the next time we need to run delayed work.
   let delayed_work_time = unsafe { (*source_state).delayed_work_time };
@@ -197,9 +202,12 @@ unsafe fn handle_prepare(source_state: *mut SourceState) -> c_int {
 }
 
 unsafe fn handle_check(source_state: *mut SourceState) -> bool {
+  if unsafe { (*source_state).scheduled_work.iter().any(Option::is_some) } {
+    return true;
+  }
   // We usually have a single message on the wakeup pipe, since we are only
   // signaled when the queue went from empty to non-empty, but there can be
-  // two messages if a task posted a task, hence we read at most two bytes.
+  // two messages if a task posted a task, hence we read at most two delays.
   // The glib poll will tell us whether there was data, so this read shouldn't
   // block.
   let have_wakeup = {
@@ -219,15 +227,12 @@ unsafe fn handle_check(source_state: *mut SourceState) -> bool {
     if num_bytes < mem::size_of::<i64>() as isize {
       log::error!("error reading from the CEF message pump wakeup pipe");
     }
-    if num_bytes == mem::size_of::<i64>() as isize
-      && let Some(state) = unsafe { (*source_state).state.upgrade() }
-    {
-      state.on_schedule_work(delay_ms[0]);
-    }
-    if num_bytes == (mem::size_of::<i64>() * 2) as isize
-      && let Some(state) = unsafe { (*source_state).state.upgrade() }
-    {
-      state.on_schedule_work(delay_ms[1]);
+    if num_bytes >= mem::size_of::<i64>() as isize {
+      unsafe { (*source_state).scheduled_work[0] = Some(delay_ms[0]) };
+      if num_bytes == (mem::size_of::<i64>() * 2) as isize {
+        unsafe { (*source_state).scheduled_work[1] = Some(delay_ms[1]) };
+      }
+      return true;
     }
   }
 
@@ -242,8 +247,15 @@ unsafe fn handle_check(source_state: *mut SourceState) -> bool {
 }
 
 unsafe fn handle_dispatch(source_state: *mut SourceState) {
+  let work = unsafe { mem::take(&mut (*source_state).scheduled_work) };
   if let Some(state) = unsafe { (*source_state).state.upgrade() } {
-    state.on_timer_timeout();
+    if work.iter().any(Option::is_some) {
+      for delay in work.into_iter().flatten() {
+        state.on_schedule_work(delay);
+      }
+    } else {
+      state.on_timer_timeout();
+    }
   }
 }
 
@@ -292,3 +304,69 @@ static mut WORK_SOURCE_FUNCS: ffi::GSourceFuncs = ffi::GSourceFuncs {
   closure_callback: None,
   closure_marshal: None,
 };
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+  };
+
+  static TEST_CONTEXT: Mutex<()> = Mutex::new(());
+
+  #[test]
+  fn wakeup_is_consumed_while_native_events_are_ready() {
+    let _serial = TEST_CONTEXT.lock().unwrap();
+    let context = glib::MainContext::default();
+    let _owner = context.acquire().expect("acquire test main context");
+    let native_events = glib::idle_source_new(None, glib::Priority::DEFAULT, || {
+      glib::ControlFlow::Continue
+    });
+    native_events.attach(Some(&context));
+    // No CEF state: this exercises delivery without invoking an uninitialized browser.
+    let mut pump = PlatformPump::new(Weak::new());
+    pump.on_schedule_message_pump_work(0);
+    for _ in 0..3 {
+      context.iteration(false);
+    }
+    let mut queued_bytes: c_int = -1;
+    let status = unsafe {
+      libc::ioctl(
+        pump.source_state.wakeup_pipe_read,
+        libc::FIONREAD,
+        &mut queued_bytes,
+      )
+    };
+    native_events.destroy();
+    assert_eq!(status, 0);
+    assert_eq!(queued_bytes, 0, "native events starved Chromium's wakeup");
+  }
+
+  #[test]
+  fn readiness_checks_defer_browser_work_until_dispatch() {
+    let _serial = TEST_CONTEXT.lock().unwrap();
+    let context = glib::MainContext::default();
+    let _owner = context.acquire().expect("acquire test main context");
+    for delays in [&[0][..], &[0, 30][..]] {
+      let state = Arc::new_cyclic(|weak| PumpState {
+        // An active browser call detects reentry without calling uninitialized CEF.
+        is_active: AtomicBool::new(true),
+        reentrancy_detected: AtomicBool::new(false),
+        platform: Mutex::new(PlatformPump::new(weak.clone())),
+      });
+      for &delay in delays {
+        state.on_schedule_message_pump_work(delay);
+      }
+      let source = {
+        let mut platform = state.platform.lock().unwrap();
+        platform.source_state.wakeup_gpollfd.revents = ffi::G_IO_IN as _;
+        &mut *platform.source_state as *mut SourceState
+      };
+      assert!(unsafe { handle_check(source) });
+      assert!(!state.reentrancy_detected.load(Ordering::SeqCst));
+      unsafe { handle_dispatch(source) };
+      assert!(state.reentrancy_detected.load(Ordering::SeqCst));
+    }
+  }
+}

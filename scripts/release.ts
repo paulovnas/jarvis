@@ -15,7 +15,7 @@ function verifySource(sha: string) {
 function main() {
   const args = process.argv.slice(2).filter(arg => arg !== "--");
   if (!args.length || args.includes("--help")) {
-    console.info("Uso: bun run release 1.8.3 [--notes-file arquivo.md] [--target aarch64-apple-darwin] [--dry-run]\nSem --target, publica macOS Apple Silicon, Windows x64 e Linux x64; com --target, publica apenas macOS Apple Silicon. Prepara a versão e executa os checks completos localmente antes de criar/enviar a tag. O Actions compila, assina e publica os instaladores. Requer Bun, Git, gh autenticado, Rust/Clippy e as dependências nativas da plataforma; as chaves de assinatura ficam no CI.");
+    console.info("Uso: bun run release 2.0.1 [--notes-file arquivo.md] [--target macos-linux|aarch64-apple-darwin] [--dry-run]\nSem --target, publica macOS Apple Silicon, Windows x64 e Linux x64; macos-linux publica macOS Apple Silicon e Linux x64; aarch64-apple-darwin publica apenas macOS Apple Silicon. Prepara a versão e executa os checks completos localmente antes de criar/enviar a tag. O Actions compila, assina e publica os instaladores. Requer Bun, Git, gh autenticado, Rust/Clippy e as dependências nativas da plataforma; as chaves de assinatura ficam no CI.");
     return;
   }
   const options = parseReleaseArguments(args);
@@ -23,7 +23,9 @@ function main() {
   const version = releaseVersion(options.version, pkg.version);
   const tag = `v${version}`;
   if (options.dryRun) {
-    console.info(`${tag} → ${RELEASE_REPOSITORY}\n${options.target ? "Somente macOS Apple Silicon" : "macOS Apple Silicon + Windows x64 + Linux x64"}\nVersão → checks locais (bun run check, Clippy e testes Rust) → tag do commit validado → push → Actions: ${options.target ? "DMG e atualizador assinado" : "DMG/NSIS/DEB/AppImage e atualizadores assinados"} → publicação.\nNenhum arquivo foi alterado ou publicado.`);
+    const platforms = options.target === "aarch64-apple-darwin" ? "Somente macOS Apple Silicon" : options.target === "macos-linux" ? "macOS Apple Silicon + Linux x64" : "macOS Apple Silicon + Windows x64 + Linux x64";
+    const packages = options.target === "aarch64-apple-darwin" ? "DMG e atualizador assinado" : options.target === "macos-linux" ? "DMG/DEB/AppImage e atualizadores assinados" : "DMG/NSIS/DEB/AppImage e atualizadores assinados";
+    console.info(`${tag} → ${RELEASE_REPOSITORY}\n${platforms}\nVersão → checks locais (bun run check, Clippy e testes Rust) → tag do commit validado → push → Actions: ${packages} → publicação.\nNenhum arquivo foi alterado ou publicado.`);
     return;
   }
   if (command("git", ["status", "--porcelain"], true)) throw new Error("Faça commit das alterações antes de gerar um release.");

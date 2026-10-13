@@ -334,6 +334,7 @@ fn command_at_unbound(directory: &Path, root: &Path) -> Result<tokio::process::C
         .env_remove("IMPECCABLE_DESIGN_ROOT")
         .env_remove("IMPECCABLE_PRODUCT_PATH")
         .env_remove("IMPECCABLE_PRODUCT_ROOT")
+        .env_remove("JARVIS_LIVE_OWNER_PATH")
         .env_remove("IMPECCABLE_BUNDLE_PATH")
         .env_remove("IMPECCABLE_DOWNLOAD_BASE")
         .kill_on_drop(true);

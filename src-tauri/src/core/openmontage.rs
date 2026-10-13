@@ -259,6 +259,23 @@ pub(super) fn required_files(generation: &Path) -> Result<Vec<String>, CoreError
     Ok(files)
 }
 
+#[cfg(all(feature = "browser-probe", target_os = "linux"))]
+pub(crate) fn probe_files(generation: &Path) -> Result<Vec<String>, CoreError> {
+    let receipt: Receipt = serde_json::from_slice(&fs::read(generation.join(RECEIPT))?)
+        .map_err(|_| error("Registro do OpenMontage inválido."))?;
+    let mut files = required_files(generation)?;
+    files.extend(
+        receipt
+            .sources
+            .keys()
+            .map(|file| format!("{REPOSITORY}/{file}")),
+    );
+    for file in &files {
+        contained(generation, file)?;
+    }
+    Ok(files)
+}
+
 pub(super) fn validate(generation: &Path, version: &str) -> Result<(), CoreError> {
     let receipt: Receipt = serde_json::from_slice(&fs::read(generation.join(RECEIPT))?)
         .map_err(|_| error("Registro do OpenMontage inválido."))?;

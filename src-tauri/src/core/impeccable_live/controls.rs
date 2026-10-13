@@ -394,7 +394,11 @@ pub(super) async fn helper_compatible(
     if !response.status().is_success() {
         return Ok(false);
     }
-    Ok(response_json(response).await?["jarvisQueueProtocol"] == 1)
+    let capabilities = response_json(response).await?;
+    Ok(
+        capabilities["jarvisQueueProtocol"] == 1
+            && capabilities["jarvisDesignBindingProtocol"] == 1,
+    )
 }
 
 fn request_sequence(task: &tasks::Task) -> Result<u64, CoreError> {

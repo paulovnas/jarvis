@@ -505,7 +505,7 @@ impl Hub {
 }
 
 impl Execution {
-    fn recovery_inspection_pending(&self) -> Result<bool, AgentError> {
+    pub(super) fn recovery_inspection_pending(&self) -> Result<bool, AgentError> {
         let state = self
             .hub
             .manifest

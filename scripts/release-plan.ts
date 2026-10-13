@@ -8,7 +8,8 @@ export type ReleaseTarget = typeof releaseTargets[number];
 export function selectedReleaseTargets(target: string | undefined): readonly ReleaseTarget[] {
   if (!target || target === "all") return releaseTargets;
   if (target === "aarch64-apple-darwin") return [target];
-  throw new Error("Seleção de release inválida. Use all ou aarch64-apple-darwin.");
+  if (target === "macos-linux") return ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
+  throw new Error("Seleção de release inválida. Use all, macos-linux ou aarch64-apple-darwin.");
 }
 
 export function supportedTarget(target: string | undefined): ReleaseTarget {
@@ -24,7 +25,7 @@ export function artifactNames(version: string, target: ReleaseTarget) {
   return { archive, signature: `${archive}.sig`, names: [...installer, archive, `${archive}.sig`] };
 }
 export function parseReleaseArguments(args: string[]) {
-  const result = { version: args[0], dryRun: false, notesFile: undefined as string | undefined, target: undefined as "aarch64-apple-darwin" | undefined };
+  const result = { version: args[0], dryRun: false, notesFile: undefined as string | undefined, target: undefined as "aarch64-apple-darwin" | "macos-linux" | undefined };
   const seen = new Set<string>();
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
@@ -32,8 +33,9 @@ export function parseReleaseArguments(args: string[]) {
     seen.add(arg);
     if (arg === "--dry-run") { result.dryRun = true; continue; }
     if (arg === "--notes-file" && args[i + 1] && !args[i + 1].startsWith("--")) { result.notesFile = args[++i]; continue; }
-    if (arg === "--target" && args[i + 1] === "aarch64-apple-darwin") { result.target = "aarch64-apple-darwin"; i++; continue; }
-    throw new Error(`Opção inválida: ${arg}. Use --target aarch64-apple-darwin para publicar apenas macOS Apple Silicon. Use --help.`);
+    const target = args[i + 1];
+    if (arg === "--target" && (target === "aarch64-apple-darwin" || target === "macos-linux")) { result.target = target; i++; continue; }
+    throw new Error(`Opção inválida: ${arg}. Use --target macos-linux ou --target aarch64-apple-darwin. Use --help.`);
   }
   return result;
 }

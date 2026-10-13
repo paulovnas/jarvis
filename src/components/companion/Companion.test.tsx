@@ -1200,6 +1200,21 @@ describe("Desktop companion", () => {
     expect(screen.queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
   });
 
+  it("opens the island on a pointer click before the drag threshold", async () => {
+    render(<Companion />);
+    const compact = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });
+    const island = compact.closest<HTMLElement>(".companion-island")!;
+    let captured: HTMLElement | undefined;
+    island.setPointerCapture = () => { captured = island; };
+    fireEvent.pointerDown(compact, { button: 0, screenX: 100 });
+    // Native browsers target clicks at the pointerup capture owner.
+    const clickTarget = captured ?? compact;
+    fireEvent.pointerUp(clickTarget, { screenX: 100 });
+    fireEvent.click(clickTarget, { detail: 1 });
+    expect(await screen.findByRole("region", { name: "Assistente Jarvis" })).toBeVisible();
+    expect(call).not.toHaveBeenCalledWith("companion_start_drag");
+  });
+
   it("distinguishes dragging from clicking and follows geometry without switching the app", async () => {
     render(<Companion />);
     const compact = await screen.findByRole("button", { name: "Abrir ilha do Jarvito" });

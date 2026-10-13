@@ -357,6 +357,22 @@ fn save(
     Ok(())
 }
 
+#[cfg(all(feature = "browser-probe", target_os = "linux"))]
+pub(super) fn save_probe(
+    connection: &mut Connection,
+    store: &dyn SecretStore,
+    config: &Config,
+) -> Result<(), ProviderError> {
+    save(
+        connection,
+        store,
+        "native-probe",
+        config,
+        Some("loopback-probe"),
+        false,
+    )
+}
+
 #[tauri::command]
 pub async fn save_custom_provider(
     app: tauri::AppHandle,

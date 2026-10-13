@@ -4,7 +4,7 @@
     "category": "Development",
     "linux": {
       "deb": {
-        "depends": ["libdbus-1-3"],
+        "depends": ["libdbus-1-3", "libgtk-4-1 (>= 4.14)", "libnss3", "libgbm1", "libasound2t64 | libasound2"],
         "recommends": ["gnome-keyring", "bubblewrap", "ca-certificates"]
       }
     }

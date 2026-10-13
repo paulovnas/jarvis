@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag validada localmente (v1.8.3); vazio compila a main
+        description: Tag validada localmente (v2.0.1); vazio compila a main
         type: string
         default: ''
       publish:
@@ -18,6 +18,7 @@ on:
         default: all
         options:
           - all
+          - macos-linux
           - aarch64-apple-darwin
 
 permissions:
@@ -39,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.target == 'aarch64-apple-darwin' && '[{"runner":"macos-15","target":"aarch64-apple-darwin"}]' || '[{"runner":"macos-15","target":"aarch64-apple-darwin"},{"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]') }}
+        include: ${{ fromJSON(inputs.target == 'aarch64-apple-darwin' && '[{"runner":"macos-15","target":"aarch64-apple-darwin"}]' || inputs.target == 'macos-linux' && '[{"runner":"macos-15","target":"aarch64-apple-darwin"},{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]' || '[{"runner":"macos-15","target":"aarch64-apple-darwin"},{"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: macos-release

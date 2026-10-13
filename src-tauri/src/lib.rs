@@ -194,6 +194,21 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(target_os = "linux")]
+fn initialize_linux_async_runtime() {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        // Native tool polling exceeds Tokio's default 2 MiB stack in Linux debug builds.
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_stack_size(8 * 1024 * 1024)
+            .enable_all()
+            .build()
+            .expect("Failed to initialize the Linux async runtime");
+        tauri::async_runtime::set(runtime.handle().clone());
+        runtime
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     initialize_tls();
@@ -238,6 +253,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            initialize_linux_async_runtime();
             use tauri::Manager;
             let home = app.path().home_dir()?;
             let profile = data_dir::configure(&app.config().identifier)?;
@@ -276,7 +293,10 @@ pub fn run() {
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
             companion::setup(app.handle());
-            #[cfg(all(feature = "browser-probe", target_os = "macos"))]
+            #[cfg(all(
+                feature = "browser-probe",
+                any(target_os = "macos", target_os = "linux")
+            ))]
             agent::browser::probe::observe_companion(app.handle());
             let agent = app.state::<agent::AgentState>();
             agent

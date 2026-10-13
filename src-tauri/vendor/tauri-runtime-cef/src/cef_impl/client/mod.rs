@@ -19,6 +19,10 @@ mod context_menu;
 mod display;
 mod download;
 mod drag;
+#[cfg(target_os = "linux")]
+mod focus;
+#[cfg(target_os = "linux")]
+pub(crate) use focus::focus_snapshot;
 mod frame;
 mod keyboard;
 mod life_span;
@@ -107,6 +111,18 @@ wrap_with_args! {
     fn frame_handler(&self) -> Option<FrameHandler> {
       self.handlers.frame_event_handler.as_ref().map(|handler| {
         frame::TauriCefFrameHandler::new(Some(handler.clone()))
+      })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn focus_handler(&self) -> Option<FocusHandler> {
+      self.opener.is_none().then(|| {
+        focus::TauriCefFocusHandler::build(focus::TauriCefFocusHandlerArgs {
+          sender: self.sender.clone(),
+          proxy: self.proxy.clone(),
+          webview_id: self.webview_id,
+          frame_navigation_state: self.frame_navigation_state.clone(),
+        })
       })
     }
 

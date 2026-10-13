@@ -260,6 +260,7 @@ impl OperationGuard {
         Ok(())
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub fn before_dispatch(&self) -> Result<(), AgentError> {
         let _lock = self
             .dispatch_lock

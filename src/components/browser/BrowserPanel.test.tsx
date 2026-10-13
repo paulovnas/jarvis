@@ -78,6 +78,28 @@ it("keeps external tabs external after changing the default and inspects network
   expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport")).toHaveLength(0);
 });
 
+it("reveals a native tab opened by the agent and restores the chat draft afterward", async () => {
+  let changed: events.EventCallback<unknown> | undefined;
+  vi.spyOn(events, "listen").mockImplementation(async (event, handler) => {
+    if (event === "browser:changed") changed = handler;
+    return () => {};
+  });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 80, 800, 600));
+  const user = userEvent.setup();
+  render(<Workspace />);
+  const draft = screen.getByRole("textbox", { name: "Rascunho" });
+  await user.type(draft, "Continuar depois");
+  const tab = { id: "native-tab", conversationId: "chat-1", title: "Projeto integrado", url: "http://localhost:5173/", loading: false };
+  stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };
+  await act(async () => { changed?.({ event: "browser:changed", id: 1, payload: { conversationId: "chat-1" } }); });
+  expect(await screen.findByRole("tab", { name: tab.title })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("textbox", { name: "Endereço do navegador" })).toHaveValue(tab.url);
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("set_browser_viewport", { conversationId: "chat-1", id: tab.id, viewport: { x: 100, y: 80, width: 800, height: 600 } }));
+  await user.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(draft).toBeVisible();
+  expect(draft).toHaveValue("Continuar depois");
+});
+
 it("keeps Chat and its draft visible when an agent adopts an external page, until the user selects it", async () => {
   let changed: events.EventCallback<unknown> | undefined;
   vi.spyOn(events, "listen").mockImplementation(async (event, handler) => {
@@ -201,4 +223,43 @@ it("keeps the browser visible when hovering its tab and toolbar tooltips", async
     fireEvent.mouseLeave(trigger);
     await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
   }
+});
+
+it("keeps the loaded page selected when clicking outside it and resizing the sidebars", async () => {
+  const rect = { x: 210, y: 120, width: 710, height: 520 };
+  const measure = Element.prototype.getBoundingClientRect;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    return this.getAttribute("aria-label") === "Página do navegador" ? DOMRect.fromRect(rect) : measure.call(this);
+  });
+  const tab = { id: "tab-1", conversationId: "chat-1", title: "Projeto", url: "http://localhost:5173/", loading: false };
+  stored = { tabs: [tab], activeId: tab.id, backend: "embedded" };
+  const user = userEvent.setup();
+  render(<><Button onClick={() => Object.assign(rect, { x: 0, width: 920 })}>Alternar sidebar</Button><Button>Inspector</Button><Workspace /></>);
+  const page = await screen.findByLabelText("Página do navegador");
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("set_browser_viewport", { conversationId: "chat-1", id: tab.id, viewport: rect }));
+  mocked.mockClear();
+  await user.click(screen.getByRole("button", { name: "Inspector" }));
+  await user.click(screen.getByRole("button", { name: "Alternar sidebar" }));
+  await act(async () => { window.dispatchEvent(new Event("resize")); });
+  await waitFor(() => expect(mocked).toHaveBeenCalledWith("set_browser_viewport", { conversationId: "chat-1", id: tab.id, viewport: rect }));
+  expect(screen.getByLabelText("Página do navegador")).toBe(page);
+  expect(screen.getByRole("tab", { name: tab.title })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("textbox", { name: "Endereço do navegador" })).toHaveValue(tab.url);
+  expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport").every(([, args]) => (args as { viewport: unknown }).viewport !== null)).toBe(true);
+  expect(mocked.mock.calls.filter(([command]) => command === "browser_command")).toEqual([]);
+});
+
+it("restores loaded browser tabs after switching to Chat and another page without navigating again", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 80, 800, 600));
+  const first = { id: "tab-1", conversationId: "chat-1", title: "Projeto", url: "http://localhost:5173/", loading: false };
+  const second = { ...first, id: "tab-2", title: "Outra página", url: "http://localhost:3000/" };
+  stored = { tabs: [first, second], activeId: first.id, backend: "embedded" };
+  const user = userEvent.setup();
+  render(<Workspace />);
+  await screen.findByRole("textbox", { name: "Endereço do navegador" });
+  for (const title of ["Chat", second.title, first.title]) await user.click(screen.getByRole("tab", { name: title }));
+  await waitFor(() => expect(mocked.mock.calls.filter(([command]) => command === "set_browser_viewport").slice(-1)[0]?.[1]).toEqual({ conversationId: "chat-1", id: first.id, viewport: { x: 100, y: 80, width: 800, height: 600 } }));
+  expect(screen.getByRole("textbox", { name: "Endereço do navegador" })).toHaveValue(first.url);
+  expect(screen.getByRole("tab", { name: first.title })).toHaveAttribute("aria-selected", "true");
+  expect(mocked.mock.calls.filter(([command, args]) => command === "browser_command" && (args as { request: { action: string } }).request.action !== "select")).toEqual([]);
 });

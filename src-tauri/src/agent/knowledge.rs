@@ -777,9 +777,13 @@ pub(crate) async fn save_project_knowledge(
     document: SaveRequest,
 ) -> Result<Document, AgentError> {
     let root = project_root(&app, &state, project_id.clone()).await?;
-    let result = tauri::async_runtime::spawn_blocking(move || save(&root, document))
+    let save_root = root.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || save(&save_root, document))
         .await
         .map_err(|_| AgentError::internal())??;
+    if result.kind == Kind::Design {
+        crate::core::impeccable_live::refresh_design(&app, &root);
+    }
     let _ = app.emit("project:knowledge-changed", project_id);
     Ok(result)
 }
@@ -794,10 +798,15 @@ pub(crate) async fn link_project_knowledge(
     revision: String,
 ) -> Result<Document, AgentError> {
     let root = project_root(&app, &state, project_id.clone()).await?;
-    let result =
-        tauri::async_runtime::spawn_blocking(move || link(&root, &scope, kind, &path, &revision))
-            .await
-            .map_err(|_| AgentError::internal())??;
+    let link_root = root.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        link(&link_root, &scope, kind, &path, &revision)
+    })
+    .await
+    .map_err(|_| AgentError::internal())??;
+    if result.kind == Kind::Design {
+        crate::core::impeccable_live::refresh_design(&app, &root);
+    }
     let _ = app.emit("project:knowledge-changed", project_id);
     Ok(result)
 }

@@ -37,6 +37,16 @@ it("publishes only macOS packages and updater keys when Apple Silicon is selecte
   for (const selection of ["macos", "x86_64-pc-windows-msvc", "universal-apple-darwin", "unknown"]) expect(() => selectedReleaseTargets(selection)).toThrow("Seleção");
 });
 
+it("requires both macOS and Linux packages when the combined release is selected", () => {
+  const targets = selectedReleaseTargets("macos-linux");
+  expect(targets).toEqual(["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]);
+  const assets = targets.map(target => ({ target, archive: artifactNames("2.0.1", target).archive, signature: `signature-${target}` }));
+  const manifest = desktopManifest("2.0.1", assets, "macOS and Linux", new Date(), targets);
+  expect(Object.keys(manifest.platforms)).toEqual(["darwin-aarch64", "linux-x86_64"]);
+  expect(() => desktopManifest("2.0.1", assets.slice(0, 1), "", new Date(), targets)).toThrow("cada plataforma");
+  expect(parseReleaseArguments(["2.0.1", "--target", "macos-linux"]).target).toBe("macos-linux");
+});
+
 it("keeps publication restricted to the official main and explicit version tags", () => {
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "", false)).not.toThrow();
   expect(() => validateCIRequest("paulovnas/jarvis", "refs/heads/main", "v0.8.3-beta.1", true)).not.toThrow();

@@ -516,6 +516,8 @@ pub(crate) struct AppWindow {
   pub(crate) borderless_restore_frame: Option<objc2_foundation::NSRect>,
   pub(crate) attrs: AppWindowAttrs,
   pub(crate) children: Vec<AppWebview>,
+  #[cfg(target_os = "linux")]
+  pub(crate) focused_webview: Option<u32>,
   pub(crate) listeners: WindowEventListeners,
   pub(crate) native_drag_drop: Option<WinitDragDropState>,
   #[cfg(any(
@@ -617,7 +619,15 @@ impl AppWindow {
     ))]
     self.raise_native();
 
+    #[cfg(target_os = "linux")]
+    if self.window.has_focus() {
+      self.focus_webview();
+      return;
+    }
+
     self.window.focus_window();
+    #[cfg(target_os = "linux")]
+    self.focus_webview();
   }
 
   pub(crate) fn preferred_theme(&self) -> Option<Theme> {
@@ -717,6 +727,8 @@ impl<T: UserEvent> WinitCefApp<T> {
       borderless_restore_frame: None,
       attrs,
       children: Vec::new(),
+      #[cfg(target_os = "linux")]
+      focused_webview: None,
       listeners: Default::default(),
       native_drag_drop: None,
       #[cfg(any(
@@ -1187,8 +1199,9 @@ impl<T: UserEvent> WinitCefApp<T> {
         window.set_max_surface_size(max_size);
       }
 
-      WindowMessage::SetFocusable(_) => {
-        // TODO
+      WindowMessage::SetFocusable(_focusable) => {
+        #[cfg(target_os = "linux")]
+        appwindow.set_focusable(_focusable);
       }
       WindowMessage::SetProgressBar(state) => {
         #[cfg(target_os = "macos")]

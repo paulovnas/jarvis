@@ -20,7 +20,7 @@
 //!
 //! - Windows: a `WM_TIMER` on a message-only window.
 //! - macOS: an `NSTimer` in the common and event-tracking run-loop modes.
-//! - Linux/BSD: a custom low-priority GLib source with a wakeup pipe.
+//! - Linux/BSD: a custom GLib source with a wakeup pipe.
 //!
 //! On Windows and macOS the timer lives on the same native loop winit already
 //! runs, so CEF keeps painting and processing IPC even while the OS spins a

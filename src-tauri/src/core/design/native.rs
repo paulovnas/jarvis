@@ -16,6 +16,9 @@ const PRODUCT_PATCH_BYTES: &[u8] =
 const ACCEPT_PATCH_PATH: &str = "scripts/impeccable-native/accept-write.patch";
 const ACCEPT_PATCH_BYTES: &[u8] =
     include_bytes!("../../../../scripts/impeccable-native/accept-write.patch");
+const LIVE_DESIGN_PATCH_PATH: &str = "scripts/impeccable-native/live-design-refresh.patch";
+const LIVE_DESIGN_PATCH_BYTES: &[u8] =
+    include_bytes!("../../../../scripts/impeccable-native/live-design-refresh.patch");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -64,6 +67,10 @@ fn patches() -> Vec<Patch> {
         Patch {
             path: ACCEPT_PATCH_PATH.into(),
             sha256: format!("{:x}", Sha256::digest(ACCEPT_PATCH_BYTES)),
+        },
+        Patch {
+            path: LIVE_DESIGN_PATCH_PATH.into(),
+            sha256: format!("{:x}", Sha256::digest(LIVE_DESIGN_PATCH_BYTES)),
         },
     ]
 }
@@ -134,7 +141,8 @@ mod tests {
                 PATCH_PATH,
                 DESIGN_PATCH_PATH,
                 PRODUCT_PATCH_PATH,
-                ACCEPT_PATCH_PATH
+                ACCEPT_PATCH_PATH,
+                "scripts/impeccable-native/live-design-refresh.patch"
             ]
         );
         let mut changed = original.clone();
@@ -145,6 +153,12 @@ mod tests {
         assert!(verify(&changed, &original.engine_sha256).is_err());
         changed = original.clone();
         changed.patches[2].sha256 = "b".repeat(64);
+        assert!(verify(&changed, &original.engine_sha256).is_err());
+        changed = original.clone();
+        changed.patches.remove(4);
+        assert!(verify(&changed, &original.engine_sha256).is_err());
+        changed = original.clone();
+        changed.patches[4].sha256 = "b".repeat(64);
         assert!(verify(&changed, &original.engine_sha256).is_err());
     }
 

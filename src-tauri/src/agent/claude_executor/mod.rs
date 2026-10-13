@@ -551,7 +551,7 @@ pub(super) async fn control_request(
     }
 }
 
-async fn execute_tool(
+pub(super) async fn execute_tool(
     bridge: &mut bridge::Bridge<'_>,
     request_id: &str,
     params: &Value,
@@ -651,6 +651,19 @@ async fn execute_tool(
         structured.as_deref(),
     )
     .await?;
+    if let Some(exec) = &bridge.execution {
+        exec.observe_recovery_result(
+            &tool,
+            tool.name.starts_with("mcp_") && bridge.clients.requires_active_task(&tool.name),
+            status == "completed",
+            |name| {
+                bridge
+                    .clients
+                    .tool_metadata(name)
+                    .map(|(server, _, _)| server.to_owned())
+            },
+        )?;
+    }
     if let Some(error) = completion_failure {
         bridge.session.flush_async().await?;
         return Err(error);
@@ -685,6 +698,11 @@ async fn execute_tool(
     // receipt, even when the CLI keeps its initial tools/list catalog.
     if let Some(catalog) = catalog {
         content.push(catalog);
+    }
+    if let Some(exec) = &bridge.execution {
+        if exec.recovery_inspection_pending()? {
+            content.push(json!({"type":"text","text":exec.context()?}));
+        }
     }
     if !guidance.is_empty() {
         content.push(json!({"type":"text","text":format!("Additional live user guidance and Jarvis task state for the current execution. Incorporate it without repeating confirmed actions:\n{}", guidance.join("\n\n"))}));

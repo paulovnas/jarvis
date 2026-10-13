@@ -22,7 +22,7 @@ export const engines = {
   "windows-x64": { asset: "impeccable-windows-x64.exe", sha256: "38e09451694973ba664a24e67e1502a6913e6d0e533a0a5ae1e04c5963a804b1" },
 } as const;
 export type EnginePlatform = keyof typeof engines;
-export const IMPECCABLE_NATIVE_PATCHES = ["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch"] as const;
+export const IMPECCABLE_NATIVE_PATCHES = ["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch", "scripts/impeccable-native/live-design-refresh.patch"] as const;
 export interface NativeEnginePatch { path: string; sha256: string }
 export interface NativeEngineReceipt {
   schemaVersion: 1;
@@ -84,6 +84,53 @@ export function localizeLive(source: string, vocabulary = false): string {
     if (result.split(anchor).length !== 2) throw new Error("O contrato de vocabulário Live mudou; revise a integração nativa.");
     result = result.replace(anchor, `return { value: c.value, label: (${JSON.stringify(liveActionPortuguese)})[c.value] || c.label };`);
   }
+  return result;
+}
+
+/** Refresh only the design viewer; active variants and their transport stay untouched. */
+export function bindNativeDesignRefresh(source: string): string {
+  const file = ts.createSourceFile("live-browser.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const functions: ts.FunctionDeclaration[] = [];
+  const teardown: ts.FunctionDeclaration[] = [];
+  function visit(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "fetchDesignSystem") functions.push(node);
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "teardown") teardown.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  if (functions.length !== 1 || teardown.length !== 1 || !teardown[0].body) throw new Error("O contrato do painel de design Live mudou; revise a integração nativa.");
+  const node = functions[0];
+  let body = node.getText(file);
+  const edits: [string, string][] = [
+    ["designState.loading = true;", "const request = ++designRequest;\n    designState.loading = true;"],
+    ["const jsonData = await jsonRes.json();", "const jsonData = await jsonRes.json();\n      const raw = jsonData.present === true && rawRes.ok ? await rawRes.text() : null;\n      if (request !== designRequest) return;"],
+    ["designState.raw = designState.present && rawRes.ok ? await rawRes.text() : null;", "designState.raw = raw;"],
+    ["designState.error = err?.message", "if (request === designRequest) designState.error = err?.message"],
+    ["designState.loading = false;", "if (request !== designRequest) return;\n      designState.loading = false;"],
+  ];
+  for (const [from, to] of edits) {
+    if (body.split(from).length !== 2) throw new Error("O contrato de leitura do design Live mudou; revise a integração nativa.");
+    body = body.replace(from, to);
+  }
+  const listener = `let designRequest = 0;
+  function refreshDesignSystem() {
+    ++designRequest;
+    designState.loading = false;
+    designState.present = null;
+    if (designState.open) void fetchDesignSystem();
+  }
+  function stopDesignRefresh() {
+    ++designRequest;
+    window.removeEventListener('jarvis-live:design-changed', refreshDesignSystem);
+  }
+  window.addEventListener('jarvis-live:design-changed', refreshDesignSystem);
+  `;
+  const changes = [
+    { start: node.getStart(file), end: node.end, text: listener + body },
+    { start: teardown[0].body.getStart(file) + 1, end: teardown[0].body.getStart(file) + 1, text: "\n    stopDesignRefresh();" },
+  ];
+  let result = source;
+  for (const edit of changes.sort((a, b) => b.start - a.start)) result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
   return result;
 }
 
@@ -335,7 +382,7 @@ export async function refreshImpeccableAssets(source = path.join(ROOT, "docs/imp
     if (file.startsWith("scripts/bin/") || /(?:^|\/)impeccable(?:\.cmd)?$/.test(file)) continue;
     const output = path.join(destination, SKILL_DIRECTORY, file);
     await mkdir(path.dirname(output), { recursive: true });
-    if (file === "scripts/live-browser.js") await writeFile(output, localizeLive(bindNativeAcceptLifecycle(await readFile(path.join(base, file), "utf8")), true));
+    if (file === "scripts/live-browser.js") await writeFile(output, localizeLive(bindNativeDesignRefresh(bindNativeAcceptLifecycle(await readFile(path.join(base, file), "utf8"))), true));
     else await copyFile(path.join(base, file), output);
   }
   const detector = path.join(destination, SKILL_DIRECTORY, "scripts/detector/detect-antipatterns-browser.js");

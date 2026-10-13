@@ -497,7 +497,8 @@ pub(super) async fn execute(
             "Esta etapa permite apenas inspeção de design, sem alterações ou sessões Live.",
         ));
     }
-    let output = if verb == "live" || verb == "live-server" {
+    let managed = matches!(verb, "live" | "live-server") || verb == "live-status" && app.is_some();
+    let output = if managed {
         let app = app.ok_or_else(|| {
             AgentError::new(
                 "impeccable_live_unavailable",

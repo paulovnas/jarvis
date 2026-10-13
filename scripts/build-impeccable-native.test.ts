@@ -35,6 +35,14 @@ describe("native engine provenance publication", () => {
     expect(receipt).toEqual({ schemaVersion: 1, engineVersion: IMPECCABLE_ENGINE_VERSION, cliVersion: "4.0.0", sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: "darwin-arm64", patches: await nativeEnginePatches(), engineSha256: createHash("sha256").update(await readFile(stage.binary)).digest("hex") });
   });
 
+  it("rejects an engine receipt missing hot design updates while retaining the old bindings", async () => {
+    const { stage, destination } = await fixture();
+    const patches = (await nativeEnginePatches()).filter(patch => !patch.path.endsWith("live-design-refresh.patch"));
+    await writeFile(path.join(stage.directory, "jarvis-stage.json"), JSON.stringify({ sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: stage.target, patches }));
+    await expect(publishImpeccableNative(stage, destination)).rejects.toThrow("não corresponde");
+    await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects an engine receipt missing canonical product support while retaining design support", async () => {
     const { stage, destination } = await fixture();
     const patches = (await nativeEnginePatches()).filter(patch => !patch.path.endsWith("canonical-product.patch"));

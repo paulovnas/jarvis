@@ -22,7 +22,7 @@ const mock = vi.hoisted(() => {
     on: vi.fn((name: string, callback: () => void) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name)?.add(callback); }),
     off: vi.fn((name: string, callback: () => void) => { listeners.get(name)?.delete(callback); }),
   };
-  return { runtime, fields, listeners, loaded: true, onLoadError: undefined as (() => void) | undefined, parameters: {} as Record<string, unknown>, setWasmUrl: vi.fn(), setWasmFallbackUrl: vi.fn() };
+  return { runtime, fields, listeners, loaded: true, onLoadError: undefined as (() => void) | undefined, parameters: {} as Record<string, unknown>, setWasmUrl: vi.fn(), setWasmFallbackUrl: vi.fn(), setCanvasRef: vi.fn(), setContainerRef: vi.fn() };
 });
 
 vi.mock("@rive-app/react-canvas", async () => {
@@ -35,7 +35,7 @@ vi.mock("@rive-app/react-canvas", async () => {
     useRive: (parameters: Record<string, unknown> & { onLoadError?: () => void }) => {
       mock.parameters = parameters; mock.onLoadError = parameters.onLoadError;
       useEffect(() => () => mock.runtime.cleanup(), []);
-      return { rive: mock.loaded ? mock.runtime : null, RiveComponent };
+      return { rive: mock.loaded ? mock.runtime : null, RiveComponent, setCanvasRef: mock.setCanvasRef, setContainerRef: mock.setContainerRef };
     },
   };
 });
@@ -50,6 +50,7 @@ describe("Jarvito Rive character", () => {
     for (const input of mock.fields) input.value = input.type === 56 ? 0 : false;
     for (const fn of [mock.runtime.play, mock.runtime.pause, mock.runtime.startRendering, mock.runtime.stopRendering, mock.runtime.cleanup, mock.runtime.on, mock.runtime.off]) fn.mockClear();
     mock.runtime.stateMachineInputs.mockReset().mockReturnValue(mock.fields);
+    mock.setCanvasRef.mockClear(); mock.setContainerRef.mockClear();
     motion = {
       matches: false, media: "(prefers-reduced-motion: reduce)", onchange: null,
       addEventListener: vi.fn((_name: string, listener: () => void) => { motionListeners.add(listener); }),
@@ -72,6 +73,26 @@ describe("Jarvito Rive character", () => {
     }
     expect(screen.getByTestId("rive-canvas")).toHaveAttribute("aria-hidden", "true");
     fireEvent.click(screen.getByRole("button", { name: "Abrir Jarvito" })); expect(clicked).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the Linux canvas full-size from its first mount through island expansion", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
+    const { container, rerender } = render(<Robot status="idle" />);
+    await waitFor(() => expect(container.querySelector("[data-renderer=rive]")).toBeInTheDocument());
+    const canvas = container.querySelector("canvas");
+    expect(canvas).toHaveStyle({ width: "100%", height: "100%" });
+    expect(mock.setCanvasRef).toHaveBeenCalledWith(canvas);
+    rerender(<Robot status="idle" expanded />);
+    expect(container.querySelector("canvas")).toBe(canvas);
+    expect(canvas).toHaveStyle({ width: "100%", height: "100%" });
+    expect(mock.runtime.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves the existing Rive component on macOS", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+    render(<Robot status="idle" />);
+    await screen.findByTestId("rive-canvas");
+    expect(mock.setCanvasRef).not.toHaveBeenCalled();
   });
 
   it("updates the real activity expression without replacing the character canvas", async () => {

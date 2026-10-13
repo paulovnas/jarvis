@@ -159,7 +159,7 @@ describe("app-owned Impeccable preparation", () => {
       sourceCommit: IMPECCABLE_SOURCE_COMMIT, target: "darwin-arm64", patches, engineSha256: sha256(bytes),
     };
     expect(verifyNativeEngineReceipt("darwin-arm64", bytes, receipt, patches)).toEqual(receipt);
-    expect(patches.map((patch) => patch.path)).toEqual(["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch"]);
+    expect(patches.map((patch) => patch.path)).toEqual(["scripts/impeccable-native/queue-cas.patch", "scripts/impeccable-native/canonical-design.patch", "scripts/impeccable-native/canonical-product.patch", "scripts/impeccable-native/accept-write.patch", "scripts/impeccable-native/live-design-refresh.patch"]);
     expect(() => verifyNativeEngineReceipt("darwin-arm64", bytes, { ...receipt, patches: patches.slice(0, 1) }, patches)).toThrow("patches");
     expect(() => verifyNativeEngineReceipt("linux-x64", bytes, receipt, patches)).toThrow("plataforma");
     expect(() => verifyNativeEngineReceipt("darwin-arm64", bytes, { ...receipt, sourceCommit: "0".repeat(40) }, patches)).toThrow("commit");

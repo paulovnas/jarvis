@@ -9,6 +9,10 @@ use cef::*;
 use crate::macros::wrap_with_args;
 use crate::webview::INITIAL_LOAD_URL;
 
+// CEF's macOS bindings use an opaque pointer without exporting CursorHandle.
+#[cfg(target_os = "macos")]
+type CursorHandle = *mut u8;
+
 wrap_with_args! {
   wrap_display_handler => TauriCefDisplayHandlerArgs;
 
@@ -23,7 +27,7 @@ wrap_with_args! {
     fn on_cursor_change(
       &self,
       browser: Option<&mut Browser>,
-      cursor: *mut u8,
+      cursor: CursorHandle,
       _kind: CursorType,
       _custom: Option<&CursorInfo>,
     ) -> i32 {
@@ -102,5 +106,29 @@ wrap_with_args! {
       // 0 leaves CEF's own logging of the message exactly as it was.
       0
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn cursor_callback_without_browser_defers_to_cef() {
+    let handler = TauriCefDisplayHandler::build(TauriCefDisplayHandlerArgs {
+      document_title_changed_handler: None,
+      frame_event_handler: None,
+      console_message_handler: None,
+      frame_navigation_state: crate::FrameNavigationState::new(),
+    });
+    #[cfg(target_os = "macos")]
+    let cursor = std::ptr::null_mut();
+    #[cfg(not(target_os = "macos"))]
+    let cursor = CursorHandle::default();
+
+    assert_eq!(
+      handler.on_cursor_change(None, cursor, CursorType::default(), None),
+      0
+    );
   }
 }

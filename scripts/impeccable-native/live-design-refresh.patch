@@ -1,0 +1,111 @@
+diff --git a/crates/live/src/live_server.rs b/crates/live/src/live_server.rs
+index 2631c53..f08c1a5 100644
+--- a/crates/live/src/live_server.rs
++++ b/crates/live/src/live_server.rs
+@@ -776,7 +776,7 @@ fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket)
+                 &cors,
+                 json_res(
+                     200,
+-                    json!({ "status": "ok", "jarvisQueueProtocol": 1, "port": port, "mode": "variant", "hasProjectContext": has_ctx, "connectedClients": clients }),
++                    json!({ "status": "ok", "jarvisQueueProtocol": 1, "jarvisDesignBindingProtocol": if env.get("JARVIS_LIVE_OWNER_PATH").is_some_and(|path| !path.is_empty()) { 1 } else { 0 }, "port": port, "mode": "variant", "hasProjectContext": has_ctx, "connectedClients": clients }),
+                 ),
+             );
+         }
+@@ -790,6 +790,10 @@ fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket)
+                 (st.cwd.clone(), st.env.clone(), st.roots.clone())
+             };
+             let ctx = resolve_project_context(&cwd, &env, roots.as_ref());
++            if ctx.design_error.is_some() {
++                respond(&mut stream, &cors, json_res(503, json!({ "present": false, "parseError": "Não foi possível acessar o documento de design vinculado ao Jarvis." })));
++                return;
++            }
+             let md_path = ctx.resolved_design_path.clone();
+             let project_root =
+                 impeccable_context::context::resolve_project_root(&cwd, &Default::default(), &env);
+diff --git a/crates/live/src/server_state.rs b/crates/live/src/server_state.rs
+index ef1365b..53c76bc 100644
+--- a/crates/live/src/server_state.rs
++++ b/crates/live/src/server_state.rs
+@@ -1691,8 +1691,43 @@ fn elapsed_ms(started: Instant) -> f64 {
+ 
+ /// JS: resolveProjectContext(): PRODUCT.md / DESIGN.md truth resolved per
+ /// request, roots manifest as fallback.
++fn host_design(cwd: &str, env: &Env) -> Result<Option<String>, String> {
++    use std::{fs, io::Read, path::Path};
++    let owner_path = env.get("JARVIS_LIVE_OWNER_PATH").ok_or("Missing Live owner binding")?;
++    let owner_path = Path::new(owner_path);
++    let metadata = fs::symlink_metadata(owner_path).map_err(|_| "Live owner binding unavailable")?;
++    if !owner_path.is_absolute() || !metadata.is_file() || metadata.is_symlink() || metadata.len() > 64 * 1024 {
++        return Err("Invalid Live owner binding".into());
++    }
++    let mut bytes = Vec::new();
++    fs::File::open(owner_path).map_err(|_| "Live owner binding unavailable")?
++        .take(64 * 1024 + 1).read_to_end(&mut bytes).map_err(|_| "Live owner binding unavailable")?;
++    if bytes.len() > 64 * 1024 { return Err("Invalid Live owner binding".into()); }
++    let owner: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid Live owner binding")?;
++    let root = env.get(impeccable_common::design::ROOT_ENV).ok_or("Missing Live project root")?;
++    let root = fs::canonicalize(root).map_err(|_| "Live project root unavailable")?;
++    let project = owner["project_root"].as_str().ok_or("Invalid Live project root")?;
++    let project = fs::canonicalize(project).map_err(|_| "Live project root unavailable")?;
++    let target = owner["root"].as_str().ok_or("Invalid Live app root")?;
++    let target = fs::canonicalize(target).map_err(|_| "Live app root unavailable")?;
++    let cwd = fs::canonicalize(cwd).map_err(|_| "Live app root unavailable")?;
++    if project != root || !target.starts_with(&root) || cwd != target {
++        return Err("Live owner binding belongs to another project or app".into());
++    }
++    match owner.get("design_path") {
++        Some(Value::Null) => Ok(None),
++        Some(Value::String(path)) => {
++            let mut bound = env.clone();
++            bound.insert(impeccable_common::design::PATH_ENV.into(), path.clone());
++            impeccable_common::design::resolve(&cwd.to_string_lossy(), &bound)
++        }
++        _ => Err("Invalid Live design binding".into()),
++    }
++}
++
+ pub struct ProjectContext {
+     pub has_product: bool,
++    pub design_error: Option<String>,
+     pub resolved_design_path: Option<String>,
+     pub context_dir: String,
+     pub design_context_dir: Option<String>,
+@@ -1704,13 +1739,18 @@ pub fn resolve_project_context(
+     roots: Option<&RootsManifest>,
+ ) -> ProjectContext {
+     let ctx = impeccable_context::context::load_context(cwd, &TargetOptions::default(), env);
+-    let design_path = match &ctx.design_path {
++    let host_bound = env.contains_key("JARVIS_LIVE_OWNER_PATH");
++    let binding = host_bound.then(|| host_design(cwd, env));
++    let design_error = binding.as_ref().and_then(|result| result.as_ref().err()).cloned();
++    let design_path = if host_bound {
++        binding.and_then(Result::ok).flatten()
++    } else { match &ctx.design_path {
+         Some(p) => Some(jsp::resolve(cwd, &[p])),
+         None if env.contains_key(impeccable_common::design::PATH_ENV) => None,
+         None => roots
+             .and_then(|r| r.design_path.clone())
+             .filter(|p| crate::util::exists(p)),
+-    };
++    }};
+     let has_product = ctx.has_product
+         || (!env.contains_key(impeccable_common::product::PATH_ENV) && roots
+             .and_then(|r| r.product_path.as_deref())
+@@ -1723,12 +1763,15 @@ pub fn resolve_project_context(
+             .and_then(|r| r.context_root.clone())
+             .unwrap_or_else(|| cwd.to_string())
+     };
+-    let design_context_dir = ctx
++    let design_context_dir = if host_bound {
++        design_path.as_deref().map(jsp::dirname)
++    } else { ctx
+         .design_context_dir
+         .clone()
+-        .or_else(|| design_path.as_deref().map(jsp::dirname));
++        .or_else(|| design_path.as_deref().map(jsp::dirname)) };
+     ProjectContext {
+         has_product,
++        design_error,
+         resolved_design_path: design_path,
+         context_dir,
+         design_context_dir,

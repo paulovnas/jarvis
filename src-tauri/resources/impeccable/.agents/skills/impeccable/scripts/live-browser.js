@@ -12307,6 +12307,7 @@ void main() {
 
   /** Full teardown: remove all UI, disconnect SSE, clean up. */
   function teardown() {
+    stopDesignRefresh();
     // Declined targets die with the overlay: the IDLE transition below must
     // not re-claim a lease this page can no longer act on. So does the
     // target ledger: an 'acting' entry from a Go that never happened must
@@ -12819,7 +12820,20 @@ void main() {
     }
   }
 
+  let designRequest = 0;
+  function refreshDesignSystem() {
+    ++designRequest;
+    designState.loading = false;
+    designState.present = null;
+    if (designState.open) void fetchDesignSystem();
+  }
+  window.addEventListener('jarvis-live:design-changed', refreshDesignSystem);
+  function stopDesignRefresh() {
+    ++designRequest;
+    window.removeEventListener('jarvis-live:design-changed', refreshDesignSystem);
+  }
   async function fetchDesignSystem() {
+    const request = ++designRequest;
     designState.loading = true;
     designState.error = null;
     renderDesignBody();
@@ -12829,17 +12843,20 @@ void main() {
         fetch(`http://localhost:${PORT}/design-system/raw?token=${TOKEN}`, { cache: 'no-store' }),
       ]);
       const jsonData = await jsonRes.json();
+      const raw = jsonData.present === true && rawRes.ok ? await rawRes.text() : null;
+      if (request !== designRequest) return;
       designState.present = jsonData.present === true;
       designState.parsed = jsonData.parsed || null;
       designState.sidecar = jsonData.sidecar || null;
       designState.hasMd = !!jsonData.hasMd;
       designState.hasSidecar = !!jsonData.hasSidecar;
       designState.mdNewerThanJson = !!jsonData.mdNewerThanJson;
-      designState.raw = designState.present && rawRes.ok ? await rawRes.text() : null;
+      designState.raw = raw;
       designState.error = jsonData.parseError || jsonData.sidecarError || null;
     } catch (err) {
-      designState.error = err?.message || "Não foi possível carregar o sistema visual.";
+      if (request === designRequest) designState.error = err?.message || "Não foi possível carregar o sistema visual.";
     } finally {
+      if (request !== designRequest) return;
       designState.loading = false;
       renderDesignChrome(); // refresh title from data
     }
@@ -12861,7 +12878,7 @@ void main() {
     if (designState.present === false) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.innerHTML = `<strong>DESIGN.md ainda não existe</strong>Peça ao agente <code>${IMPECCABLE_COMMAND} document</code> no chat do Jarvis e abra este painel novamente.`;
+      empty.innerHTML = `<strong>DESIGN.md ainda não existe</strong>Peça ao agente <code>${IMPECCABLE_COMMAND} document</code> no chat do Jarvis. O painel é atualizado automaticamente ao salvar ou vincular o design em Conhecimento do projeto.`;
       body.appendChild(empty);
       return;
     }

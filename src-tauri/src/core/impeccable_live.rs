@@ -22,12 +22,15 @@ use tokio::{
 
 mod accept;
 mod beads;
+mod context;
 pub(crate) mod controls;
+mod inspection;
 mod lifecycle;
 mod recovery;
 mod tasks;
 
 const MAX_OUTPUT: u64 = 2 * 1024 * 1024;
+pub(crate) use context::refresh_design;
 pub(crate) const SETUP_REQUEST: &str = "Ative o Impeccable Live na página local deste projeto. Prepare o que faltar e abra a aba Live aqui no chat usando impeccable command=live.";
 
 #[derive(Clone, Debug, Serialize)]
@@ -676,6 +679,10 @@ async fn location(app: &tauri::AppHandle, id: &str) -> Result<(PathBuf, PathBuf)
         .path()
         .home_dir()
         .map_err(|_| error("Pasta pessoal indisponível."))?;
+    #[cfg(all(feature = "browser-probe", target_os = "linux"))]
+    let home = crate::agent::browser::probe::linux_agent::home()
+        .unwrap_or(&home)
+        .to_path_buf();
     let state = app.state::<AppState>().inner().clone();
     let conversation = id.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
@@ -805,6 +812,18 @@ async fn run_bound(
         .kill_on_drop(true)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    if matches!(verb, "live" | "live-server") {
+        command
+            .env(
+                "JARVIS_LIVE_OWNER_PATH",
+                crate::library::strip_verbatim(&ownership_path(home, project).to_string_lossy())
+                    .as_ref(),
+            )
+            .env(
+                "IMPECCABLE_DESIGN_ROOT",
+                crate::library::strip_verbatim(&project.to_string_lossy()).as_ref(),
+            );
+    }
     if let Some(url) = page_url {
         command.env("IMPECCABLE_DEV_URL_CANDIDATES", url);
     }
@@ -1093,6 +1112,34 @@ fn validate_start_args(
         cli_args.extend(["--target".into(), target.into()]);
     }
     Ok((cli_args, page_url))
+}
+
+pub(crate) fn requested_target(root: &Path, args: &[String]) -> Result<Option<PathBuf>, CoreError> {
+    let mut target = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let path = if arg == "--target" || arg == "-t" {
+            Some(
+                args.next()
+                    .map(String::as_str)
+                    .ok_or_else(|| error("Informe o caminho do aplicativo Live com --target."))?,
+            )
+        } else {
+            arg.strip_prefix("--target=")
+        };
+        let Some(path) = path else {
+            continue;
+        };
+        validate_start_args(root, &["--target".into(), path.into()])?;
+        let path = root.join(path).canonicalize()?;
+        if target.as_ref().is_some_and(|previous| previous != &path) {
+            return Err(error(
+                "Informe apenas um aplicativo Live para esta operação.",
+            ));
+        }
+        target = Some(path);
+    }
+    Ok(target)
 }
 
 fn selected_page(snapshot: &Value, conversation: &str) -> Option<String> {
@@ -2957,19 +3004,66 @@ pub async fn execute(
         || (verb == "live-server" && args.first().is_some_and(|arg| arg == "status"))
     {
         let (home, root) = location(app, conversation_id).await?;
+        let state = app.state::<ImpeccableLiveState>();
+        let _operation = state.operations.lock().await;
+        let (current_root, active_roots) = {
+            let entries = state
+                .entries
+                .lock()
+                .map_err(|_| error("Estado Live indisponível."))?;
+            let active = |entry: &&Entry| {
+                entry.project_root == root && (entry.status.state != "off" || entry.helper_owned)
+            };
+            let current = entries
+                .get(conversation_id)
+                .filter(active)
+                .map(|entry| entry.root.clone());
+            let roots = entries
+                .values()
+                .filter(active)
+                .map(|entry| entry.root.clone())
+                .collect::<Vec<_>>();
+            (current, roots)
+        };
+        let args = if verb == "live-server" {
+            &args[1..]
+        } else {
+            args
+        };
+        let mut request = inspection::request(
+            &home,
+            &root,
+            conversation_id,
+            args,
+            current_root.as_deref(),
+            &active_roots,
+        )?;
         let (_sender, mut cancel) = watch::channel(false);
         let mut result = run(
             &home,
             &root,
             &root,
             "live-status",
-            &[],
+            &request.args,
             None,
             Duration::from_secs(30),
             &mut cancel,
         )
         .await?;
+        // The engine may discard unreadable state; it cannot repair absence evidence.
+        if request.inspection["confirmedInactive"] == true {
+            request.inspection = inspection::request(
+                &home,
+                &root,
+                conversation_id,
+                args,
+                current_root.as_deref(),
+                &active_roots,
+            )?
+            .inspection;
+        }
         redact(&mut result, None);
+        result["hostInspection"] = request.inspection;
         result["hostStatus"] =
             serde_json::to_value(get_impeccable_live(app.clone(), conversation_id.into()).await?)
                 .map_err(|_| error("Estado Live inválido."))?;
@@ -3183,6 +3277,62 @@ mod tests {
                 activation_cutoff_ms: 0,
             }
         }
+    }
+
+    #[test]
+    fn saving_and_linking_design_preserve_the_running_alteration_and_owner_identity() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "ready";
+        entry.status.phase = "running";
+        entry.status.action_id = Some("active-alteration".into());
+        entry.event_content = Some("Preserve this instruction".into());
+        save_owner(&entry).unwrap();
+        let path = ownership_path(&entry.home, &entry.project_root);
+        let owner = read_record(&path).unwrap().unwrap();
+        let knowledge = fixture.project.join(".jarvis/knowledge");
+        fs::create_dir_all(&knowledge).unwrap();
+        for (state, name) in [("starting", "created.md"), ("ready", "linked.md")] {
+            entry.status.state = state;
+            let status = serde_json::to_value(&entry.status).unwrap();
+            assert!(context::refreshable(&entry, &fixture.project));
+            let relative = format!(".jarvis/knowledge/{name}");
+            fs::write(knowledge.join(name), "# Keep this document").unwrap();
+            fs::write(knowledge.join("index.json"), json!({"entries":[{"kind":"design","scope":"app","path":relative,"essential":"","sources":[]}]}).to_string()).unwrap();
+            context::refresh_binding(&mut entry).unwrap();
+            let next = read_record(&path).unwrap().unwrap();
+            assert_eq!(next["design_path"], json!(fixture.project.join(relative)));
+            for field in ["identity", "pid", "pending_id", "root", "conversation_id"] {
+                assert_eq!(next[field], owner[field]);
+            }
+            assert_eq!(serde_json::to_value(&entry.status).unwrap(), status);
+            assert!(!*entry.cancel.borrow());
+            assert_eq!(
+                entry.event_content.as_deref(),
+                Some("Preserve this instruction")
+            );
+        }
+        entry.stopping = true;
+        assert!(!context::refreshable(&entry, &fixture.project));
+        entry.stopping = false;
+        assert!(!context::refreshable(&entry, &fixture.root));
+    }
+
+    #[test]
+    fn invalid_design_keeps_the_last_published_owner_and_active_request() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        save_owner(&entry).unwrap();
+        let path = ownership_path(&entry.home, &entry.project_root);
+        let before = fs::read(&path).unwrap();
+        let knowledge = fixture.project.join(".jarvis/knowledge");
+        fs::create_dir_all(&knowledge).unwrap();
+        fs::write(knowledge.join("index.json"), json!({"entries":[{"kind":"design","scope":".","path":"missing.md","essential":"","sources":[]}]}).to_string()).unwrap();
+        assert!(context::refresh_binding(&mut entry).is_err());
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert!(entry.design_path.is_none());
+        assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+        assert!(!*entry.cancel.borrow());
     }
 
     #[test]

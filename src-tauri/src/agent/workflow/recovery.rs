@@ -18,6 +18,8 @@ pub(super) struct Call {
     #[serde(default)]
     remote_effect: bool,
     selectors: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    live_args: Option<Vec<String>>,
     expected_hash: Option<String>,
     #[serde(default)]
     evidence: BTreeMap<String, Vec<String>>,
@@ -71,6 +73,34 @@ fn unavailable_target(call: &Call, output: &Value) -> bool {
         && output
             .get("targetId")
             .is_some_and(|id| id.is_string() && Some(id) == call.selectors.get("targetId"))
+}
+
+fn empty_browser_catalog(output: &Value) -> bool {
+    output["backend"] == "embedded"
+        && output.get("activeId").is_some_and(Value::is_null)
+        && output["tabs"].as_array().is_some_and(Vec::is_empty)
+}
+
+fn inactive_impeccable_live(
+    output: &Value,
+    conversation: &str,
+    project: &Path,
+    args: &[String],
+) -> bool {
+    let Ok(target) = crate::core::impeccable_live::requested_target(project, args) else {
+        return false;
+    };
+    output.get("liveServer").is_some_and(Value::is_null)
+        && output["activeSessions"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+        && output["hostStatus"]["conversationId"] == conversation
+        && output["hostStatus"]["state"] == "off"
+        && output["hostStatus"]["phase"] == "idle"
+        && output["hostInspection"]["confirmedInactive"] == true
+        && output["hostInspection"]["conversationId"] == conversation
+        && output["hostInspection"]["projectRoot"] == project.to_string_lossy().as_ref()
+        && output["hostInspection"].get("target") == Some(&json!(target))
 }
 
 fn hash(value: &[u8]) -> String {
@@ -205,7 +235,10 @@ pub(super) fn read_only(tool: &ToolCall, mcp_mutating: bool) -> bool {
     if tool.name == "browser_screenshot" && tool.args["savePath"].is_string() {
         return false;
     }
-    (tool.name == "bash" && !super::super::tasks::requires_active_task_for(tool))
+    (tool.name == "impeccable"
+        && super::super::impeccable::capabilities(&tool.args).effect
+            == super::super::tool_contract::Effect::ReadOnly)
+        || (tool.name == "bash" && !super::super::tasks::requires_active_task_for(tool))
         || tool.name == "jarvis_inspect_publication"
         || super::recovery_inspection_tool(&tool.name, mcp_mutating)
 }
@@ -313,7 +346,7 @@ impl Call {
         } else {
             vec![]
         };
-        let selectors = tool
+        let mut selectors: BTreeMap<String, Value> = tool
             .args
             .as_object()
             .into_iter()
@@ -326,6 +359,9 @@ impl Call {
             })
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
+        if tool.name == "impeccable" && tool.args["command"] == "live" {
+            selectors.insert("command".into(), json!("live"));
+        }
         Self {
             id: tool.id.clone(),
             name: tool.name.clone(),
@@ -346,6 +382,9 @@ impl Call {
                     matches!(words, ["git", "push", ..] | ["gh", ..])
                 }),
             selectors,
+            live_args: (tool.name == "impeccable" && tool.args["command"] == "live")
+                .then(|| serde_json::from_value(tool.args["args"].clone()).ok())
+                .flatten(),
             expected_hash: (tool.name == "write")
                 .then(|| {
                     tool.args["content"]
@@ -358,12 +397,29 @@ impl Call {
         }
     }
 
-    fn related(&self, tool: &ToolCall, same_mcp: bool, root: &Path) -> bool {
+    fn related(&self, tool: &ToolCall, same_mcp: bool, root: &Path, conversation: &str) -> bool {
+        // An interrupted open has no tab ID; an empty owned catalog can confirm its absence.
+        if self.name == "browser_open" {
+            return tool.name == "browser_list"
+                && serde_json::from_str::<Value>(&tool.output)
+                    .is_ok_and(|output| empty_browser_catalog(&output));
+        }
         if self.name.starts_with("browser_") {
             return matches!(
                 tool.name.as_str(),
                 "browser_snapshot" | "browser_wait" | "browser_screenshot"
             ) && self.same_ui_target(tool);
+        }
+        if self.name == "impeccable"
+            && self.selectors.get("command").and_then(Value::as_str) == Some("live")
+        {
+            return tool.name == "impeccable"
+                && tool.args["command"] == "live-status"
+                && self.live_args.as_ref().is_some_and(|args| {
+                    serde_json::from_str::<Value>(&tool.output).is_ok_and(|output| {
+                        inactive_impeccable_live(&output, conversation, root, args)
+                    })
+                });
         }
         if super::super::computer::mutating(&self.name) {
             return tool.name == "computer_observe" && self.same_ui_target(tool);
@@ -453,7 +509,7 @@ impl Call {
 
 pub(super) fn definition() -> Value {
     tools::definition(TOOL,
-        "Resolve one uncertain operation from a successful, relevant inspection in this turn. Use its saved callId and the inspection evidenceCallId. Select applied only when the inspected state confirms the effect; not_applied only when evidence confirms it did not happen. Use unavailable only for computer_observe's authoritative same-target computer_target_unavailable receipt; this retires the old target without claiming the input effect was known. An unknown outcome remains unresolved. Never repeat an uncertain mutation blindly or replay it on a replacement target. This records evidence, not user approval.",
+        "Resolve one uncertain operation from a successful, relevant inspection in this turn. Use its saved callId and an actual inspection call ID from its evidence keys, never the tool name. Select applied only when the inspected state confirms the effect; not_applied only when evidence confirms it did not happen. An interrupted browser_open without a tab ID requires browser_list's empty integrated catalog and not_applied; a nonempty catalog remains ambiguous. An interrupted impeccable command=live requires live-status for the same --target, with an empty helper catalog, idle off hostStatus for this conversation, hostInspection.confirmedInactive for this project and target, and not_applied. Use unavailable only for computer_observe's authoritative same-target computer_target_unavailable receipt; this retires the old target without claiming the input effect was known. An unknown outcome remains unresolved. Never repeat an uncertain mutation blindly or replay it on a replacement target. This records evidence, not user approval.",
         json!({"callId":{"type":"string","minLength":1},"evidenceCallId":{"type":"string","minLength":1},"outcome":{"type":"string","enum":["applied","not_applied","unavailable","unknown"]}}),
         &["callId","evidenceCallId","outcome"])
 }
@@ -798,13 +854,34 @@ impl Execution {
         if !self.recovery_inspection_pending()? {
             return Ok(());
         }
+        // Executors may still hold the pending callback after its result is saved.
+        let preserved = if let Some(session) = self.recovery_session()? {
+            let data = session.data.lock().map_err(|_| AgentError::internal())?;
+            data.turns.last().and_then(|turn| {
+                turn.turn
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.tools)
+                    .find(|saved| saved.id == tool.id)
+                    .cloned()
+            })
+        } else {
+            None
+        };
+        if preserved
+            .as_ref()
+            .is_some_and(|saved| saved.status != "completed")
+        {
+            return Ok(());
+        }
+        let tool = preserved.as_ref().unwrap_or(tool);
         let relevant = |call: &Call| {
             let same_mcp = server(&call.name)
                 .zip(server(&tool.name))
                 .is_some_and(|(a, b)| a == b);
             call.outcome.is_none()
                 && !call.evidence.contains_key(&tool.id)
-                && call.related(tool, same_mcp, &self.hub.root.root)
+                && call.related(tool, same_mcp, &self.hub.root.root, &self.hub.root.id)
         };
         let has_evidence = {
             let state = self
@@ -912,12 +989,48 @@ impl Execution {
                     })
                 {
                     if let Some(id) = item["call_id"].as_str() {
+                        let saved_tool = data.turns.last().and_then(|turn| {
+                            turn.turn
+                                .steps
+                                .iter()
+                                .flat_map(|step| &step.tools)
+                                .find(|tool| tool.id == id)
+                        });
+                        if saved_tool.is_some_and(|tool| tool.status != "completed") {
+                            continue;
+                        }
                         durable.insert(id.to_owned());
                         if id == evidence {
-                            unavailable = item["output"]
-                                .as_str()
-                                .and_then(|output| serde_json::from_str::<Value>(output).ok())
-                                .is_some_and(|receipt| unavailable_target(&call, &receipt));
+                            // Model compaction changes wire replay, not the preserved native result.
+                            let receipt = saved_tool
+                                .map(|tool| tool.output.as_str())
+                                .or_else(|| item["output"].as_str())
+                                .and_then(|output| serde_json::from_str::<Value>(output).ok());
+                            if call.name == "browser_open"
+                                && (outcome != Some(Outcome::NotApplied)
+                                    || !receipt.as_ref().is_some_and(empty_browser_catalog))
+                            {
+                                return Err(invalid("A abertura interrompida exige uma lista integrada vazia e o resultado not_applied. Uma aba existente não comprova o resultado desta chamada."));
+                            }
+                            if call.name == "impeccable"
+                                && call.selectors.get("command").and_then(Value::as_str)
+                                    == Some("live")
+                                && (outcome != Some(Outcome::NotApplied)
+                                    || !call.live_args.as_ref().is_some_and(|args| {
+                                        receipt.as_ref().is_some_and(|output| {
+                                            inactive_impeccable_live(
+                                                output,
+                                                &self.hub.root.id,
+                                                &self.hub.root.root,
+                                                args,
+                                            )
+                                        })
+                                    }))
+                            {
+                                return Err(invalid("A ativação Live interrompida exige live-status sem helper ou sessão ativa, com o gerenciador inativo nesta conversa, e o resultado not_applied."));
+                            }
+                            unavailable =
+                                receipt.is_some_and(|receipt| unavailable_target(&call, &receipt));
                         }
                     }
                 }
@@ -1118,6 +1231,412 @@ mod tests {
         resolve(&exec, &click, &state, "applied").unwrap();
         assert!(exec.recovery_preflight(&click, false).is_err());
         assert!(exec.recovery_preflight(&same, false).is_ok());
+    }
+
+    #[test]
+    fn interrupted_browser_open_can_recover_from_an_empty_owned_catalog() {
+        let open = tool(
+            "lost-open",
+            "browser_open",
+            json!({"url":"http://127.0.0.1:5173/"}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&open));
+        let mut catalog = tool("owned-tabs", "browser_list", json!({}));
+        catalog.output = json!({"backend":"embedded","activeId":null,"tabs":[]}).to_string();
+        exec.observe_recovery_result(&catalog, false, true, |_| None)
+            .unwrap();
+        assert!(resolve(&exec, &open, &catalog, "not_applied").is_err());
+        observe(&exec, &catalog, |_| None);
+        assert!(resolve(&exec, &open, &catalog, "applied").is_err());
+        assert!(exec
+            .resolve_recovery(
+                &json!({"callId":open.id,"evidenceCallId":"browser_list","outcome":"not_applied"})
+            )
+            .is_err());
+        resolve(&exec, &open, &catalog, "not_applied").unwrap();
+        assert!(exec.recovery_preflight(&open, false).is_ok());
+        assert!(!exec.recovery_inspection_pending().unwrap());
+    }
+
+    #[test]
+    fn interrupted_browser_open_rejects_ambiguous_or_invalid_catalogs() {
+        let open = tool(
+            "lost-open",
+            "browser_open",
+            json!({"url":"http://127.0.0.1:5173/"}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&open));
+        for (index, output) in [
+            json!({"backend":"embedded","activeId":"tab","tabs":[{"id":"tab","url":"http://127.0.0.1:5173/"}]}),
+            json!({"backend":"extension","activeId":null,"tabs":[]}),
+            json!({"backend":"embedded","activeId":"tab","tabs":[]}),
+            json!({"backend":"embedded","activeId":null}),
+            json!({"tabs":[]}),
+        ].into_iter().enumerate() {
+            let mut catalog = tool(&format!("catalog-{index}"), "browser_list", json!({}));
+            catalog.output = output.to_string();
+            observe(&exec, &catalog, |_| None);
+            for outcome in ["applied", "not_applied", "unavailable"] {
+                assert!(resolve(&exec, &open, &catalog, outcome).is_err());
+            }
+        }
+        assert!(exec.recovery_preflight(&open, false).is_err());
+    }
+
+    fn inactive_live_status(exec: &Execution) -> Value {
+        json!({
+            "liveServer":null,"activeSessions":[],
+            "hostStatus":{"conversationId":exec.hub.root.id,"state":"off","phase":"idle"},
+            "hostInspection":{"confirmedInactive":true,"projectRoot":exec.hub.root.root,"conversationId":exec.hub.root.id,"target":null}
+        })
+    }
+
+    #[test]
+    fn live_inspections_are_read_only_but_start_and_repairs_are_not() {
+        for command in ["live-status", "live-resume"] {
+            assert!(read_only(
+                &tool(
+                    "inspect",
+                    "impeccable",
+                    json!({"command":command,"args":[]})
+                ),
+                false
+            ));
+        }
+        for args in [
+            json!({"command":"live","args":[]}),
+            json!({"command":"doctor","args":["--fix"]}),
+        ] {
+            assert!(!read_only(&tool("mutate", "impeccable", args), false));
+        }
+    }
+
+    #[test]
+    fn interrupted_live_recovers_from_durable_owned_inactive_status() {
+        let start = tool(
+            "lost-live",
+            "impeccable",
+            json!({"command":"live","args":["--dev-url","http://127.0.0.1:5173/"]}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+        assert!(exec.recovery_preflight(&start, false).is_err());
+        let mut status = tool(
+            "owned-live-status",
+            "impeccable",
+            json!({"command":"live-status","args":[]}),
+        );
+        status.output = inactive_live_status(&exec).to_string();
+        assert!(exec.recovery_preflight(&status, false).is_ok());
+        exec.observe_recovery_result(&status, false, true, |_| None)
+            .unwrap();
+        assert!(resolve(&exec, &start, &status, "not_applied").is_err());
+        observe(&exec, &status, |_| None);
+        assert!(exec.context().unwrap().contains("owned-live-status"));
+        assert!(exec
+            .resolve_recovery(
+                &json!({"callId":start.id,"evidenceCallId":"live-status","outcome":"not_applied"})
+            )
+            .is_err());
+        for outcome in ["applied", "unavailable"] {
+            assert!(resolve(&exec, &start, &status, outcome).is_err());
+        }
+        resolve(&exec, &start, &status, "not_applied").unwrap();
+        assert!(exec.recovery_preflight(&start, false).is_ok());
+        assert!(!exec.recovery_inspection_pending().unwrap());
+    }
+
+    #[test]
+    fn interrupted_live_rejects_unowned_active_or_incomplete_status() {
+        let start = tool(
+            "lost-live",
+            "impeccable",
+            json!({"command":"live","args":[]}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+        let inactive = inactive_live_status(&exec);
+        let mut foreign = inactive.clone();
+        foreign["hostStatus"]["conversationId"] = json!("another-chat");
+        let mut preparing = inactive.clone();
+        preparing["hostStatus"]["state"] = json!("preparing");
+        let mut helper = inactive.clone();
+        helper["liveServer"] = json!({"port":4173});
+        let mut active = inactive.clone();
+        active["activeSessions"] = json!([{"id":"active-session"}]);
+        let mut missing_sessions = inactive.clone();
+        missing_sessions
+            .as_object_mut()
+            .unwrap()
+            .remove("activeSessions");
+        let mut failed_inspection = inactive.clone();
+        failed_inspection["hostInspection"]["confirmedInactive"] = json!(false);
+        let mut missing_inspection = inactive.clone();
+        missing_inspection
+            .as_object_mut()
+            .unwrap()
+            .remove("hostInspection");
+        let mut foreign_project = inactive.clone();
+        foreign_project["hostInspection"]["projectRoot"] = json!("/another/project");
+        let mut foreign_inspection = inactive.clone();
+        foreign_inspection["hostInspection"]["conversationId"] = json!("another-chat");
+        let mut foreign_target = inactive.clone();
+        foreign_target["hostInspection"]["target"] = json!(exec.hub.root.root.join("another-app"));
+        for (index, output) in [
+            foreign,
+            preparing,
+            helper,
+            active,
+            missing_sessions,
+            failed_inspection,
+            missing_inspection,
+            foreign_project,
+            foreign_inspection,
+            foreign_target,
+            json!({"liveServer":null,"activeSessions":[]}),
+            json!({"active":false}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut status = tool(
+                &format!("live-inspection-{index}"),
+                "impeccable",
+                json!({"command":"live-status","args":[]}),
+            );
+            status.output = output.to_string();
+            observe(&exec, &status, |_| None);
+            assert!(resolve(&exec, &start, &status, "not_applied").is_err());
+        }
+        let mut resume = tool(
+            "live-resume",
+            "impeccable",
+            json!({"command":"live-resume","args":[]}),
+        );
+        resume.output = inactive.to_string();
+        observe(&exec, &resume, |_| None);
+        assert!(resolve(&exec, &start, &resume, "not_applied").is_err());
+        assert!(exec.recovery_preflight(&start, false).is_err());
+    }
+
+    #[test]
+    fn inactive_live_status_does_not_resolve_other_impeccable_mutations() {
+        let mutation = tool(
+            "lost-accept",
+            "impeccable",
+            json!({"command":"live-accept","args":["--id","request"]}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&mutation));
+        let mut status = tool(
+            "live-status",
+            "impeccable",
+            json!({"command":"live-status","args":[]}),
+        );
+        status.output = inactive_live_status(&exec).to_string();
+        observe(&exec, &status, |_| None);
+        assert!(resolve(&exec, &mutation, &status, "not_applied").is_err());
+        assert!(exec.recovery_preflight(&mutation, false).is_err());
+    }
+
+    #[test]
+    fn interrupted_live_requires_the_same_requested_app_target() {
+        let start = tool(
+            "lost-live",
+            "impeccable",
+            json!({"command":"live","args":["--target","app"]}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+        std::fs::create_dir_all(exec.hub.root.root.join("app")).unwrap();
+        let mut status = tool(
+            "target-live-status",
+            "impeccable",
+            json!({"command":"live-status","args":["--target=app"]}),
+        );
+        status.output = inactive_live_status(&exec).to_string();
+        observe(&exec, &status, |_| None);
+        assert!(resolve(&exec, &start, &status, "not_applied").is_err());
+        status.id = "scoped-live-status".into();
+        let mut scoped = inactive_live_status(&exec);
+        scoped["hostInspection"]["target"] =
+            json!(exec.hub.root.root.join("app").canonicalize().unwrap());
+        status.output = scoped.to_string();
+        observe(&exec, &status, |_| None);
+        resolve(&exec, &start, &status, "not_applied").unwrap();
+        assert!(exec.recovery_preflight(&start, false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cli_inspection_is_observed_only_after_its_result_is_preserved() {
+        let write = tool(
+            "lost-write",
+            "write",
+            json!({"path":"state.txt","content":"planned"}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&write));
+        std::fs::write(exec.hub.root.root.join("state.txt"), "saved state").unwrap();
+        let (_sender, signal) = watch::channel(false);
+        let env = &exec.hub.env;
+        let mut bridge = crate::agent::claude_executor::bridge::tests::fixture_bridge(
+            &exec.hub.root,
+            crate::agent::TurnRuntime {
+                grants: &env.grants,
+                state: &env.state,
+                oauth: &env.oauth,
+                mcp: &env.mcp,
+                home: &env.home,
+            },
+            crate::agent::tests::options(crate::agent::ApprovalMode::Yolo),
+            signal,
+        );
+        bridge.execution = Some(exec.clone());
+        let mut read = tool("cli-read", "read", json!({"path":"state.txt"}));
+        read.status = "pending".into();
+        read.output.clear();
+        let output = bridge.call(&read).await.unwrap();
+        assert!(output.contains("saved state"));
+        assert!(!exec.context().unwrap().contains("cli-read"));
+        let result = crate::agent::claude_executor::execute_tool(
+            &mut bridge,
+            "inspect",
+            &json!({"name":"read","arguments":read.args}),
+            Some(read.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["isError"], false);
+        assert!(exec.context().unwrap().contains("cli-read"));
+        let model_content = result["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(model_content.contains("Execution recovery checkpoint"));
+        assert!(model_content.contains("cli-read"));
+        let resolution = tool(
+            "cli-resolve",
+            TOOL,
+            json!({"callId":write.id,"evidenceCallId":read.id,"outcome":"not_applied"}),
+        );
+        let resolved = crate::agent::claude_executor::execute_tool(
+            &mut bridge,
+            "resolve",
+            &json!({"name":TOOL,"arguments":resolution.args}),
+            Some(resolution.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved["isError"], false);
+        let returned = resolved["content"].as_array().unwrap();
+        assert!(returned.iter().any(|block| {
+            block["text"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .is_some_and(|receipt| receipt["pending"] == false)
+        }));
+        assert!(!returned.iter().any(|block| block["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Execution recovery checkpoint"))));
+        assert!(exec.recovery_preflight(&write, false).is_ok());
+    }
+
+    #[test]
+    fn compact_model_replay_does_not_replace_the_native_recovery_receipt() {
+        let start = tool(
+            "lost-live",
+            "impeccable",
+            json!({"command":"live","args":[]}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+        let mut status = tool(
+            "live-status-receipt",
+            "impeccable",
+            json!({"command":"live-status","args":[]}),
+        );
+        status.output = inactive_live_status(&exec).to_string();
+        exec.hub.root.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.turn.steps.push(Step {tools:vec![status.clone()], ..Step::default()});
+            turn.wire.push(json!({"type":"function_call_output","call_id":status.id,"output":"The complete status was indexed; use the compact model preview."}));
+        }).unwrap();
+        exec.observe_recovery_result(&status, false, true, |_| None)
+            .unwrap();
+        resolve(&exec, &start, &status, "not_applied").unwrap();
+        assert!(exec.recovery_preflight(&start, false).is_ok());
+    }
+
+    #[test]
+    fn pending_callback_uses_only_a_completed_preserved_inspection() {
+        for saved_status in ["pending", "error", "completed"] {
+            let start = tool(
+                "lost-live",
+                "impeccable",
+                json!({"command":"live","args":[]}),
+            );
+            let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+            let mut status = tool(
+                "live-status-receipt",
+                "impeccable",
+                json!({"command":"live-status","args":[]}),
+            );
+            status.output = inactive_live_status(&exec).to_string();
+            status.status = saved_status.into();
+            exec.hub.root.update(true, |data| {
+                let turn = data.turns.last_mut().unwrap();
+                turn.turn.steps.push(Step {tools:vec![status.clone()], ..Step::default()});
+                turn.wire.push(json!({"type":"function_call_output","call_id":status.id,"output":status.output}));
+            }).unwrap();
+            let mut callback = status.clone();
+            callback.status = "pending".into();
+            callback.output.clear();
+            exec.observe_recovery_result(&callback, false, true, |_| None)
+                .unwrap();
+            assert_eq!(
+                exec.context().unwrap().contains(&status.id),
+                saved_status == "completed"
+            );
+            if saved_status == "completed" {
+                resolve(&exec, &start, &status, "not_applied").unwrap();
+                assert!(exec.recovery_preflight(&start, false).is_ok());
+            } else {
+                assert!(resolve(&exec, &start, &status, "not_applied").is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_native_recovery_receipts_never_fall_back_to_model_replay() {
+        for (saved_status, malformed) in [("pending", false), ("error", false), ("completed", true)]
+        {
+            let start = tool(
+                "lost-live",
+                "impeccable",
+                json!({"command":"live","args":[]}),
+            );
+            let (_fixture, exec) = recovering(std::slice::from_ref(&start));
+            let mut status = tool(
+                "live-status-receipt",
+                "impeccable",
+                json!({"command":"live-status","args":[]}),
+            );
+            status.output = inactive_live_status(&exec).to_string();
+            let mut raw = status.clone();
+            raw.status = saved_status.into();
+            if malformed {
+                raw.output = "Incomplete native receipt".into();
+            }
+            exec.hub
+                .root
+                .update(true, |data| {
+                    data.turns.last_mut().unwrap().turn.steps.push(Step {
+                        tools: vec![raw],
+                        ..Step::default()
+                    });
+                })
+                .unwrap();
+            observe(&exec, &status, |_| None);
+            assert!(resolve(&exec, &start, &status, "not_applied").is_err());
+            assert!(exec.recovery_preflight(&start, false).is_err());
+        }
     }
 
     #[test]
@@ -1605,7 +2124,11 @@ mod tests {
         observe(&exec, &missing, |_| None);
         assert!(resolve(&exec, &click, &missing, "applied").is_err());
         assert!(resolve(&exec, &click, &missing, "not_applied").is_err());
-        let mut lost_binding = tool("lost-binding", "computer_observe", json!({"targetId":"window"}));
+        let mut lost_binding = tool(
+            "lost-binding",
+            "computer_observe",
+            json!({"targetId":"window"}),
+        );
         lost_binding.output = json!({"targetId":"window","available":false,"inputSent":false,"code":"computer_target_unavailable","reason":"host_binding_missing","effect":"unknown","phase":"observed"}).to_string();
         observe(&exec, &lost_binding, |_| None);
         assert!(resolve(&exec, &click, &lost_binding, "applied").is_err());

@@ -40,7 +40,7 @@ describe("system preferences", () => {
     expect(within(panel).getByRole("switch", { name: "Notificações do sistema" })).toHaveAttribute("data-size", "sm");
     expect(within(panel).getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
   });
-  it("enables the optional desktop companion without changing the other preferences", async () => {
+  it("enables and disables the optional desktop companion without changing the other preferences", async () => {
     const user = userEvent.setup(); render(<SystemSettings />);
     const toggle = await screen.findByRole("switch", { name: "Assistente na área de trabalho" });
     expect(toggle).not.toBeChecked();
@@ -48,6 +48,11 @@ describe("system preferences", () => {
     await user.click(toggle);
     await waitFor(() => expect(toggle).toBeChecked());
     expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, companionEnabled: true } });
+    expect(screen.getByText(/arraste a área preta do cabeçalho/)).toBeVisible();
+    call.mockResolvedValue(initial);
+    await user.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: initial.preferences });
   });
   it("hides the companion toggle on unsupported systems and exposes native window failures", async () => {
     call.mockResolvedValue({ ...initial, companionSupported: false });

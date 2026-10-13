@@ -38,7 +38,7 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const [motionQuery] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)"));
   const [reducedMotion, setReducedMotion] = useState(motionQuery.matches);
-  const { rive, RiveComponent } = useRive({
+  const { rive, RiveComponent, setCanvasRef, setContainerRef } = useRive({
     src: robotUrl, artboard: machine, stateMachines: machine, layout,
     autoplay: false, enableRiveAssetCDN: false, shouldDisableRiveListeners: true,
     onLoadError: () => setFailed(true),
@@ -51,6 +51,8 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
     return Object.fromEntries(available) as Record<keyof typeof inputTypes, StateMachineInput>;
   }, [rive]);
   const ready = Boolean(rive && inputs && !failed);
+  // Linux's runtime can shrink the initially zero-size RiveComponent canvas to its CSS transform.
+  const linux = navigator.userAgent.includes("Linux");
 
   useEffect(() => {
     const visibility = () => setPageHidden(document.hidden);
@@ -87,7 +89,9 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
   }, [rive, inputs, failed, visible, pageHidden, status, hovered, dragging, expanded, walking, gesture, lookX, lookY, reducedMotion, voiceLevel]);
 
   return <div aria-hidden="true" className="companion-robot" data-state={status} data-gesture={gesture} data-renderer={ready ? "rive" : failed || (rive && !inputs) ? "fallback" : "loading"} data-motion={reducedMotion ? "reduced" : "full"} style={{ position: "relative", pointerEvents: "none" }}>
-    <div style={{ position: "absolute", inset: 0, visibility: ready ? "visible" : "hidden" }}><RiveComponent aria-hidden="true" tabIndex={-1} /></div>
+    <div style={{ position: "absolute", inset: 0, visibility: ready ? "visible" : "hidden" }}>
+      {linux ? <div ref={setContainerRef} style={{ width: "100%", height: "100%" }}><canvas ref={setCanvasRef} aria-hidden="true" tabIndex={-1} style={{ width: "100%", height: "100%", verticalAlign: "top" }} /></div> : <RiveComponent aria-hidden="true" tabIndex={-1} />}
+    </div>
     {!ready && <RobotFallback status={status} gesture={gesture} voiceLevel={voiceLevel} renderer={failed || rive ? "fallback" : "loading"} />}
   </div>;
 }

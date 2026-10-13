@@ -2,7 +2,7 @@ import { appendFileSync, copyFileSync, mkdirSync, readdirSync, statSync, writeFi
 import path from "node:path";
 import { prerelease } from "semver";
 import { command, configuration, optionalRelease, root } from "./release-common";
-import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, requireLocalValidation, selectedReleaseTargets, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
+import { artifactNames, desktopManifest, notesFromTag, RELEASE_REPOSITORY, releaseTargets, requireLocalValidation, selectedReleaseTargets, supportedTarget, targetPlatforms, validateCIRequest } from "./release-plan";
 import { verifyReleaseArtifacts } from "./release-artifacts";
 import { readInstalledRelease } from "./installed-release";
 
@@ -124,7 +124,7 @@ function publishArtifacts() {
   // Publish the selected platforms atomically from one draft, after every required upload.
   const remote = JSON.parse(command("gh", ["release", "view", tag, "--repo", RELEASE_REPOSITORY, "--json", "assets,isDraft"], true)) as { isDraft: boolean; assets: { name: string; size: number }[] };
   if (!remote.isDraft || files.some(name => !remote.assets.some(asset => asset.name === name && asset.size === statSync(path.join(artifactDirectory, name)).size))) throw new Error("O upload está incompleto; o rascunho foi preservado.");
-  if (targets.length === 1 && remote.assets.some(asset => !files.includes(asset.name))) throw new Error("O rascunho contém artefatos fora da seleção macOS; a release foi preservada sem publicação.");
+  if (targets.length < releaseTargets.length && remote.assets.some(asset => !files.includes(asset.name))) throw new Error("O rascunho contém artefatos fora da seleção de plataformas; a release foi preservada sem publicação.");
   command("gh", ["release", "edit", tag, "--repo", RELEASE_REPOSITORY, "--draft=false", `--latest=${!beta}`]);
   console.info(`Publicado: https://github.com/${RELEASE_REPOSITORY}/releases/tag/${tag}`);
 }

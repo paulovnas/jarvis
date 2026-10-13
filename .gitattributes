@@ -1,0 +1,2 @@
+# Unified diffs use one space for an unchanged empty context line.
+scripts/impeccable-native/*.patch whitespace=-blank-at-eol

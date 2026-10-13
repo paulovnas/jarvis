@@ -11,6 +11,18 @@ const prepared: CoreActivity = {
 };
 const step = { thinking: "", commentary: "Vou ajustar o layout.", tools: [], coreActivities: [prepared] };
 
+it.each(["design_read", "design_search"])("labels %s as Impeccable without an automatic Core receipt", async name => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [
+    { id: "design", name, args: name === "design_read" ? { id: "impeccable/live" } : { query: "live" }, status: "completed" },
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByText("Impeccable")).toBeVisible();
+  expect(screen.queryByText("Open Design")).not.toBeInTheDocument();
+  expect(screen.queryByText("Automático")).not.toBeInTheDocument();
+  expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+});
+
 it("groups Impeccable guidance and tool use without adding a legacy design resource", async () => {
   const user = userEvent.setup();
   render(<CoreActivitySummary steps={[{ ...step, coreActivities: [{ ...prepared, component: "impeccable", action: "design_quality", summary: "Revisão visual orientada pelo Impeccable", sources: ["project:DESIGN.md"] }], tools: [
@@ -23,6 +35,18 @@ it("groups Impeccable guidance and tool use without adding a legacy design resou
   expect(screen.getByText("Impeccable")).toBeVisible();
   expect(screen.getByText("Revisão visual orientada pelo Impeccable", { exact: false })).toBeVisible();
   expect(screen.queryByText("Open Design")).not.toBeInTheDocument();
+});
+
+it("keeps current design calls under Impeccable when a legacy receipt is also present", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ ...step, coreActivities: [prepared, { ...prepared, component: "impeccable", sources: [] }], tools: [
+    { id: "design", name: "design_read", args: { id: "impeccable/live" }, status: "completed" },
+  ] }]} />);
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  const current = screen.getByText("Impeccable").closest("li")!;
+  const legacy = screen.getByText("Open Design").closest("li")!;
+  expect(within(current).getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
+  expect(within(legacy).queryByText(/Solicitado pelo agente/)).not.toBeInTheDocument();
 });
 
 it("groups the whole OpenMontage production under one Core resource", async () => {
@@ -47,6 +71,8 @@ it("shows real automatic work separately from model calls, with sources on deman
   expect(trigger).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("project:DESIGN.md")).not.toBeInTheDocument();
   await user.click(trigger);
+  expect(screen.getByText("Open Design")).toBeVisible();
+  expect(screen.queryByText("Impeccable")).not.toBeInTheDocument();
   expect(screen.getByText("Automático")).toBeVisible();
   expect(screen.getByText(/Identidade do projeto carregada/)).toBeVisible();
   expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();

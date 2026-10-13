@@ -2,6 +2,8 @@ use super::*;
 use std::fs;
 
 mod impeccable_live_e2e;
+#[cfg(target_os = "linux")]
+mod linux_tool_stack;
 mod mcp_continuation;
 
 #[cfg(unix)]
@@ -2310,19 +2312,53 @@ async fn computer_manual_requires_once_only_user_review_even_in_yolo_and_policy_
 
 #[tokio::test]
 async fn computer_yolo_preauthorizes_native_input_for_jarvis_and_cli_executors() {
-    for executor in [crate::claude::Executor::Jarvis, crate::claude::Executor::Claude] {
+    for executor in [
+        crate::claude::Executor::Jarvis,
+        crate::claude::Executor::Claude,
+    ] {
         let fixture = Fixture::new();
         let session = session(&fixture);
         let mut selected = options(ApprovalMode::Manual);
         selected.executor = executor;
-        let signal = session.reserve("Usar o computador".into(), selected.clone()).unwrap();
+        let signal = session
+            .reserve("Usar o computador".into(), selected.clone())
+            .unwrap();
         let computer = computer::ready_state(computer::ComputerMode::Yolo);
-        let tool = ToolCall { id: "click".into(), name: "computer_click".into(), args: json!({"targetId":"window","observationId":"fresh","element":"button"}), status: "pending".into(), output: String::new(), duration_ms: 0 };
-        let prepared = tool_contract::Orchestrator::new(&computer::definitions(Mode::Build)).preflight(&tool).unwrap();
-        let permitted = tokio::time::timeout(Duration::from_millis(200), authorize_prepared(
-            ApprovalRequest { session: &session, tool: &tool, options: &selected, computer: Some(computer), policy: None, sandbox: None, project_id: Some("project"), manual_hooks: None, explicit_video_approval: false, signal },
-            prepared, true, true, true,
-        )).await.expect("computer YOLO must not wait for an action approval").unwrap();
+        let tool = ToolCall {
+            id: "click".into(),
+            name: "computer_click".into(),
+            args: json!({"targetId":"window","observationId":"fresh","element":"button"}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let prepared = tool_contract::Orchestrator::new(&computer::definitions(Mode::Build))
+            .preflight(&tool)
+            .unwrap();
+        let permitted = tokio::time::timeout(
+            Duration::from_millis(200),
+            authorize_prepared(
+                ApprovalRequest {
+                    session: &session,
+                    tool: &tool,
+                    options: &selected,
+                    computer: Some(computer),
+                    policy: None,
+                    sandbox: None,
+                    project_id: Some("project"),
+                    manual_hooks: None,
+                    explicit_video_approval: false,
+                    signal,
+                },
+                prepared,
+                true,
+                true,
+                true,
+            ),
+        )
+        .await
+        .expect("computer YOLO must not wait for an action approval")
+        .unwrap();
         assert!(permitted);
         assert!(session.snapshot().unwrap().pending_approval.is_none());
     }

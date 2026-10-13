@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "2.0.0"
+version = "2.0.1"
 description = "Jarvis — ambiente de desenvolvimento com agentes de IA"
 authors = ["Paulo Vitor Nascimento"]
 edition = "2021"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-browser-probe = ["tauri-runtime-cef/browser-probe"]
+browser-probe = ["tauri-runtime-cef/browser-probe", "dep:cef"]
 
 [[example]]
 name = "browser-probe"
@@ -88,6 +88,9 @@ objc2-core-foundation = "0.3"
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "objc2", "libc", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGWindow", "CGSession", "CGImage", "CGGeometry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+cef = { version = "=151.8.1", optional = true }
+x11-dl = "2.21"
+raw-window-handle = "0.6"
 keyring = { version = "3.6.3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 

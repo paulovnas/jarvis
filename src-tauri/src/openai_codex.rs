@@ -599,7 +599,7 @@ impl SecretStore for KeychainSecretStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "browser-probe", target_os = "linux")))]
 use std::{
     collections::HashMap,
     sync::{
@@ -608,7 +608,7 @@ use std::{
     },
 };
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "browser-probe", target_os = "linux")))]
 #[derive(Default)]
 pub(crate) struct InMemorySecretStore {
     entries: Mutex<HashMap<String, CodexCredential>>,
@@ -632,7 +632,7 @@ impl InMemorySecretStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "browser-probe", target_os = "linux")))]
 impl SecretStore for InMemorySecretStore {
     fn load(&self, alias: &str) -> Result<CodexCredential, SecretStoreError> {
         if self.fail_loads.load(Ordering::Relaxed) {
@@ -1903,6 +1903,19 @@ impl Default for OpenAiCodexState {
 }
 
 impl OpenAiCodexState {
+    #[cfg(all(feature = "browser-probe", target_os = "linux"))]
+    pub(crate) fn probe(
+        state: &persistence::AppState,
+        home: &std::path::Path,
+        config: custom::Config,
+    ) -> Result<Self, ProviderError> {
+        let store = std::sync::Arc::new(InMemorySecretStore::default());
+        state.with_connection(home, |db| custom::save_probe(db, store.as_ref(), &config))?;
+        Ok(Self {
+            manager: std::sync::Arc::new(OAuthManager::production(store)),
+        })
+    }
+
     /// Selecting a saved model uses public metadata; OAuth is resolved when sending.
     pub(crate) fn validate_model_choice(
         &self,
