@@ -7,7 +7,7 @@ import { CEF_BINDINGS_VERSION, prepareCefCi } from "./prepare-cef-ci";
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))); });
 
-async function fixture(platform: "darwin" | "win32" | "linux") {
+async function fixture(platform: "darwin" | "win32" | "linux", exporterVersion = "151.8.1+151.3.24") {
   const home = await mkdtemp(path.join(tmpdir(), "Jarvis CEF CI "));
   directories.push(home);
   const envFile = path.join(home, "github-env");
@@ -21,7 +21,7 @@ async function fixture(platform: "darwin" | "win32" | "linux") {
       await mkdir(path.join(root, "bin"), { recursive: true });
       await writeFile(path.join(root, "bin", binary), "exporter fixture");
       await chmod(path.join(root, "bin", binary), 0o755);
-      await writeFile(path.join(root, ".crates2.json"), JSON.stringify({ installs: { [`export-cef-dir ${CEF_BINDINGS_VERSION} (registry+https://github.com/rust-lang/crates.io-index)`]: { bins: [binary] } } }));
+      await writeFile(path.join(root, ".crates2.json"), JSON.stringify({ installs: { [`export-cef-dir ${exporterVersion} (registry+https://github.com/rust-lang/crates.io-index)`]: { bins: [binary] } } }));
     } else {
       await mkdir(path.dirname(marker), { recursive: true });
       await writeFile(marker, "CEF native distribution fixture");
@@ -59,5 +59,13 @@ it("rejects an unverified exporter instead of using a differently versioned nati
   const f = await fixture("linux");
   f.run.mockImplementation(async () => {});
   await expect(prepareCefCi("/project", f)).rejects.toThrow("O exportador CEF instalado não corresponde à versão fixada.");
+  await expect(readFile(f.envFile)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each(["151.8.1", "151.8.2+151.3.24", "151.8.1+151.3.25"])("rejects exporter %s before exporting a mismatched native runtime", async version => {
+  const f = await fixture("linux", version);
+  await expect(prepareCefCi("/project", f)).rejects.toThrow("O exportador CEF instalado não corresponde à versão fixada.");
+  expect(f.run).toHaveBeenCalledOnce();
+  expect(f.run.mock.calls[0][0]).toBe("cargo");
   await expect(readFile(f.envFile)).rejects.toMatchObject({ code: "ENOENT" });
 });

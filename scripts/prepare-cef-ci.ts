@@ -8,6 +8,8 @@ import { ensureCefTauriCli } from "./tauri-cef-cli";
 
 // export-cef-dir selects the native distribution used to generate these exact bindings.
 export const CEF_BINDINGS_VERSION = "151.8.1";
+// The build metadata selects the native distribution pinned in Cargo.lock.
+const CEF_PACKAGE_VERSION = `${CEF_BINDINGS_VERSION}+151.3.24`;
 type Run = (program: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<void>;
 type Options = {
   home?: string; platform?: NodeJS.Platform; arch?: string; env?: NodeJS.ProcessEnv;
@@ -22,7 +24,7 @@ async function installedExporter(directory: string, binary: string): Promise<boo
     await access(executable, constants.X_OK);
     const value = JSON.parse(await readFile(path.join(directory, ".crates2.json"), "utf8")) as unknown;
     if (typeof value !== "object" || !value || !("installs" in value) || typeof value.installs !== "object" || !value.installs) return false;
-    return Object.entries(value.installs).some(([name, record]: [string, unknown]) => name.startsWith(`export-cef-dir ${CEF_BINDINGS_VERSION} (`) && typeof record === "object" && record !== null && "bins" in record && Array.isArray(record.bins) && record.bins.includes(binary));
+    return Object.entries(value.installs).some(([name, record]: [string, unknown]) => name.startsWith(`export-cef-dir ${CEF_PACKAGE_VERSION} (`) && typeof record === "object" && record !== null && "bins" in record && Array.isArray(record.bins) && record.bins.includes(binary));
   } catch { return false; }
 }
 
