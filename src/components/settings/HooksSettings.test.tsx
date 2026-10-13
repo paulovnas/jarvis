@@ -53,6 +53,22 @@ describe("HooksSettings", () => {
     expect(toast.success).toHaveBeenCalledWith("Hook salvo");
   });
 
+  it("shows plugin hooks with their origin and manages removal through the plugin", async () => {
+    const pluginHook = { id: "plugin-hook:fixture", name: "Formatar plugin", event: "PostToolUse", description: "Hook fornecido pelo plugin.", command: "echo checked", matcher: "write|edit", timeoutSeconds: 30, source: "quality@local" };
+    mocked.mockResolvedValueOnce({ ...initial, nativeHooks: [...initial.nativeHooks, pluginHook] });
+    const user = userEvent.setup(); render(<HooksSettings />);
+    const details = await screen.findByRole("button", { name: "Detalhes do hook Formatar plugin" });
+    expect(screen.getByText("Plugin · quality@local")).toBeVisible();
+    expect(screen.getByText("Gerenciado em Plugins")).toBeVisible();
+    await user.click(details);
+    expect(screen.getByText("echo checked")).toBeVisible();
+    expect(screen.getByText(/Para remover este hook, remova o plugin/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Remover hook Formatar plugin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar hook Formatar plugin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Ativar hook Formatar plugin" })).not.toBeInTheDocument();
+    expect(mocked).toHaveBeenCalledExactlyOnceWith("list_hooks");
+  });
+
   it("edits a manual hook and retains unsaved input after storage failure", async () => {
     const user = userEvent.setup(); render(<HooksSettings />);
     await user.click(await screen.findByRole("button", { name: "Editar hook Formatar arquivos" }));

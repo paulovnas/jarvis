@@ -76,6 +76,7 @@ pub(crate) fn servers(
                 configured: catalog.apps_account_id.is_some(),
                 revision,
                 last_check: None,
+                source: Some(plugin.clone()),
             };
             let config = Config::Remote {
                 url: GATEWAY.into(),

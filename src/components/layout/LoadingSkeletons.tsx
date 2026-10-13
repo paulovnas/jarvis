@@ -42,8 +42,8 @@ export function ComposerSkeleton() {
   return <Card role="status" aria-label="Carregando campo de mensagem" className="h-[130px] justify-between rounded-2xl p-4"><Skeleton className="h-3 w-1/2" /><div aria-hidden="true" className="flex items-center gap-3"><Skeleton className="size-7 rounded-full" /><Skeleton className="ml-auto h-5 w-20" /><Skeleton className="h-5 w-28" /><Skeleton className="size-7 rounded-full" /></div></Card>;
 }
 
-export function PromptRefinementSkeleton() {
-  return <div role="status" aria-label="Refinando prompt" aria-live="polite" className="min-h-[84px] px-5 pt-4 pb-2 [&_[data-slot=skeleton]]:bg-muted-foreground/25 motion-reduce:**:animate-none"><span className="sr-only">Refinando prompt…</span><Lines count={3} /></div>;
+export function PromptRefinementSkeleton({ count = 3 }: { count?: number }) {
+  return <div role="status" aria-label="Refinando prompt" aria-live="polite" className="min-h-[84px] px-5 pt-4 pb-2 [&_[data-slot=skeleton]]:bg-muted-foreground/25 motion-reduce:**:animate-none"><span className="sr-only">Refinando prompt…</span><Lines count={count} /></div>;
 }
 
 export function HomeSkeleton() {

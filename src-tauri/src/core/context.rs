@@ -226,6 +226,7 @@ impl ContextMode {
             configured: true,
             revision: 1,
             last_check: None,
+            source: None,
         };
         let client = connect(server, config, root, signal.clone())
             .await

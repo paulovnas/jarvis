@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.mocked(toast.info).mockReset();
 });
 
-it("shows three skeleton lines, prevents concurrent send/refinement, and replaces only the draft", async () => {
+it.each([{ height: 84, lines: 3 }, { height: 256, lines: 10 }])("matches $lines visible composer lines, prevents concurrent send/refinement, and replaces only the draft", async ({ height, lines }) => {
   let finish!: (value: string) => void;
   vi.mocked(invoke).mockImplementation(async command => command === "refine_chat_prompt" ? new Promise<string>(resolve => { finish = resolve; }) : catalog);
   const send = vi.fn();
@@ -24,10 +24,15 @@ it("shows three skeleton lines, prevents concurrent send/refinement, and replace
   const user = userEvent.setup();
   render(<ChatComposer draftKey="c1" drafts={drafts} modelGroups={modelGroups} onSendMessage={send} />);
   const field = await screen.findByRole("textbox", { name: "Mensagem" });
+  Object.defineProperty(field, "clientHeight", { configurable: true, value: height });
+  Object.defineProperty(field, "scrollHeight", { configurable: true, value: 1000 });
+  field.style.lineHeight = "24px";
+  field.style.paddingTop = "16px";
+  field.style.paddingBottom = "8px";
   const refine = screen.getByRole("button", { name: "Refinar prompt" });
   await user.click(refine);
   const loading = await screen.findByRole("status", { name: "Refinando prompt" });
-  expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
+  expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(lines);
   expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument();
   expect(field).toHaveAttribute("aria-disabled", "true");
   expect(refine).toBeDisabled();

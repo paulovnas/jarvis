@@ -4,6 +4,7 @@ export const mcpCheckSchema = z.object({ toolCount: z.number().int().nonnegative
 export const mcpServersSchema = z.array(z.object({
   id: z.string(), name: z.string(), kind: z.enum(["local", "remote"]),
   enabled: z.boolean(), configured: z.boolean(), revision: z.number().int(), lastCheck: mcpCheckSchema.nullable(),
+  source: z.string().nullable().optional(),
 }));
 export type McpServer = z.infer<typeof mcpServersSchema>[number];
 export const MCP_TEMPLATE = JSON.stringify({ context7: { type: "local", command: ["npx", "-y", "@upstash/context7-mcp", "--api-key", "YOUR_API_KEY"], enabled: true } }, null, 2);

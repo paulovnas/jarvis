@@ -131,6 +131,7 @@ pub struct Server {
     pub configured: bool,
     pub revision: i64,
     pub last_check: Option<Check>,
+    pub source: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -250,6 +251,7 @@ fn rows(connection: &Connection) -> Result<Vec<Server>, McpError> {
             last_check: row
                 .get::<_, Option<String>>(6)?
                 .and_then(|raw| serde_json::from_str(&raw).ok()),
+            source: None,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -443,6 +445,7 @@ impl McpState {
                 id: previous.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| bytes.iter().map(|b| format!("{b:02x}")).collect()),
                 name, kind: config.kind().into(), enabled: config.enabled(), configured: config.configured(),
                 revision: previous.as_ref().map_or(1, |s| s.revision + 1), last_check: None,
+                source: None,
             };
             // Versioned secrets make the committed DB revision the only active config.
             self.0.secrets.store(&key(&server), &config.named(&server.name))?;
@@ -602,6 +605,7 @@ impl McpState {
                     configured: config.configured(),
                     revision: 1,
                     last_check: None,
+                    source: None,
                 },
                 config,
             ));
@@ -859,6 +863,7 @@ fn plugin_server(source: &crate::plugins::McpContribution, configured: bool) -> 
         configured,
         revision,
         last_check: None,
+        source: Some(source.plugin_id.clone()),
     }
 }
 

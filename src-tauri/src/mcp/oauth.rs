@@ -823,6 +823,7 @@ mod tests {
             configured: true,
             revision: 1,
             last_check: None,
+            source: Some("one@local".into()),
         };
         let first = Store::new(&server, "https://one.test/mcp", secrets.clone()).await;
         let second = Store::new(&server, "https://two.test/mcp", secrets.clone()).await;

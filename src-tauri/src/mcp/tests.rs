@@ -3110,6 +3110,31 @@ async fn plugin_mcp_overlay_preserves_manual_configs_and_frozen_versions() {
             .code,
         "plugin_owned_mcp"
     );
+    assert_eq!(old.source.as_deref(), Some("plugin-fixture@local"));
+    assert_eq!(manual.source, None);
+    assert_eq!(
+        fixture
+            .mcp
+            .remove(&fixture.state, &fixture.home, id)
+            .err()
+            .unwrap()
+            .code,
+        "plugin_owned_mcp"
+    );
+    assert_eq!(
+        fixture
+            .mcp
+            .set_enabled(&fixture.state, &fixture.home, id, false)
+            .err()
+            .unwrap()
+            .code,
+        "plugin_owned_mcp"
+    );
+    assert!(fixture
+        .mcp
+        .plugin_configs(&fixture.home, &fixture.home)
+        .unwrap()
+        .contains_key(id));
     let prepared = crate::plugins::preview(&fixture.home, installed.revision, create("second.js"))
         .await
         .unwrap();

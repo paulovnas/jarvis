@@ -109,6 +109,7 @@ async fn client(
         configured: true,
         revision: 1,
         last_check: None,
+        source: None,
     };
     let mut client = connect(server, config, project, signal)
         .await

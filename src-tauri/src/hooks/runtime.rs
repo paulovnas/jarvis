@@ -940,7 +940,6 @@ fn parse(event: Event, hook: &Hook, output: Output, outcome: &mut Outcome) {
 }
 
 fn plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, HooksError> {
-    use sha2::{Digest, Sha256};
     let mut environment = std::collections::BTreeMap::new();
     for (name, path) in [
         ("CODEX_PLUGIN_ROOT", &source.root),
@@ -958,6 +957,42 @@ fn plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, H
         })?;
         environment.insert(name.into(), directory.to_string_lossy().into_owned());
     }
+    let mut hooks = parse_plugin_hooks(source)?;
+    for bound in &mut hooks {
+        super::validate(&bound.hook)?;
+        bound.environment = environment.clone();
+    }
+    Ok(hooks)
+}
+
+pub(super) fn plugin_catalog_hooks(
+    source: &crate::plugins::HookSource,
+) -> Result<Vec<super::NativeHook>, HooksError> {
+    Ok(parse_plugin_hooks(source)?
+        .into_iter()
+        .map(|bound| {
+            let hook = bound.hook;
+            super::NativeHook {
+                id: format!("plugin-hook:{}", hook.id),
+                name: hook.name,
+                event: hook.event,
+                description: if source.trusted {
+                    "Hook fornecido pelo plugin. Gerencie sua configuração na seção Plugins."
+                } else {
+                    "Autorize os hooks deste plugin na seção Plugins para permitir a execução."
+                }
+                .into(),
+                command: Some(hook.command),
+                matcher: Some(hook.matcher),
+                timeout_seconds: Some(hook.timeout_seconds),
+                source: Some(source.plugin_id.clone()),
+            }
+        })
+        .collect())
+}
+
+fn parse_plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, HooksError> {
+    use sha2::{Digest, Sha256};
     let events = source
         .definition
         .get("hooks")
@@ -1030,11 +1065,10 @@ fn plugin_hooks(source: &crate::plugins::HookSource) -> Result<Vec<BoundHook>, H
                     timeout_seconds: entry["timeout"].as_u64().unwrap_or(600),
                     enabled: true,
                 };
-                super::validate(&hook)?;
                 hooks.push(BoundHook {
                     hook,
                     handler,
-                    environment: environment.clone(),
+                    environment: Default::default(),
                     plugin: Some(source.clone()),
                 });
             }
@@ -1782,6 +1816,14 @@ mod tests {
         };
         let hooks = plugin_hooks(&source).unwrap();
         assert_eq!(hooks.len(), 2);
+        let mut outside_runtime_limits = source.clone();
+        outside_runtime_limits.definition["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] =
+            json!(601);
+        assert_eq!(
+            plugin_catalog_hooks(&outside_runtime_limits).unwrap()[0].timeout_seconds,
+            Some(601)
+        );
+        assert!(plugin_hooks(&outside_runtime_limits).is_err());
         assert!(hooks[0].hook.matches(Event::PreToolUse, Some("write_file")));
         assert!(!hooks[0].hook.matches(Event::PreToolUse, Some("read_file")));
         let (_sender, signal) = watch::channel(false);

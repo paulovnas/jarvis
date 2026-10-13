@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, Anchor, ChevronDown, LockKeyhole, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Anchor, Blocks, ChevronDown, LockKeyhole, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { HOOK_EVENTS, HOOK_EVENT_LABELS, hookCatalogSchema, hookError, hookSchema, type Hook, type HookCatalog, type NativeHook } from "@/core/hooks";
 import { Button } from "@/components/ui/button";
@@ -70,7 +70,7 @@ export function HooksSettings({ onBusyChange }: { onBusyChange?: (busy: boolean)
 
   return <section aria-label="Hooks" className="flex min-w-0 flex-col gap-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <p className="max-w-2xl text-sm text-muted-foreground">Hooks executam comandos locais nos eventos da conversa, em todos os projetos. O comando recebe um JSON pela entrada padrão. Hooks nativos do Jarvis são somente leitura.</p>
+      <p className="max-w-2xl text-sm text-muted-foreground">Hooks executam comandos locais nos eventos da conversa, em todos os projetos. O comando recebe um JSON pela entrada padrão. Hooks nativos são somente leitura; hooks de plugins são gerenciados na seção Plugins.</p>
       <div className="flex shrink-0 gap-2">
         <Button variant="ghost" size="icon-sm" aria-label="Atualizar hooks" className="cursor-pointer" disabled={busy || loading} onClick={() => { setLoading(true); void refresh(); }}><RefreshCw /></Button>
         <Button size="sm" className="cursor-pointer" disabled={!catalog || busy || error !== null} onClick={() => edit({ id: crypto.randomUUID().replace(/-/g, ""), name: "", event: "PreToolUse", command: "", matcher: "", timeoutSeconds: 600, enabled: true }, true)}><Plus data-icon="inline-start" />Adicionar hook</Button>
@@ -108,10 +108,11 @@ export function HooksSettings({ onBusyChange }: { onBusyChange?: (busy: boolean)
 }
 
 function HookRow({ hook, native = false, untrusted = false, busy, onEdit, onDelete, onToggle }: { hook: Hook | NativeHook; native?: boolean; untrusted?: boolean; busy: boolean; onEdit?: () => void; onDelete?: () => void; onToggle?: (enabled: boolean) => void }) {
+  const source = "source" in hook ? hook.source : null;
   return <Collapsible render={<Card size="sm" />} className="settings-group">
     <CardHeader className="flex min-w-0 flex-row items-center gap-2 p-4">
-      <CardTitle className="min-w-0 flex-1 break-words">{hook.name}</CardTitle>
-      {native ? <Badge variant="outline" className="shrink-0 gap-1"><LockKeyhole aria-hidden="true" className="size-3" />Somente leitura</Badge> : <>
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5"><CardTitle className="break-words">{hook.name}</CardTitle>{source && <Badge variant="outline" className="max-w-full self-start gap-1 text-muted-foreground"><Blocks aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">Plugin · {source}</span></Badge>}</div>
+      {native ? <Badge variant="outline" className="shrink-0 gap-1"><LockKeyhole aria-hidden="true" className="size-3" />{source ? "Gerenciado em Plugins" : "Somente leitura"}</Badge> : <>
         {untrusted && <Badge variant="outline" className="shrink-0 gap-1"><AlertTriangle aria-hidden="true" className="size-3" />Revisão necessária</Badge>}
         <Button variant="ghost" size="icon-sm" className="cursor-pointer shrink-0" aria-label={`Editar hook ${hook.name}`} disabled={busy} onClick={onEdit}><Pencil /></Button>
         <Switch className="cursor-pointer shrink-0" aria-label={`${untrusted ? "Revisar e ativar" : "Ativar"} hook ${hook.name}`} checked={"enabled" in hook && hook.enabled && !untrusted} disabled={busy} onCheckedChange={onToggle} />
@@ -121,6 +122,7 @@ function HookRow({ hook, native = false, untrusted = false, busy, onEdit, onDele
     <CollapsibleContent><CardContent className="flex min-w-0 flex-col gap-3 border-t py-4">
       {untrusted && <p className="text-xs text-muted-foreground">Este hook foi alterado fora do Jarvis e não será executado. Revise o comando antes de salvar ou ativar novamente.</p>}
       {"description" in hook && <p className="text-xs text-muted-foreground">{hook.description}</p>}
+      {source && <p className="text-xs text-muted-foreground">Para remover este hook, remova o plugin na seção Plugins.</p>}
       <dl className="grid min-w-0 gap-x-4 gap-y-2 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">
         <dt className="text-muted-foreground">Tipo de hook</dt><dd>{HOOK_EVENT_LABELS[hook.event].label}</dd>
         <dt className="text-muted-foreground">Comando</dt><dd className="font-mono whitespace-pre-wrap wrap-anywhere">{hook.command ?? "Interno do Jarvis"}</dd>

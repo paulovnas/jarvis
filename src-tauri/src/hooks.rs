@@ -99,6 +99,7 @@ pub(crate) struct NativeHook {
     pub command: Option<String>,
     pub matcher: Option<String>,
     pub timeout_seconds: Option<u64>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -268,6 +269,7 @@ fn native_hooks() -> Vec<NativeHook> {
         command: None,
         matcher: (event == Event::PreToolUse).then(|| "bash".into()),
         timeout_seconds,
+        source: None,
     })
     .collect()
 }
@@ -332,7 +334,21 @@ pub(crate) fn read(home: &Path) -> Result<Catalog, HooksError> {
 }
 
 pub(crate) fn load(state: &AppState, home: &Path) -> Result<Catalog, HooksError> {
-    state.with_connection(home, |_| read(home))
+    with_plugin_hooks(home, state.with_connection(home, |_| read(home))?)
+}
+
+fn with_plugin_hooks(home: &Path, mut catalog: Catalog) -> Result<Catalog, HooksError> {
+    let overlay =
+        crate::plugins::load_active_for_project(home, None).map_err(|cause| HooksError {
+            code: "plugin_hooks",
+            message: cause.message,
+        })?;
+    for source in overlay.hook_sources {
+        catalog
+            .native_hooks
+            .extend(runtime::plugin_catalog_hooks(&source)?);
+    }
+    Ok(catalog)
 }
 
 pub(crate) fn preview_upsert(current: &Catalog, mut hook: Hook) -> Result<Catalog, HooksError> {
@@ -398,9 +414,10 @@ pub(crate) fn upsert(
     state.with_connection(home, |_| {
         let current = read(home)?;
         check_revision(&current, expected_revision)?;
-        let changed = preview_upsert(&current, hook)?;
+        // Resolve the catalog before writing so a metadata error cannot follow a committed change.
+        let changed = with_plugin_hooks(home, preview_upsert(&current, hook)?)?;
         write(home, &changed)?;
-        Ok(changed)
+        Ok::<_, HooksError>(changed)
     })
 }
 
@@ -410,6 +427,12 @@ pub(crate) fn delete(
     id: &str,
     expected_revision: u64,
 ) -> Result<Catalog, HooksError> {
+    if id.starts_with("plugin-hook:") {
+        return Err(error(
+            "plugin_owned_hook",
+            "Gerencie este hook na seção Plugins.",
+        ));
+    }
     state.with_connection(home, |_| {
         let mut current = read(home)?;
         check_revision(&current, expected_revision)?;
@@ -424,8 +447,9 @@ pub(crate) fn delete(
         current.hooks.remove(position);
         current.untrusted_ids.retain(|untrusted| untrusted != id);
         current.revision = current.revision.checked_add(1).ok_or_else(storage_error)?;
-        write(home, &current)?;
-        Ok(current)
+        let changed = with_plugin_hooks(home, current)?;
+        write(home, &changed)?;
+        Ok(changed)
     })
 }
 

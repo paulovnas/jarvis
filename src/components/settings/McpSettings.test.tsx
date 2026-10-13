@@ -41,8 +41,8 @@ describe("McpSettings", () => {
   });
 
   it("carrega MCPs locais, de plugins e apps remotos na mesma lista", async () => {
-    const plugin = { ...server, id: "plugin:firebase@firebase", name: "firebase", revision: 8_134_910_661_641_560 };
-    const app = { ...server, id: "plugin-app:firebase@official", name: "firebase@official · Apps", kind: "remote", revision: Number.MAX_SAFE_INTEGER };
+    const plugin = { ...server, id: "plugin-mcp:firebase", source: "firebase@firebase", name: "firebase", revision: 8_134_910_661_641_560 };
+    const app = { ...server, id: "plugin-app:firebase@official", source: "firebase@official", name: "firebase@official · Apps", kind: "remote", revision: Number.MAX_SAFE_INTEGER };
     mocked.mockResolvedValue([server, plugin, app]);
     const count = vi.fn();
     render(<McpSettings onCountChange={count} />);
@@ -52,6 +52,8 @@ describe("McpSettings", () => {
     expect(screen.getByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
     expect(screen.getByText("Remoto · HTTP")).toBeVisible();
     expect(count).toHaveBeenLastCalledWith(3);
+    expect(screen.getByText("Plugin · firebase@firebase")).toBeVisible();
+    expect(screen.getByText("Plugin · firebase@official")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -82,7 +84,7 @@ describe("McpSettings", () => {
     fireEvent.change(field, { target: { value: configured } });
     mocked.mockResolvedValueOnce([{ ...server, configured: true, revision: 1 }]);
     await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Editar MCP" })).not.toBeInTheDocument());
     expect(mocked).toHaveBeenCalledWith("save_mcp_server", { id: server.id, config: configured });
     expect(screen.getByRole("button", { name: "Testar conexão" })).toBeEnabled();
     expect(screen.queryByDisplayValue(configured)).not.toBeInTheDocument();
@@ -158,7 +160,7 @@ describe("McpSettings", () => {
     expect(mocked).not.toHaveBeenCalledWith("test_mcp_server", expect.anything());
     mocked.mockResolvedValueOnce({ toolCount: 2, tools: ["resolve-library-id", "query-docs"], error: null });
     await user.click(screen.getByRole("button", { name: "Testar conexão" }));
-    expect(await screen.findByText(/2 ferramentas/)).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Ferramentas (2)" })).toBeVisible();
     expect(screen.getByText("query-docs")).toBeVisible();
     expect(screen.queryByText("old-tool")).not.toBeInTheDocument();
     expect(mocked).toHaveBeenLastCalledWith("test_mcp_server", { id: server.id });
@@ -181,7 +183,7 @@ describe("McpSettings", () => {
     mocked.mockResolvedValueOnce([{ ...server, revision: 1, configured: true }]);
     mocked.mockResolvedValueOnce({ toolCount: 0, tools: [], error: "MCP indisponível" });
     await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Editar MCP" })).not.toBeInTheDocument());
     expect(await screen.findByRole("alert")).toHaveTextContent("MCP indisponível");
     expect(screen.getByRole("button", { name: "Testar conexão" })).toBeEnabled();
   });

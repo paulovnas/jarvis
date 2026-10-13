@@ -30,6 +30,7 @@ export type Hook = z.infer<typeof hookSchema>;
 export const nativeHookSchema = z.object({
   id: z.string(), name: z.string(), event: z.enum([...HOOK_EVENTS, "BeforeAgent"]), description: z.string(),
   command: z.string().nullable(), matcher: z.string().nullable(), timeoutSeconds: z.number().nullable(),
+  source: z.string().nullable().optional(),
 }).strict();
 export type NativeHook = z.infer<typeof nativeHookSchema>;
 export const hookCatalogSchema = z.object({ revision: z.number().int().nonnegative(), hooks: z.array(hookSchema), nativeHooks: z.array(nativeHookSchema), untrustedIds: z.array(z.string()).default([]) }).strict();

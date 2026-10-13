@@ -57,6 +57,79 @@ fn manual_edits_are_persisted_and_native_hooks_remain_read_only() {
     assert!(created.untrusted_ids.is_empty());
 }
 
+#[tokio::test]
+async fn plugin_hooks_are_listed_without_side_effects_and_removed_only_with_the_plugin() {
+    use crate::plugins::{apply, preview, Operation};
+    use serde_json::json;
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    upsert(&state, home.path(), hook(), 0).unwrap();
+    let prepared = preview(
+        home.path(),
+        0,
+        Operation::Create {
+            draft: serde_json::from_value(json!({
+                "name": "owned-hooks", "description": "Hook ownership fixture", "skills": [],
+                "mcpServers": {}, "apps": {},
+                "hooks": {"hooks": {"PostToolUse": [{"matcher": "write|edit", "hooks": [
+                    {"type": "command", "command": "echo plugin-hook", "timeout": 20}
+                ]}]}}
+            }))
+            .unwrap(),
+        },
+    )
+    .await
+    .unwrap();
+    let installed = apply(home.path(), &prepared).unwrap();
+    let plugin_id = &installed.installed[0].id;
+    let catalog = load(&state, home.path()).unwrap();
+    let owned = catalog
+        .native_hooks
+        .iter()
+        .find(|hook| hook.source.as_ref() == Some(plugin_id))
+        .unwrap();
+    assert!(owned.id.starts_with("plugin-hook:"));
+    assert_eq!(owned.event, Event::PostToolUse);
+    assert_eq!(owned.command.as_deref(), Some("echo plugin-hook"));
+    assert_eq!(owned.matcher.as_deref(), Some("write|edit"));
+    assert_eq!(owned.timeout_seconds, Some(20));
+    assert_eq!(serde_json::to_value(owned).unwrap()["source"], *plugin_id);
+    assert_eq!(
+        delete(&state, home.path(), &owned.id, catalog.revision)
+            .unwrap_err()
+            .code,
+        "plugin_owned_hook"
+    );
+    assert_eq!(load(&state, home.path()).unwrap(), catalog);
+    let source = crate::plugins::load_active(home.path())
+        .unwrap()
+        .hook_sources
+        .remove(0);
+    assert!(!source.data_path.join("codex").exists());
+    assert!(!source.data_path.join("claude").exists());
+    let mut edited = hook();
+    edited.enabled = false;
+    let changed = upsert(&state, home.path(), edited, catalog.revision).unwrap();
+    assert!(changed.native_hooks.iter().any(|hook| hook.id == owned.id));
+    let changed = delete(&state, home.path(), &hook().id, changed.revision).unwrap();
+    assert!(changed.native_hooks.iter().any(|hook| hook.id == owned.id));
+    let prepared = preview(
+        home.path(),
+        installed.revision,
+        Operation::Uninstall {
+            plugin_id: plugin_id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    apply(home.path(), &prepared).unwrap();
+    assert!(load(&state, home.path())
+        .unwrap()
+        .native_hooks
+        .iter()
+        .all(|hook| hook.source.is_none()));
+}
+
 #[test]
 fn unreviewed_edits_remain_visible_but_cannot_execute_until_that_hook_is_saved() {
     let home = tempfile::tempdir().unwrap();

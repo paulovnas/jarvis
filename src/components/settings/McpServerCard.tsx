@@ -1,10 +1,11 @@
 import { useId } from "react";
-import { ChevronRight, Pencil, Plug, Trash2 } from "lucide-react";
+import { Blocks, ChevronRight, LockKeyhole, Pencil, Plug, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Card } from "@/components/ui/card";
+import { Hint } from "@/components/ui/hint";
 import { Label } from "@/components/ui/label";
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { McpServer } from "@/core/mcp";
@@ -15,33 +16,47 @@ export function McpServerCard({ server, busy, checking = false, onToggle, onEdit
   const id = useId();
   const status = !server.enabled ? "Desativado" : !server.configured ? "Configuração pendente" : server.lastCheck?.error ? "Verificar conexão" : "Ativado";
   const statusColor = !server.enabled ? "text-muted-foreground" : !server.configured ? "border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow" : server.lastCheck?.error ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-onedark-green/30 bg-onedark-green/10 text-onedark-green";
-  return <Collapsible render={<Card size="sm" />} className="settings-group min-w-0">
-    <CollapsibleTrigger render={<CardHeader />} nativeButton={false} aria-label={`Detalhes do MCP ${server.name}`} className="group settings-row cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"><Plug aria-hidden="true" className="size-5" /></div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-2"><CardTitle className="truncate">{server.name}</CardTitle><Badge variant="outline" className={statusColor}>{status}</Badge></div>
-          <CardDescription>{server.kind === "local" ? "Local · stdio" : "Remoto · HTTP"}{server.lastCheck && !server.lastCheck.error && ` · ${server.lastCheck.toolCount} ferramentas`}</CardDescription>
-        </div>
-        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
+  return <Sheet>
+    <Card size="sm" className="settings-group min-w-0">
+      <SheetTrigger render={<Button variant="ghost" />} aria-label={`Detalhes do MCP ${server.name}`} className="settings-row h-auto w-full cursor-pointer justify-start gap-3 rounded-[inherit] p-4 text-left whitespace-normal hover:bg-accent/50">
+        <Plug aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <Hint content={server.name} whenTruncated><span className="truncate text-sm font-medium">{server.name}</span></Hint>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className={statusColor}>{status}</Badge>
+            {server.source && <Hint content={`Plugin: ${server.source}`}><Badge variant="outline" className="max-w-full gap-1 text-muted-foreground"><Blocks aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">Plugin · {server.source}</span></Badge></Hint>}
+          </span>
+          <span className="text-xs font-normal text-muted-foreground">{server.kind === "local" ? "Local · stdio" : "Remoto · HTTP"}{server.lastCheck && !server.lastCheck.error && ` · ${server.lastCheck.toolCount} ferramentas`}</span>
+        </span>
+        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      </SheetTrigger>
+    </Card>
+    <SheetContent showCloseButton={false} className="dark gap-0 overflow-hidden data-[side=right]:w-full data-[side=right]:sm:max-w-xl motion-reduce:transition-none">
+      <SheetHeader className="shrink-0 gap-2 border-b px-5 py-5 pr-14">
+        <SheetTitle className="break-words">{server.name}</SheetTitle>
+        <SheetDescription>Ferramentas e conexão deste MCP.</SheetDescription>
+        <div className="flex flex-wrap gap-2"><Badge variant="outline" className={statusColor}>{status}</Badge>{server.source && <Badge variant="outline" className="gap-1 text-primary"><LockKeyhole aria-hidden="true" className="size-3" />Gerenciado em Plugins</Badge>}</div>
+      </SheetHeader>
+      <SheetClose render={<Button variant="ghost" size="icon-sm" />} aria-label="Fechar detalhes do MCP" className="absolute top-4 right-4 cursor-pointer"><X aria-hidden="true" /></SheetClose>
+      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5">
+        {server.source && <div className="flex min-w-0 flex-col gap-2 text-xs"><Badge variant="outline" className="max-w-full self-start gap-1"><Blocks aria-hidden="true" className="size-3 shrink-0" /><span className="break-all whitespace-normal">Plugin · {server.source}</span></Badge><p className="text-muted-foreground">Para remover este MCP, remova o plugin na seção Plugins. Suas configurações também são gerenciadas lá.</p></div>}
+        {!server.configured && <p className="text-sm text-muted-foreground">{server.source ? "Conclua a configuração na seção Plugins." : "Adicione sua chave de API."}</p>}
+        <section aria-label={`Ferramentas de ${server.name}`} className="flex min-w-0 flex-col gap-3">
+          <h3 className="text-sm font-medium">Ferramentas{server.lastCheck && !server.lastCheck.error && ` (${server.lastCheck.toolCount})`}</h3>
+          {checking && <div role="status" aria-label="Descobrindo ferramentas" className="grid gap-2 sm:grid-cols-2"><Skeleton className="h-7 bg-secondary" /><Skeleton className="h-7 bg-secondary" /><Skeleton className="h-7 bg-secondary" /></div>}
+          {!!server.lastCheck?.tools.length && <ul className="grid min-w-0 gap-2 sm:grid-cols-2">{server.lastCheck.tools.map(tool => <li key={tool} className="min-w-0"><Badge variant="outline" className="w-full justify-start rounded-md px-2 py-1.5 font-mono text-[11px] break-all whitespace-normal text-muted-foreground">{tool}</Badge></li>)}</ul>}
+          {server.lastCheck && !server.lastCheck.error && server.lastCheck.tools.length === 0 && !checking && <p className="text-xs text-muted-foreground">Nenhuma ferramenta encontrada.</p>}
+          {!server.lastCheck && !checking && server.configured && <p className="text-xs text-muted-foreground">Teste a conexão para descobrir as ferramentas disponíveis.</p>}
+          {server.lastCheck?.error && <p role="alert" className="text-xs text-destructive">{server.lastCheck.error}</p>}
+        </section>
       </div>
-    </CollapsibleTrigger>
-    <CollapsibleContent className="flex flex-col gap-4 border-t border-border/70 pt-4">
-      <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
-        {!server.configured && <p>Adicione sua chave de API.</p>}
-        {checking && <div role="status" aria-label="Descobrindo ferramentas" className="flex flex-wrap gap-1.5"><Skeleton className="h-5 w-28 rounded-full" /><Skeleton className="h-5 w-36 rounded-full" /><Skeleton className="h-5 w-24 rounded-full" /></div>}
-        {!!server.lastCheck?.tools.length && <div aria-label={`Ferramentas de ${server.name}`} className="flex max-h-56 flex-wrap gap-1.5 overflow-y-auto">{server.lastCheck.tools.map(tool => <Badge key={tool} variant="outline" className="max-w-full break-all whitespace-normal border-onedark-cyan/30 bg-onedark-cyan/10 text-onedark-cyan">{tool}</Badge>)}</div>}
-        {server.lastCheck && !server.lastCheck.error && server.lastCheck.tools.length === 0 && !checking && <p>Nenhuma ferramenta encontrada.</p>}
-        {server.lastCheck?.error && <p role="alert" className="text-destructive">{server.lastCheck.error}</p>}
-      </CardContent>
-      <CardFooter className="flex flex-wrap justify-between gap-3">
-        <Label htmlFor={id} className="cursor-pointer gap-2 text-xs"><Switch id={id} checked={server.enabled} onCheckedChange={onToggle} disabled={busy} className="cursor-pointer" /><span className="sr-only">Ativar MCP {server.name}</span><span aria-hidden="true">{server.enabled ? "Ativado" : "Desativado"}</span></Label>
-        <div className="flex flex-wrap gap-1">
+      <SheetFooter className="shrink-0 gap-4 border-t px-5 py-4">
+        {!server.source && <Label htmlFor={id} className="cursor-pointer gap-2 text-xs"><Switch id={id} checked={server.enabled} onCheckedChange={onToggle} disabled={busy} className="cursor-pointer" /><span className="sr-only">Ativar MCP {server.name}</span><span aria-hidden="true">{server.enabled ? "Ativado" : "Desativado"}</span></Label>}
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" className="cursor-pointer" onClick={onTest} disabled={busy || !server.enabled || !server.configured}>Testar conexão</Button>
-          <Button variant="ghost" size="sm" className="cursor-pointer" onClick={onEdit} disabled={busy}><Pencil aria-hidden="true" />Editar</Button>
-          <Button variant="ghost" size="sm" className="cursor-pointer text-destructive" onClick={onDelete} disabled={busy}><Trash2 aria-hidden="true" />Excluir</Button>
+          {!server.source && <><Button variant="ghost" size="sm" className="cursor-pointer" onClick={onEdit} disabled={busy}><Pencil aria-hidden="true" />Editar</Button><Button variant="ghost" size="sm" className="cursor-pointer text-destructive" onClick={onDelete} disabled={busy}><Trash2 aria-hidden="true" />Excluir</Button></>}
         </div>
-      </CardFooter>
-    </CollapsibleContent>
-  </Collapsible>;
+      </SheetFooter>
+    </SheetContent>
+  </Sheet>;
 }
