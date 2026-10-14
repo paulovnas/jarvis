@@ -33,6 +33,9 @@ it.each([{ height: 84, lines: 3 }, { height: 256, lines: 10 }])("matches $lines 
   await user.click(refine);
   const loading = await screen.findByRole("status", { name: "Refinando prompt" });
   expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(lines);
+  // jsdom has no layout; guard the clipping and action-space contracts here.
+  expect(loading.closest(".chat-composer")).toHaveClass("overflow-hidden");
+  expect(loading.parentElement).toHaveClass("overflow-hidden", "pr-9");
   expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument();
   expect(field).toHaveAttribute("aria-disabled", "true");
   expect(refine).toBeDisabled();

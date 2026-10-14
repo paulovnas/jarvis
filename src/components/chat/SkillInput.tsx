@@ -296,11 +296,11 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
         </CommandItem>)}
       </CommandList>
     </Command>}
-    <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting || Boolean(loading)} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch rounded-2xl border-border bg-card focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
+    <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting || Boolean(loading)} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch overflow-hidden rounded-2xl border-border bg-card focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
       {attachments}
       <div className={`relative min-w-0 w-full ${actions ? "[&_.skill-editor]:pr-14" : ""}`}>
         <EditorContent editor={editor} aria-hidden={Boolean(loading)} className={loading ? "invisible" : undefined} />
-        {loading && <div className="absolute inset-0 bg-card">{loading}</div>}
+        {loading && <div className={`absolute inset-0 overflow-hidden bg-card ${actions ? "pr-9" : ""}`}>{loading}</div>}
       </div>
       {actions && <InputGroupAddon align="inline-end" className="absolute right-3 top-3 z-10 p-0">{actions}</InputGroupAddon>}
       <InputGroupAddon align="block-end" className="p-0 font-normal select-auto">{children}</InputGroupAddon>
