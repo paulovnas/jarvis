@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FirefoxBrowserController, type FirefoxApi } from "./firefox";
-import { firefoxConsole, firefoxInput } from "./firefox-page";
+import { firefoxConsole, firefoxEvaluate, firefoxInput } from "./firefox-page";
 import { tabHandle, type Request } from "./protocol";
 
 const epoch = "firefox-test";
@@ -8,9 +8,10 @@ const tab = { id: 10, windowId: 1, title: "Example", url: "https://example.org",
 const listener = () => ({ addListener: vi.fn<FirefoxApi["webRequest"]["onBeforeRequest"]["addListener"]>() });
 const stream = () => ({ ondata: null, onstop: null, onerror: null, write: vi.fn(), close: vi.fn(), disconnect: vi.fn() });
 const mocks = {
+  runtime: { id: "firefox-extension", onMessage: { addListener: vi.fn<FirefoxApi["runtime"]["onMessage"]["addListener"]>() } },
   storage: { session: { get: vi.fn(), set: vi.fn().mockResolvedValue(undefined) } },
-  tabs: { query: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), reload: vi.fn(), goBack: vi.fn(), goForward: vi.fn(), captureTab: vi.fn() },
-  windows: { create: vi.fn(), update: vi.fn() },
+  tabs: { query: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), reload: vi.fn(), goBack: vi.fn(), goForward: vi.fn(), captureTab: vi.fn(), onActivated: { addListener: vi.fn() } },
+  windows: { create: vi.fn(), update: vi.fn(), get: vi.fn(), onFocusChanged: { addListener: vi.fn() } },
   webNavigation: { getAllFrames: vi.fn() },
   scripting: { executeScript: vi.fn<FirefoxApi["scripting"]["executeScript"]>() },
   webRequest: { onBeforeRequest: listener(), onHeadersReceived: listener(), onCompleted: listener(), onErrorOccurred: listener(), filterResponseData: vi.fn<FirefoxApi["webRequest"]["filterResponseData"]>() },
@@ -24,12 +25,36 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.storage.session.get.mockResolvedValue({}); mocks.tabs.query.mockResolvedValue([tab]); mocks.tabs.get.mockResolvedValue(tab);
   mocks.tabs.create.mockResolvedValue({ ...tab, id: 20 }); mocks.tabs.update.mockResolvedValue(tab); mocks.tabs.remove.mockResolvedValue(undefined);
+  mocks.windows.get.mockResolvedValue({ id: 1, focused: true, left: 10, top: 20, width: 1000, height: 700 });
   mocks.webNavigation.getAllFrames.mockResolvedValue([{ frameId: 0, parentFrameId: -1, url: tab.url }]);
   mocks.scripting.executeScript.mockResolvedValue([{ frameId: 0, result: {} }]); mocks.webRequest.filterResponseData.mockImplementation(stream);
   document.body.innerHTML = "";
 });
 
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); firefoxConsole("stop"); });
+
 describe("Firefox owned tabs", () => {
+  it("reports the owned tab's native context even when another tab has the same title", async () => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    mocks.tabs.get.mockResolvedValue({ ...tab, active: false });
+    mocks.tabs.query.mockResolvedValue([{ ...tab, active: false }, { ...tab, id: 11, active: true }]);
+    await expect(browser.execute(request("native_context", { id: handle }))).resolves.toMatchObject({ id: handle, browser: "firefox", title: "Example", active: false, focused: true, windowId: 1, foregroundRevision: 0, window: { left: 10, top: 20, width: 1000, height: 700 } });
+    await expect(browser.execute(request("native_context", { id: handle }, "chat-b"))).rejects.toMatchObject({ code: "browser_tab_not_owned" });
+    expect(mocks.tabs.update).not.toHaveBeenCalled(); expect(mocks.windows.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects native context collected across a foreground switch and reports its revision", async () => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    mocks.tabs.get.mockResolvedValue({ ...tab, active: true });
+    let finish!: (window: { focused: boolean }) => void;
+    mocks.windows.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const reading = browser.execute(request("native_context", { id: handle })).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    mocks.tabs.onActivated.addListener.mock.calls[0][0](); mocks.tabs.onActivated.addListener.mock.calls[0][0]();
+    finish({ focused: true }); expect(await reading).toMatchObject({ code: "browser_focus_changed", details: { dispatched: false } });
+    await expect(browser.execute(request("native_context", { id: handle }))).resolves.toMatchObject({ foregroundRevision: 2, active: true });
+  });
+
   it("discovers only ordinary web pages without accessing their DOM", async () => {
     mocks.tabs.query.mockResolvedValue([tab, { ...tab, id: 11, url: "about:preferences" }, { ...tab, id: 12, url: "https://addons.mozilla.org/en-US/firefox/" }]);
     const browser = controller(); await browser.restore();
@@ -96,10 +121,26 @@ describe("Firefox owned tabs", () => {
     } finally { mocks.tabs.captureTab = capture; }
   });
 
-  it("surfaces page CSP refusal without repeating an evaluation", async () => {
+  it("retains uncertainty for a MAIN CSP refusal without repeating an evaluation", async () => {
     const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
     mocks.scripting.executeScript.mockRejectedValue(new Error("CSP unsafe-eval denied"));
-    await expect(browser.execute(request("evaluate", { id: handle, expression: "window.title" }))).rejects.toMatchObject({ code: "browser_evaluation_failed" });
+    await expect(browser.execute(request("evaluate", { id: handle, expression: "window.title" }))).rejects.toMatchObject({ code: "browser_outcome_unknown", details: { dispatched: true } });
+    expect(mocks.scripting.executeScript).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["exception", "zero exception", "undefined exception", "serialization rejection"] as const)("preserves uncertainty after MAIN evaluation mutates the page then fails with %s", async failure => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    document.body.dataset.evalCount = "0";
+    mocks.scripting.executeScript.mockImplementation(async details => {
+      let result: unknown;
+      try { result = await details.func(...details.args); }
+      catch (error) { return [{ frameId: details.target.frameIds[0], error }]; }
+      return [{ frameId: details.target.frameIds[0], result: structuredClone(result) }];
+    });
+    const endings = { exception: "throw new Error('after mutation')", "zero exception": "throw 0", "undefined exception": "throw undefined", "serialization rejection": "(() => {})" };
+    const expression = "document.body.dataset.evalCount = String(Number(document.body.dataset.evalCount) + 1); " + endings[failure];
+    await expect(browser.execute(request("evaluate", { id: handle, expression }))).rejects.toMatchObject({ code: "browser_outcome_unknown", details: { dispatched: true } });
+    expect(document.body.dataset.evalCount).toBe("1");
     expect(mocks.scripting.executeScript).toHaveBeenCalledTimes(2);
   });
 
@@ -115,9 +156,50 @@ describe("Firefox owned tabs", () => {
 
   it("dispatches once and returns unknown outcome if the tab navigates during input", async () => {
     const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
-    mocks.scripting.executeScript.mockResolvedValueOnce([{ frameId: 0, result: { ready: true, token: "prepared-a", tag: "button" } }]).mockRejectedValueOnce(new Error("frame detached"));
+    mocks.scripting.executeScript.mockResolvedValueOnce([{ frameId: 0, result: { ready: true, token: "prepared-a", tag: "button" } }]).mockImplementationOnce(async details => {
+      const dispatch = (details.args[0] as { dispatch: { id: string } }).dispatch;
+      await mocks.runtime.onMessage.addListener.mock.calls[0][0]({ type: "jarvis-firefox-dispatch", id: dispatch.id }, { id: "firefox-extension", tab: { id: 10 }, frameId: 0 });
+      throw new Error("frame detached");
+    });
     await expect(browser.execute(request("click", { id: handle, locator: { role: "button", name: "Save" } }))).rejects.toMatchObject({ code: "browser_outcome_unknown", details: { dispatched: true } });
     expect(mocks.scripting.executeScript).toHaveBeenCalledTimes(3);
+  });
+
+  it("authorizes input only once from the owned frame and extension", async () => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    const input = document.createElement("input"); document.body.append(input); input.focus();
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 30));
+    Object.assign(window, { __jarvisPrepared: { element: input, token: "authorized", mode: "fill" } });
+    const authorize = mocks.runtime.onMessage.addListener.mock.calls[0][0];
+    vi.stubGlobal("browser", { runtime: { sendMessage: (raw: unknown) => authorize(raw, { id: "firefox-extension", tab: { id: 10 }, frameId: 0 }) } });
+    mocks.scripting.executeScript.mockResolvedValueOnce([{ frameId: 0, result: { ready: true, token: "authorized", tag: "input" } }]).mockImplementationOnce(async details => {
+      const dispatch = (details.args[0] as { dispatch: { id: string } }).dispatch;
+      const raw = { type: "jarvis-firefox-dispatch", id: dispatch.id };
+      for (const sender of [{ id: "other-extension", tab: { id: 10 }, frameId: 0 }, { id: "firefox-extension", tab: { id: 11 }, frameId: 0 }, { id: "firefox-extension", tab: { id: 10 }, frameId: 2 }]) await expect(authorize(raw, sender)).resolves.toBe(false);
+      const result = await details.func(...details.args);
+      await expect(authorize(raw, { id: "firefox-extension", tab: { id: 10 }, frameId: 0 })).resolves.toBe(false);
+      return [{ frameId: 0, result }];
+    });
+    await expect(browser.execute(request("fill", { id: handle, locator: { label: "Email" }, text: "applied-once" }))).resolves.toMatchObject({ dispatched: true });
+    expect(input.value).toBe("applied-once");
+  });
+
+  it("lets the current controller authorize input after a previous connection is replaced", async () => {
+    const previous = controller(); await previous.restore();
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    const input = document.createElement("input"); document.body.append(input); input.focus();
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 30));
+    Object.assign(window, { __jarvisPrepared: { element: input, token: "current", mode: "fill" } });
+    vi.stubGlobal("browser", { runtime: { sendMessage: async (raw: unknown) => {
+      for (const [listener] of mocks.runtime.onMessage.addListener.mock.calls) {
+        const reply = listener(raw, { id: "firefox-extension", tab: { id: 10 }, frameId: 0 });
+        if (reply !== undefined) return reply;
+      }
+      return undefined;
+    } } });
+    mocks.scripting.executeScript.mockResolvedValueOnce([{ frameId: 0, result: { ready: true, token: "current", tag: "input" } }]).mockImplementationOnce(async details => [{ frameId: 0, result: await details.func(...details.args) }]);
+    await expect(browser.execute(request("fill", { id: handle, locator: { label: "Email" }, text: "current-connection" }))).resolves.toMatchObject({ dispatched: true });
+    expect(input.value).toBe("current-connection");
   });
 
   it("does not keep a tab queue blocked when a page evaluation never resolves", async () => {
@@ -129,6 +211,51 @@ describe("Firefox owned tabs", () => {
       await vi.advanceTimersByTimeAsync(20000); await evaluating;
       await expect(browser.execute(request("list"))).resolves.toMatchObject({ tabs: [{ id: handle }] });
     } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["snapshot", "console", "evaluate", "wait"] as const)("inspects a loading document with %s without waiting for idle", async action => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    document.body.innerHTML = '<button aria-label="Save">Save</button>';
+    mocks.tabs.get.mockResolvedValue({ ...tab, status: "loading" });
+    mocks.scripting.executeScript.mockImplementation(details => {
+      if (!(details as { injectImmediately?: boolean }).injectImmediately) return new Promise(() => {});
+      return Promise.resolve([{ frameId: details.target.frameIds[0], result: details.func(...details.args) }]);
+    });
+    vi.useFakeTimers();
+    const reading = browser.execute(request(action, { id: handle, ...(action === "evaluate" ? { expression: "'fixture-result'" } : action === "wait" ? { state: "attached", locator: { role: "button", name: "Save" } } : {}) })).then(value => ({ value }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(20000); expect(await reading).toMatchObject({ value: expect.anything() });
+  });
+
+  it("reports a snapshot timeout as a read failure and retires its late element handles", async () => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    let finish!: (results: { frameId: number; result: unknown }[]) => void;
+    mocks.scripting.executeScript.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    vi.useFakeTimers();
+    const reading = browser.execute(request("snapshot", { id: handle })).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(20000); expect(await reading).toMatchObject({ code: "browser_action_timeout", details: { dispatched: false, readOnly: true } });
+    finish([{ frameId: 0, result: { elements: [{ id: "late-element", role: "button", name: "Save" }] } }]);
+    await expect(browser.execute(request("click", { id: handle, element: "late-element" }))).rejects.toMatchObject({ code: "browser_stale_element" });
+    await expect(browser.execute(request("list"))).resolves.toMatchObject({ tabs: [{ id: handle }] });
+  });
+
+  it.each(["timeout", "cancel"] as const)("blocks a delayed fill after %s without replaying it", async stop => {
+    const browser = controller(); await browser.restore(); await browser.execute(request("attach", { id: handle }));
+    const input = document.createElement("input"); document.body.append(input); input.focus();
+    vi.spyOn(input, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 30));
+    Object.assign(window, { __jarvisPrepared: { element: input, token: "late-input", mode: "fill" } });
+    vi.stubGlobal("browser", { runtime: { sendMessage: (raw: unknown) => Promise.resolve(mocks.runtime.onMessage.addListener.mock.calls[0]?.[0](raw, { id: "firefox-extension", tab: { id: 10 }, frameId: 0 })) } });
+    let late!: Parameters<FirefoxApi["scripting"]["executeScript"]>[0];
+    let finish!: (results: { frameId: number; result: unknown }[]) => void;
+    mocks.scripting.executeScript.mockResolvedValueOnce([{ frameId: 0, result: { ready: true, token: "late-input", tag: "input" } }]).mockImplementationOnce(details => new Promise(resolve => { late = details; finish = resolve; }));
+    let connected = true;
+    vi.useFakeTimers();
+    const filling = browser.execute(request("fill", { id: handle, locator: { label: "Email" }, text: "must-not-apply" }), () => connected).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1); if (stop === "cancel") connected = false;
+    await vi.advanceTimersByTimeAsync(20000); expect(await filling).toMatchObject({ code: stop === "timeout" ? "browser_action_timeout" : "browser_action_cancelled", details: { dispatched: false } });
+    finish([{ frameId: 0, result: await late.func(...late.args) }]);
+    expect(input.value).toBe("");
+    await expect(browser.execute(request("list"))).resolves.toMatchObject({ tabs: [{ id: handle }] });
+    expect(mocks.scripting.executeScript).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -188,6 +315,24 @@ describe("Firefox diagnostic buffers", () => {
 });
 
 describe("Firefox page adapters", () => {
+  it("selects exactly one enabled option with the guarded Firefox fill adapter", () => {
+    document.body.innerHTML = '<select aria-label="Plan"><option value="first">First</option><optgroup disabled><option value="blocked">Blocked</option></optgroup><option value="second">Second</option></select>';
+    const select = document.querySelector("select")!; select.focus();
+    vi.spyOn(select, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 30));
+    const prepare = () => Object.assign(window, { __jarvisPrepared: { element: select, token: "plan", mode: "fill" } });
+    prepare(); expect(firefoxInput({ action: "fill", token: "plan", text: "second" })).toMatchObject({ ok: true, dispatched: true });
+    expect(select.value).toBe("second");
+    prepare(); expect(firefoxInput({ action: "fill", token: "plan", text: "blocked" })).toMatchObject({ ok: false, dispatched: false, code: "browser_element_disabled" });
+    expect(select.value).toBe("second");
+    prepare(); expect(firefoxInput({ action: "fill", token: "plan", text: "missing" })).toMatchObject({ ok: false, dispatched: false, code: "browser_option_not_found" });
+    expect(select.value).toBe("second");
+  });
+
+  it("does not start an expired MAIN evaluation that would mutate the page", async () => {
+    await expect(firefoxEvaluate("document.body.dataset.expired = 'changed'", Date.now() - 1)).rejects.toThrow("expired");
+    expect(document.body.dataset.expired).toBeUndefined();
+  });
+
   it("records console events once, preserves original logging and removes hooks", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     firefoxConsole("start"); firefoxConsole("start"); console.log("hello", { answer: 42 });

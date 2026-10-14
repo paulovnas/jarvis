@@ -509,7 +509,7 @@ impl Call {
 
 pub(super) fn definition() -> Value {
     tools::definition(TOOL,
-        "Resolve one uncertain operation from a successful, relevant inspection in this turn. Use its saved callId and an actual inspection call ID from its evidence keys, never the tool name. Select applied only when the inspected state confirms the effect; not_applied only when evidence confirms it did not happen. An interrupted browser_open without a tab ID requires browser_list's empty integrated catalog and not_applied; a nonempty catalog remains ambiguous. An interrupted impeccable command=live requires live-status for the same --target, with an empty helper catalog, idle off hostStatus for this conversation, hostInspection.confirmedInactive for this project and target, and not_applied. Use unavailable only for computer_observe's authoritative same-target computer_target_unavailable receipt; this retires the old target without claiming the input effect was known. An unknown outcome remains unresolved. Never repeat an uncertain mutation blindly or replay it on a replacement target. This records evidence, not user approval.",
+        "Resolve one uncertain operation from a successful, relevant inspection in this turn. Use its saved callId and an actual inspection call ID from its evidence keys, never the tool name. Select applied only when evidence confirms this operation's effect; not_applied only with definitive non-application evidence. An unchanged button, absent toast or loading screen immediately after a click does not prove not_applied: asynchronous remote effects may arrive later, so use unknown and inspect the same resource again. Distinguish the current resource state from attribution to an earlier call; a later changed state does not justify rewriting a confirmed operation outcome. An interrupted browser_open without a tab ID requires browser_list's empty integrated catalog and not_applied; a nonempty catalog remains ambiguous. An interrupted impeccable command=live requires live-status for the same --target, with an empty helper catalog, idle off hostStatus for this conversation, hostInspection.confirmedInactive for this project and target, and not_applied. Use unavailable only for computer_observe's authoritative same-target computer_target_unavailable receipt; this retires the old target without claiming the input effect was known. An unknown outcome remains unresolved. Continue independent inspections and preserve the user's remaining intent. Never repeat an uncertain mutation blindly or replay it on a replacement target. This records evidence, not user approval.",
         json!({"callId":{"type":"string","minLength":1},"evidenceCallId":{"type":"string","minLength":1},"outcome":{"type":"string","enum":["applied","not_applied","unavailable","unknown"]}}),
         &["callId","evidenceCallId","outcome"])
 }
@@ -964,7 +964,9 @@ impl Execution {
                 .ok_or_else(|| invalid("Chamada incerta não encontrada."))?
         };
         if call.outcome.is_some() && call.outcome != outcome {
-            return Err(invalid("Esta operação já possui resultado confirmado. Preserve a resolução registrada e continue sem reclassificá-la."));
+            let mut error = AgentError::new("recovery_already_resolved", "Esta operação já possui resultado confirmado. Preserve a resolução registrada e continue sem reclassificá-la.");
+            error.tool_result = Some(json!({"code":error.code,"message":error.message,"callId":id,"outcome":call.outcome,"alreadyResolved":true,"pending":self.recovery_inspection_pending()?,"instructions":"Preserve this operation outcome. A later resource state is a new observation, not proof of attribution to this historical call. Continue from the current verified resource state and the user's remaining intent without reclassifying or replaying the operation."}).to_string());
+            return Err(error);
         }
         if call.outcome.is_some() {
             return Ok(json!({"callId":id,"outcome":args["outcome"],"alreadyResolved":true,"pending":self.recovery_inspection_pending()?}).to_string());
@@ -1193,6 +1195,42 @@ mod tests {
         exec.resolve_recovery(
             &json!({"callId":call.id,"evidenceCallId":evidence.id,"outcome":outcome}),
         )
+    }
+
+    #[test]
+    fn ga4_later_resource_state_does_not_reclassify_a_confirmed_operation() {
+        let click = tool(
+            "delayed-click",
+            "browser_click",
+            json!({"id":"cloud-tab","element":"enable"}),
+        );
+        let (_fixture, exec) = recovering(std::slice::from_ref(&click));
+        let first = tool(
+            "initial-state",
+            "browser_snapshot",
+            json!({"id":"cloud-tab"}),
+        );
+        observe(&exec, &first, |_| None);
+        let unresolved: Value =
+            serde_json::from_str(&resolve(&exec, &click, &first, "unknown").unwrap()).unwrap();
+        assert_eq!(unresolved["pending"], true);
+        assert!(exec.recovery_preflight(&click, false).is_err());
+        resolve(&exec, &click, &first, "not_applied").unwrap();
+        let later = tool("later-state", "browser_snapshot", json!({"id":"cloud-tab"}));
+        observe(&exec, &later, |_| None);
+        let error = resolve(&exec, &click, &later, "applied").unwrap_err();
+        let receipt: Value = serde_json::from_str(error.tool_result.as_ref().unwrap()).unwrap();
+        assert_eq!(receipt["code"], "recovery_already_resolved");
+        assert_eq!(receipt["callId"], click.id);
+        assert_eq!(receipt["outcome"], "not_applied");
+        assert_eq!(receipt["alreadyResolved"], true);
+        assert!(receipt["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("attribution"));
+        let preserved: Value =
+            serde_json::from_str(&resolve(&exec, &click, &first, "not_applied").unwrap()).unwrap();
+        assert_eq!(preserved["outcome"], "not_applied");
     }
 
     #[test]

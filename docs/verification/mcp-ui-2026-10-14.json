@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-14",
+  "branch": "codex/mcp-manual-oauth",
+  "baseCommit": "38612450a0752fd1c8f1c1e027b9f8df9a7bf766",
+  "issues": ["jarvis-8n0b", "jarvis-cp5m"],
+  "changes": [
+    "MCP callbacks reuse the existing AI-provider callback renderer and embedded Jarvis logo",
+    "Authorization denial uses the shared error page and does not echo provider parameters",
+    "Manual MCP cards appear first without a section heading",
+    "Plugin MCPs and apps appear under Plugins with a shadcn Separator",
+    "Empty Plugins sections are omitted and card handlers are preserved"
+  ],
+  "regressionEvidence": {
+    "callbackRed": "Real loopback HTTP response returned text/plain instead of the expected HTML page",
+    "callbackGreen": "All six native OAuth tests passed, including success, denial, invalid routes, no secret echo, and the existing OAuth roundtrips",
+    "groupingRed": "Plugins region was absent with plugin cards preceding a manual card",
+    "groupingGreen": "All twelve focused MCP settings tests passed",
+    "visualPreview": "Provider template rendered in an isolated local preview for success and denial, without account-control interaction or real OAuth parameters",
+    "successScreenshot": "mcp-callback-preview-2026-10-14.png",
+    "denialScreenshot": "mcp-callback-error-preview-2026-10-14.png",
+    "installedScreenshot": "mcp-sections-installed-2026-10-14.png"
+  },
+  "validation": {
+    "lint": {"exitCode": 0, "warnings": 0},
+    "typecheck": {"exitCode": 0},
+    "frontend": {"exitCode": 0, "passed": 2181, "skipped": 12, "command": "CI=1 bun run test"},
+    "build": {"exitCode": 0, "warnings": 0},
+    "clippy": {"exitCode": 0, "allTargets": true, "warnings": 0},
+    "rust": {"exitCode": 0, "passed": 2121, "ignored": 42},
+    "earlierFrontendRun": "Extension packaging tests exceeded their 30s limit during concurrent native compilation; run interrupted and will be repeated without concurrency, with no unrelated test or timeout changes"
+  },
+  "delivery": {
+    "package": "Optimized, signed macOS arm64 production-profile local 2.0.2 patch installed at /Applications/Jarvis.app and restarted",
+    "packageSizeMiB": 468.49,
+    "binarySha256": "436f440f2658e539f8fb04addbda458fcad814983eb21be1b0970e86fa845b96",
+    "previousBinarySha256": "246bfb96c637eb553c8e5a204124e54c96c0942d10366392881b2d4931b4ff56",
+    "backupDirectory": "/Users/enesolucoes/Library/Application Support/Jarvis Updates/mcp-ui-2026-10-14",
+    "signature": {"verifiedDeepStrict": true, "identifier": "com.foxtag.jarvis", "teamIdentifier": "9KXT6JDW8H"},
+    "compilerWarnings": 0,
+    "optimization": "Release profile opt-level=1; an earlier unoptimized package produced a linker unwind-table warning and was not installed",
+    "notarization": "Not performed; bundler warned that Apple notarization credentials were unavailable",
+    "installedUi": "Observed five projects and two Movarte terminals restored. Settings displayed eight manual MCP cards first without a group heading, followed by three plugin MCP cards under Plugins. Jam displayed 35 tools. Settings left on the MCP page.",
+    "newCommit": false,
+    "published": false,
+    "accountControls": "No account connect or disconnect actions after the user reported the stale-screenshot mistake",
+    "realAccountCallbackUat": "No new real-account OAuth flow performed by assistant",
+    "linuxWindowsUat": "not performed"
+  },
+  "deferred": {"pluginShareLinks": "jarvis-xtco", "marketplacePreviewCounts": "jarvis-001g"}
+}

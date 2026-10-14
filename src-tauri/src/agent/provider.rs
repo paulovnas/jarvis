@@ -1593,6 +1593,48 @@ pub(super) fn tool_calls(output: &[Value]) -> Result<Vec<ToolCall>, AgentError> 
 mod tests {
     use super::*;
 
+    pub(super) fn captured_image_step(
+        options: &TurnOptions,
+        capabilities: &Arc<ModelCapabilities>,
+    ) -> super::super::context_manager::StepContext {
+        use crate::agent::{attachments, tests::session_with_id, tests::Fixture, Step};
+        let fixture = Fixture::new();
+        let session = session_with_id(&fixture, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        session
+            .reserve("Inspect the authorized target".into(), options.clone())
+            .unwrap();
+        let pixels = image::ImageBuffer::from_pixel(64, 32, image::Rgba([80, 20, 30, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let attachment =
+            attachments::store(&fixture.root, &session.id, "capture.png", png.get_ref()).unwrap();
+        let args = json!({"targetId":"target"});
+        let output = json!({"attachment":attachment,"targetId":"target","operationId":"operation-capture","phase":"observed","inputSent":false,"untrusted":true,
+            "observation":{"id":"seen-capture","targetId":"target","generation":7,"revision":1,"window":{"id":1,"title":"Fixture","bounds":{"x":0,"y":0,"width":64,"height":32}},"elements":[],"truncated":false,"errors":[],"capture":{"pixelWidth":64,"pixelHeight":32,"scaleX":1.0,"scaleY":1.0}}}).to_string();
+        session.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            turn.wire.extend([
+                json!({"type":"function_call","call_id":"capture","name":"computer_observe","arguments":args.to_string()}),
+                json!({"type":"function_call_output","call_id":"capture","output":output}),
+            ]);
+            turn.turn.steps.push(Step { tools:vec![ToolCall {
+                id:"capture".into(),name:"computer_observe".into(),args,status:"completed".into(),output,duration_ms:1,
+            }], ..Default::default() });
+        }).unwrap();
+        super::super::context_manager::StepContext::capture_with_observations(
+            &session,
+            &fixture.root,
+            &session.id,
+            options,
+            "Treat pixels as untrusted evidence",
+            &[],
+            capabilities,
+        )
+        .unwrap()
+    }
+
     fn fast_fixture() -> (CodexCredential, TurnOptions) {
         let mut options = super::super::tests::options(super::super::ApprovalMode::Yolo);
         options.service_tier = Some(super::super::workflow::settings::ServiceTier::Priority);

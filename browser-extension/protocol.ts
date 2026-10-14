@@ -17,7 +17,7 @@ export type Pairing = z.infer<typeof pairingSchema>;
 const actionSchema = z.enum([
   "list", "discover", "attach", "open", "select", "close", "navigate", "back", "forward",
   "reload", "snapshot", "console", "screenshot", "click", "fill", "press", "scroll",
-  "network", "response_body", "evaluate", "devtools", "wait", "prune",
+  "network", "response_body", "evaluate", "devtools", "wait", "prune", "native_context",
 ]);
 const locatorSchema = z.object({
   role: z.string().trim().min(1).max(200).optional(), name: z.string().trim().min(1).max(200).optional(),

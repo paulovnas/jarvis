@@ -180,14 +180,29 @@ impl CredentialStore for Store {
     }
 }
 
+fn secure_transport(url: &url::Url) -> bool {
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    url.scheme() == "https" || (url.scheme() == "http" && loopback)
+}
+
+pub(super) fn available(config: &Config) -> bool {
+    remote_url(config).is_ok()
+}
+
 fn remote_url(config: &Config) -> Result<&str, McpError> {
     match config {
         Config::Remote {
             url,
-            oauth: Some(true),
+            oauth,
             headers,
             ..
-        } => {
+        } if *oauth != Some(false) => {
             if headers
                 .keys()
                 .any(|key| key.eq_ignore_ascii_case("authorization"))
@@ -198,13 +213,7 @@ fn remote_url(config: &Config) -> Result<&str, McpError> {
                 ));
             }
             let parsed = url::Url::parse(url).map_err(|_| storage_error())?;
-            let loopback = parsed.host_str().is_some_and(|host| {
-                host == "localhost"
-                    || host
-                        .parse::<std::net::IpAddr>()
-                        .is_ok_and(|ip| ip.is_loopback())
-            });
-            if parsed.scheme() != "https" && !(parsed.scheme() == "http" && loopback) {
+            if !secure_transport(&parsed) {
                 return Err(coded_error(
                     "mcp_oauth_configuration",
                     "OAuth requer HTTPS, exceto em servidores locais.",
@@ -247,13 +256,7 @@ async fn manager(
         .metadata;
     for endpoint in [&metadata.authorization_endpoint, &metadata.token_endpoint] {
         let parsed = url::Url::parse(endpoint).map_err(|_| auth_error())?;
-        let local = parsed.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
-        if parsed.scheme() != "https" && !(local && parsed.scheme() == "http") {
+        if !secure_transport(&parsed) {
             return Err(auth_error());
         }
     }
@@ -447,7 +450,16 @@ async fn callback(
         } else {
             None
         };
-        let (status, body) = if parsed.is_some() {
+        let denied = parsed
+            .as_deref()
+            .and_then(|url| url::Url::parse(url).ok())
+            .is_some_and(|url| {
+                url.query_pairs()
+                    .any(|(key, value)| key == "error" && !value.is_empty())
+            });
+        let (status, body) = if denied {
+            ("400 Bad Request", "A autorização foi recusada.")
+        } else if parsed.is_some() {
             (
                 "200 OK",
                 "Autenticação recebida. Você pode voltar ao Jarvis.",
@@ -455,7 +467,8 @@ async fn callback(
         } else {
             ("400 Bad Request", "Retorno inválido.")
         };
-        let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        let html = crate::openai_codex::render_callback_html(status, body);
+        let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}", html.len());
         let _ = tokio::time::timeout(
             Duration::from_secs(2),
             stream.write_all(response.as_bytes()),
@@ -603,6 +616,83 @@ async fn disconnect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn callback_html_matches_provider_page_without_exposing_oauth_parameters() {
+        let http = reqwest::Client::new();
+        for denied in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let redirect = format!(
+                "http://{}/mcp/callback/test",
+                listener.local_addr().unwrap()
+            );
+            let expected_redirect = redirect.clone();
+            let receiver =
+                tokio::spawn(
+                    async move { callback(listener, &redirect, "/mcp/callback/test").await },
+                );
+
+            let invalid = http
+                .get(format!(
+                    "{expected_redirect}/wrong?code=secret-code&state=secret-state"
+                ))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(invalid.status(), reqwest::StatusCode::BAD_REQUEST);
+            assert_eq!(
+                invalid.headers()["content-type"],
+                "text/html; charset=utf-8"
+            );
+            let html = invalid.text().await.unwrap();
+            assert!(html.contains("Não foi possível autenticar"));
+            assert!(!html.contains("secret-code"));
+
+            let query = if denied {
+                "error=access_denied&error_description=secret-description&state=secret-state"
+            } else {
+                "code=secret-code&state=secret-state"
+            };
+            let response = http
+                .get(format!("{expected_redirect}?{query}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                if denied {
+                    reqwest::StatusCode::BAD_REQUEST
+                } else {
+                    reqwest::StatusCode::OK
+                }
+            );
+            assert_eq!(
+                response.headers()["content-type"],
+                "text/html; charset=utf-8"
+            );
+            let html = response.text().await.unwrap();
+            assert!(html.contains("Jarvis — Autenticação"));
+            assert!(html.contains("data:image/png;base64,"));
+            assert!(html.contains(if denied {
+                "A autorização foi recusada."
+            } else {
+                "Autenticação recebida"
+            }));
+            assert!(html.contains(if denied {
+                "Retorne ao Jarvis"
+            } else {
+                "Você pode fechar esta aba"
+            }));
+            for secret in ["secret-code", "secret-state", "secret-description"] {
+                assert!(!html.contains(secret));
+            }
+            assert!(!html.contains("<script"));
+            assert_eq!(
+                receiver.await.unwrap().unwrap(),
+                format!("{expected_redirect}?{query}")
+            );
+        }
+    }
     #[derive(Clone)]
     struct TestIssuer {
         base: String,
@@ -612,12 +702,30 @@ mod tests {
     async fn issuer_response(
         axum::extract::State(issuer): axum::extract::State<TestIssuer>,
         uri: axum::http::Uri,
+        headers: axum::http::HeaderMap,
         body: axum::body::Bytes,
     ) -> axum::response::Response {
         use axum::response::IntoResponse;
         use serde_json::json;
         let base = &issuer.base;
         if uri.path() == "/mcp" {
+            if headers
+                .get(axum::http::header::AUTHORIZATION)
+                .is_some_and(|header| header == "Bearer native-fixture-access")
+            {
+                let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => {
+                        json!({"protocolVersion":request["params"]["protocolVersion"],"capabilities":{"tools":{}},"serverInfo":{"name":"authenticated-fixture","version":"1"}})
+                    }
+                    Some("tools/list") => {
+                        json!({"tools":[{"name":"read_fixture","description":"Read a fixture","inputSchema":{"type":"object","properties":{}},"annotations":{"readOnlyHint":true}}]})
+                    }
+                    _ => return axum::http::StatusCode::ACCEPTED.into_response(),
+                };
+                return axum::Json(json!({"jsonrpc":"2.0","id":request["id"],"result":result}))
+                    .into_response();
+            }
             // The protected MCP resource publishes a challenge, not a successful
             // empty metadata document. Discovery must follow its advertised URL.
             return (
@@ -655,6 +763,15 @@ mod tests {
 
     #[tokio::test]
     async fn native_oauth_roundtrip_validates_state_pkce_and_disconnects_pending_callbacks() {
+        oauth_roundtrip(Some(true)).await;
+    }
+
+    #[tokio::test]
+    async fn manual_mcp_without_oauth_flag_can_login_and_discover_tools() {
+        oauth_roundtrip(None).await;
+    }
+
+    async fn oauth_roundtrip(oauth: Option<bool>) {
         use serde_json::json;
         let home = tempfile::tempdir().unwrap();
         let state = AppState::default();
@@ -678,14 +795,46 @@ mod tests {
         let server_task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let raw = json!({"native-auth":{"type":"remote","url":format!("{base}/mcp"),"oauth":true}})
-            .to_string();
+        let mut value = json!({"native-auth":{"type":"remote","url":format!("{base}/mcp")}});
+        if let Some(oauth) = oauth {
+            value["native-auth"]["oauth"] = json!(oauth);
+        }
+        let raw = value.to_string();
         let server = mcp
             .save(&state, home.path(), None, &raw)
             .unwrap()
             .into_iter()
             .find(|server| server.name == "native-auth")
             .unwrap();
+        let config = mcp.config(home.path(), &server).unwrap();
+        let (_sender, signal) = watch::channel(false);
+        let failure = super::super::runtime::connect_with_state(
+            &mcp,
+            server.clone(),
+            config.clone(),
+            home.path(),
+            signal,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(failure.code, "mcp_auth_required");
+        let mut unavailable = config.clone();
+        if let Config::Remote { url, .. } = &mut unavailable {
+            *url = format!("{base}/unavailable");
+        }
+        let (_sender, signal) = watch::channel(false);
+        let failure = super::super::runtime::connect_with_state(
+            &mcp,
+            server.clone(),
+            unavailable,
+            home.path(),
+            signal,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(failure.code, "mcp_error");
         let http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(5))
@@ -743,6 +892,18 @@ mod tests {
                 .unwrap()
                 .authenticated
         );
+        let (_sender, signal) = watch::channel(false);
+        let mut authenticated = super::super::runtime::connect_with_state(
+            &mcp,
+            server.clone(),
+            config.clone(),
+            home.path(),
+            signal,
+        )
+        .await
+        .unwrap();
+        assert_eq!(authenticated.tool_count(), 1);
+        authenticated.close().await;
         let token_request = requests.lock().await[0].clone();
         let token_fields: HashMap<_, _> = url::form_urlencoded::parse(token_request.as_bytes())
             .into_owned()
@@ -778,6 +939,74 @@ mod tests {
         assert_eq!(requests.lock().await.len(), 1);
         server_task.abort();
         state.close();
+    }
+
+    #[test]
+    fn automatic_oauth_preserves_header_credentials_opt_out_and_secure_transport() {
+        for (url, oauth, headers, allowed) in [
+            (
+                "https://service.test/mcp",
+                None,
+                serde_json::json!({}),
+                true,
+            ),
+            (
+                "https://service.test/mcp",
+                Some(true),
+                serde_json::json!({}),
+                true,
+            ),
+            (
+                "https://service.test/mcp",
+                Some(false),
+                serde_json::json!({}),
+                false,
+            ),
+            (
+                "https://service.test/mcp",
+                None,
+                serde_json::json!({"Authorization":"Bearer fixture"}),
+                false,
+            ),
+            (
+                "http://localhost:4000/mcp",
+                None,
+                serde_json::json!({}),
+                true,
+            ),
+            (
+                "http://127.1.2.3:4000/mcp",
+                None,
+                serde_json::json!({}),
+                true,
+            ),
+            (
+                "http://[::1]:4000/mcp",
+                Some(true),
+                serde_json::json!({}),
+                true,
+            ),
+            (
+                "http://service.test/mcp",
+                None,
+                serde_json::json!({}),
+                false,
+            ),
+            (
+                "http://127.evil.test/mcp",
+                None,
+                serde_json::json!({}),
+                false,
+            ),
+        ] {
+            let raw = serde_json::json!({"test":{"type":"remote","url":url,"oauth":oauth,"headers":headers}}).to_string();
+            let (_, config) = super::super::config::parse(&raw).unwrap();
+            assert_eq!(
+                remote_url(&config).is_ok(),
+                allowed,
+                "{url}, oauth={oauth:?}"
+            );
+        }
     }
 
     #[test]

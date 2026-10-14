@@ -785,7 +785,7 @@ impl Execution {
         };
         if let Some(recovery) = recovery {
             text.push_str(&format!(
-                "\nExecution recovery checkpoint: {}. Inspect the exact affected resource for each unresolved call, then use recovery_resolve with its callId and the successful inspection evidenceCallId. Match the same file, repository, process, browser tab ID, native targetId or MCP server/resource. For a confirmed unavailable native target, use unavailable; this does not confirm whether its input took effect. Unknown outcomes remain unresolved; never replay them on the old or a replacement target. Calls: {}. Legacy tool names: {}.\n",
+                "\nExecution recovery checkpoint: {}. Inspect the exact affected resource for each unresolved call, then use recovery_resolve with its callId and the successful inspection evidenceCallId. Match the same file, repository, process, browser tab ID, native targetId or MCP server/resource. An unchanged button, absent toast or loading screen does not prove a remote click failed: use unknown while asynchronous effects remain possible. Current resource state and attribution to the historical call are different facts. Preserve confirmed outcomes; continue from fresh verified state without reclassification or replay. For a confirmed unavailable native target, use unavailable; this does not confirm whether its input took effect. Unknown outcomes remain unresolved; never replay them on the old or a replacement target. Calls: {}. Legacy tool names: {}.\n",
                 if recovery.inspected {
                     "the required operation evidence was recorded"
                 } else {

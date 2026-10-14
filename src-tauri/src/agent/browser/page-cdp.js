@@ -1,6 +1,8 @@
 // Generated from browser-extension/page.ts and frames.ts; checked by native-page.test.ts.
 (() => {
 function pageOperation(args) {
+    if (args.expiresAt !== undefined && Date.now() >= args.expiresAt)
+        return { ready: false, ok: false, dispatched: false, code: "browser_action_timeout", reason: "The page operation expired before execution." };
     const page = window;
     const nextToken = () => String(page.__jarvisSequence = (page.__jarvisSequence ?? 0) + 1);
     const normalize = (value) => (value ?? "").replace(/\s+/g, " ").trim();

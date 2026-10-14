@@ -53,7 +53,12 @@ export function writeMcpDraft(draft: McpDraft, validate = false): string {
       let url: URL;
       try { url = new URL(draft.url); } catch { throw new Error("Informe uma URL HTTP ou HTTPS válida."); }
       if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error("Use uma URL HTTP ou HTTPS sem usuário, senha ou fragmento.");
-      if (draft.oauth) throw new Error("OAuth de MCPs ainda não está disponível. Use um cabeçalho de autenticação e oauth: false no JSON.");
+      if (draft.oauth) {
+        const host = url.hostname.replace(/^\[|\]$/g, "");
+        const loopback = host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+        if (url.protocol !== "https:" && !loopback) throw new Error("OAuth requer HTTPS, exceto em servidores locais.");
+        if (draft.headers.some(({ key }) => key.toLowerCase() === "authorization")) throw new Error("Remova o header Authorization para usar OAuth neste MCP.");
+      }
     }
     for (const { key, value } of values) {
       if (!key.trim() || key.includes("\0") || value.includes("\0") || (draft.type === "local" && key.includes("="))) throw new Error("Preencha um nome válido para cada variável ou cabeçalho.");

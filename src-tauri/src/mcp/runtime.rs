@@ -221,6 +221,26 @@ async fn cancelled(signal: &mut watch::Receiver<bool>) {
 fn protocol_error() -> McpError {
     error("O MCP não respondeu corretamente. Confira a configuração, a conexão e as credenciais.")
 }
+fn remote_initialize_error(
+    cause: rmcp::service::ClientInitializeError,
+    server: &str,
+    oauth: bool,
+) -> McpError {
+    if cause.is_authorization_required() {
+        named_error(
+            "mcp_auth_required",
+            server,
+            None,
+            if oauth {
+                "conecte sua conta nos detalhes deste MCP e tente novamente."
+            } else {
+                "confira os cabeçalhos de autenticação nas configurações deste MCP e tente novamente."
+            },
+        )
+    } else {
+        protocol_error()
+    }
+}
 fn named_error(code: &'static str, server: &str, tool: Option<&str>, detail: &str) -> McpError {
     let target = tool.map_or_else(
         || format!("MCP '{server}'"),
@@ -506,9 +526,15 @@ async fn connect_with_state_bound(
                     .await?;
                     app_binding = Some(client.binding());
                     handler.serve(StreamableHttpClientTransport::with_client(client, transport_config)).await.map_err(|_| named_error("app_auth_required", &server_name, None, "reconecte o aplicativo ou atualize sua conta nas configurações do plugin."))?
-                } else if *oauth == Some(true) {
+                } else if *oauth == Some(true) || super::oauth::available(&config) {
                     let client = super::oauth::client(mcp, &server, &config).await?;
-                    handler.serve(StreamableHttpClientTransport::with_client(client, transport_config)).await.map_err(|_| named_error("mcp_auth_required", &server_name, None, "a autenticação expirou ou foi recusada. Reconecte sua conta nas configurações deste MCP."))?
+                    handler
+                        .serve(StreamableHttpClientTransport::with_client(
+                            client,
+                            transport_config,
+                        ))
+                        .await
+                        .map_err(|cause| remote_initialize_error(cause, &server_name, true))?
                 } else {
                     handler
                         .serve(StreamableHttpClientTransport::with_client(
@@ -516,7 +542,7 @@ async fn connect_with_state_bound(
                             transport_config,
                         ))
                         .await
-                        .map_err(|_| protocol_error())?
+                        .map_err(|cause| remote_initialize_error(cause, &server_name, false))?
                 }
             }
         };

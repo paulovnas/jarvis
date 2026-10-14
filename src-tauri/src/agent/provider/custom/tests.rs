@@ -4,6 +4,72 @@ use super::*;
 mod go_live;
 
 #[test]
+fn ga4_observation_images_project_real_png_into_all_custom_protocol_requests() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    for protocol in [
+        Protocol::OpenaiResponses,
+        Protocol::OpenaiCompletions,
+        Protocol::AnthropicMessages,
+    ] {
+        let config = config(protocol);
+        let options = options();
+        let mut credential = CodexCredential::new("fixture", "", 0, "account", None, None);
+        credential.custom = Some(config.clone());
+        let capabilities = std::sync::Arc::new(ModelCapabilities::resolve_for_options(
+            &credential,
+            &options,
+        ));
+        let step = super::super::tests::captured_image_step(&options, &capabilities);
+        let body = fixture_request(&config, step.options(), step.input().to_vec(), vec![]).unwrap();
+        let parts: Vec<&Value> = match protocol {
+            Protocol::OpenaiResponses => body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|item| item["content"].as_array().into_iter().flatten())
+                .collect(),
+            _ => body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|item| item["content"].as_array().into_iter().flatten())
+                .collect(),
+        };
+        let image = parts.iter().find(|part| {
+            matches!(
+                part["type"].as_str(),
+                Some("input_image" | "image_url" | "image")
+            )
+        });
+        assert!(
+            image.is_some(),
+            "{protocol:?}: the outgoing request lost the actual capture"
+        );
+        let image = image.unwrap();
+        let data = match protocol {
+            Protocol::OpenaiResponses => image["image_url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:image/png;base64,")
+                .unwrap(),
+            Protocol::OpenaiCompletions => image["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("data:image/png;base64,")
+                .unwrap(),
+            Protocol::AnthropicMessages => {
+                assert_eq!(image["source"]["media_type"], "image/png");
+                image["source"]["data"].as_str().unwrap()
+            }
+        };
+        let pixels = image::load_from_memory(&STANDARD.decode(data).unwrap())
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(pixels.get_pixel(0, 0).0, [80, 20, 30, 255]);
+    }
+}
+
+#[test]
 fn go_recovery_rejected_arguments_do_not_poison_replay_or_hide_confirmed_results() {
     for arguments in ["{\"file\": ", "null", "42", "[]"] {
         let saved = vec![

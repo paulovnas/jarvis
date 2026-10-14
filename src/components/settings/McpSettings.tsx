@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescripti
 import { ConfirmationDialogContent as AlertDialogContent } from "@/components/ConfirmationDialogContent";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
+import { Separator } from "@/components/ui/separator";
 import { mcpCheckSchema, mcpServersSchema, validateMcpJson, type McpServer } from "@/core/mcp";
 import { McpServerCard } from "./McpServerCard";
 import { McpEditor } from "./McpEditor";
@@ -100,6 +101,16 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
     }, (err) => setEditorError(message(err)));
   }
 
+  const cards = servers.map(server => ({
+    plugin: Boolean(server.source),
+    element: <McpServerCard key={server.id} server={server} busy={busy || checking.has(server.id)} checking={checking.has(server.id)}
+      onToggle={(enabled) => { void perform(async () => { update(await invoke("set_mcp_enabled", { id: server.id, enabled })); if (enabled) void checkServer({ ...server, enabled }); toast.success(enabled ? "MCP ativado" : "MCP desativado"); }); }}
+      onEdit={() => { void perform(async () => { const value = await invoke<string>("get_mcp_config", { id: server.id }); if (mounted.current) { setRaw(value); setEditorError(null); setEditor({ id: server.id }); } }); }}
+      onDelete={() => { setDeleteError(null); setDeleting(server); }}
+      onTest={() => { void checkServer(server); }}
+    />,
+  }));
+
   return <div className="flex min-w-0 flex-col gap-4">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <h2 className="text-sm font-medium">MCPs</h2>
@@ -109,12 +120,13 @@ export function McpSettings({ onCountChange }: { onCountChange?: (count: number)
       </div>
     </div>
     {busy && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner aria-hidden="true" />Processando MCP…</p>}
-    {loading ? <CardsSkeleton label="Carregando MCPs" columns /> : error ? <p role="alert" className="text-xs text-destructive">{error}</p> : servers.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">Nenhum MCP cadastrado.</p> : <div className="settings-card-grid">{servers.map((server) => <McpServerCard key={server.id} server={server} busy={busy || checking.has(server.id)} checking={checking.has(server.id)}
-      onToggle={(enabled) => { void perform(async () => { update(await invoke("set_mcp_enabled", { id: server.id, enabled })); if (enabled) void checkServer({ ...server, enabled }); toast.success(enabled ? "MCP ativado" : "MCP desativado"); }); }}
-      onEdit={() => { void perform(async () => { const value = await invoke<string>("get_mcp_config", { id: server.id }); if (mounted.current) { setRaw(value); setEditorError(null); setEditor({ id: server.id }); } }); }}
-      onDelete={() => { setDeleteError(null); setDeleting(server); }}
-      onTest={() => { void checkServer(server); }}
-    />)}</div>}
+    {loading ? <CardsSkeleton label="Carregando MCPs" columns /> : error ? <p role="alert" className="text-xs text-destructive">{error}</p> : servers.length === 0 ? <p className="rounded-lg border border-dashed p-6 text-center text-xs text-muted-foreground">Nenhum MCP cadastrado.</p> : [
+      { title: null, items: cards.filter(card => !card.plugin) },
+      { title: "Plugins", items: cards.filter(card => card.plugin) },
+    ].map(group => group.items.length > 0 && <section key={group.title ?? "manual"} aria-label={group.title ?? undefined} className="flex flex-col gap-4">
+      {group.title && <><Separator /><h2 className="text-sm font-medium">{group.title}</h2></>}
+      <div className="settings-card-grid">{group.items.map(card => card.element)}</div>
+    </section>)}
     <Dialog open={editor !== null} onOpenChange={(open) => { if (!open) closeEditor(); }}>
       <DialogContent className="dark flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
         <DialogHeader className="min-w-0 shrink-0 pr-6"><DialogTitle>{editor?.id ? "Editar MCP" : "Adicionar MCP"}</DialogTitle><DialogDescription>Conecte ferramentas e fontes de informação aos agentes. Preencha os campos ou use uma configuração JSON.</DialogDescription></DialogHeader>

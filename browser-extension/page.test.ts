@@ -56,6 +56,13 @@ beforeEach(() => {
 afterEach(() => { page.__jarvisGuard?.cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("page snapshots and locators", () => {
+  it("does not focus or prepare a target when the page operation has expired", () => {
+    const { element, id } = target('<input aria-label="Email">');
+    expect(pageOperation({ action: "prepare", mode: "fill", element: id, expiresAt: Date.now() - 1 })).toMatchObject({ ready: false, dispatched: false, code: "browser_action_timeout" });
+    expect(document.activeElement).not.toBe(element); expect(page.__jarvisPrepared).toBeUndefined();
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
   it("executes the serialized function without surrounding module references", () => {
     document.body.innerHTML = '<label for="email">E-mail</label><input id="email">';
     const execute = new Function("args", `return (${pageOperation.toString()})(args)`) as (args: PageOperation) => ReturnType<typeof pageOperation>;

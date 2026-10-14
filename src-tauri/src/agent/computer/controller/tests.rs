@@ -5,6 +5,8 @@ use std::sync::atomic::AtomicUsize;
 struct FakeNative {
     input: Mutex<String>,
     moved: AtomicBool,
+    context_changed: AtomicBool,
+    change_during_capture: AtomicBool,
     restarted: AtomicBool,
     unavailable: AtomicBool,
     permission: AtomicBool,
@@ -151,7 +153,11 @@ impl NativeBackend for FakeNative {
     }
     fn apps(&self, guard: &OperationGuard) -> Result<Vec<ComputerApp>, AgentError> {
         guard.check()?;
-        Ok(vec![fixture()])
+        let mut app = fixture();
+        if self.context_changed.load(Ordering::SeqCst) {
+            app.windows[0].title = "Unrelated browser tab".into();
+        }
+        Ok(vec![app])
     }
     fn window(
         &self,
@@ -175,6 +181,9 @@ impl NativeBackend for FakeNative {
         if self.moved.load(Ordering::SeqCst) {
             window.bounds.x += 25.0;
         }
+        if self.context_changed.load(Ordering::SeqCst) {
+            window.title = "Unrelated browser tab".into();
+        }
         Ok(window)
     }
     fn observe(
@@ -189,7 +198,7 @@ impl NativeBackend for FakeNative {
             std::thread::sleep(Duration::from_millis(2));
             guard.check()?;
         }
-        Ok(NativeObservation {
+        let observed = NativeObservation {
             window: self.window(target, guard)?,
             elements: vec![ComputerElement {
                 id: format!("{observation_id}:field"),
@@ -218,7 +227,11 @@ impl NativeBackend for FakeNative {
                 scale_y: 2.0,
             }),
             errors: Vec::new(),
-        })
+        };
+        if self.change_during_capture.load(Ordering::SeqCst) {
+            self.context_changed.store(true, Ordering::SeqCst);
+        }
+        Ok(observed)
     }
     fn act(
         &self,
@@ -293,6 +306,102 @@ fn tool(name: &str, args: Value) -> ToolCall {
         output: String::new(),
         duration_ms: 0,
     }
+}
+
+#[tokio::test]
+async fn ga4_changed_window_context_is_rejected_before_capture_or_input() {
+    let (state, native, grants, home) = setup();
+    let selected = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool(
+            "computer_select",
+            json!({"appId":"fixture-42-1","windowId":7,"access":"control"}),
+        ),
+    )
+    .await
+    .unwrap();
+    let target = selected["targetId"].clone();
+    let observed = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool("computer_observe", json!({"targetId":target})),
+    )
+    .await
+    .unwrap();
+    native.observing.store(false, Ordering::SeqCst);
+    native.context_changed.store(true, Ordering::SeqCst);
+    let error = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool("computer_observe", json!({"targetId":target})),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "computer_context_changed");
+    assert!(
+        !native.observing.load(Ordering::SeqCst),
+        "do not capture the unrelated tab"
+    );
+    let error = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool(
+            "computer_click",
+            json!({"targetId":target,"observationId":observed["observation"]["id"],"x":10,"y":20}),
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        !serde_json::from_str::<Value>(error.tool_result.as_ref().unwrap()).unwrap()["inputSent"]
+            .as_bool()
+            .unwrap()
+    );
+    assert_eq!(native.effects.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn ga4_context_switch_during_capture_does_not_publish_observation() {
+    let (state, native, grants, home) = setup();
+    let selected = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool(
+            "computer_select",
+            json!({"appId":"fixture-42-1","windowId":7,"access":"observe"}),
+        ),
+    )
+    .await
+    .unwrap();
+    native.change_during_capture.store(true, Ordering::SeqCst);
+    let error = run(
+        &state,
+        &grants,
+        home.path(),
+        "run",
+        tool("computer_observe", json!({"targetId":selected["targetId"]})),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "computer_context_changed");
+    assert!(native.observing.load(Ordering::SeqCst));
+    assert!(state.conversations.lock().unwrap()["a"]
+        .observations
+        .is_empty());
+    assert!(!crate::data_dir::root(home.path())
+        .join("attachments")
+        .exists());
 }
 
 async fn run(
@@ -1489,4 +1598,259 @@ async fn native_disposable_fixture_smoke() {
     assert_eq!(result.unwrap_err().code, "computer_stopped");
     assert_eq!(read_receipt()["clicks"], 2);
     println!("COMPUTER_SMOKE_PASS: real discovery, AX, PNG attachment, text, keyboard, semantic and PID-targeted pixel clicks, moved/stale geometry and queued-input stop verified on disposable fixture; full model/approval UAT remains separate.");
+}
+
+mod browser_binding {
+    use super::*;
+
+    fn native_context() -> NativeBrowserContext {
+        serde_json::from_value(json!({"id":"ext:fixture:55","browser":"firefox","title":"Fixture window","url":"https://example.test/","active":true,"focused":true,"windowId":8,"foregroundRevision":3,"window":{"left":100,"top":100,"width":400,"height":300}})).unwrap()
+    }
+
+    fn browser_target() -> NativeTarget {
+        let mut app = fixture();
+        app.identity.bundle_id = "org.mozilla.firefox".into();
+        let context = native_context();
+        app.windows[0].title = context.title;
+        app.windows[0].bounds = Bounds {
+            x: 100.0,
+            y: 100.0,
+            width: 400.0,
+            height: 300.0,
+        };
+        NativeTarget {
+            window: app.windows[0].clone(),
+            app,
+        }
+    }
+
+    #[test]
+    fn native_browser_binding_rejects_another_active_tab_with_the_same_title() {
+        let target = browser_target();
+        let expected = native_context();
+        let mut current = expected.clone();
+        current.active = false;
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+        current.active = true;
+        current.id = "ext:fixture:56".into();
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+    }
+
+    #[test]
+    fn native_browser_binding_rejects_focus_change_and_a_tab_moved_to_another_window() {
+        let target = browser_target();
+        let expected = native_context();
+        let mut current = expected.clone();
+        current.focused = false;
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+        current.focused = true;
+        current.window_id = 9;
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+    }
+
+    #[test]
+    fn native_browser_binding_rejects_switch_away_and_back_during_capture() {
+        let target = browser_target();
+        let expected = native_context();
+        let mut current = expected.clone();
+        current.foreground_revision = 5;
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+    }
+
+    #[test]
+    fn native_browser_binding_requires_the_selected_browser_and_outer_window_geometry() {
+        let mut target = browser_target();
+        let expected = native_context();
+        validate_browser_context(&target, &target.window, &expected, &expected).unwrap();
+        let mut current = expected.clone();
+        current.window.left += 1.0;
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &current)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+        target.app.identity.bundle_id = "com.google.Chrome".into();
+        assert_eq!(
+            validate_browser_context(&target, &target.window, &expected, &expected)
+                .unwrap_err()
+                .code,
+            "computer_context_changed"
+        );
+    }
+
+    #[test]
+    fn ordinary_native_windows_keep_the_selected_document_context() {
+        let target = NativeTarget {
+            app: fixture(),
+            window: fixture().windows[0].clone(),
+        };
+        assert!(browser_family(&target).is_none());
+        let target = Target {
+            native: target,
+            browser: None,
+            access: ComputerAccess::Observe,
+            pending_input: None,
+        };
+        validate_window_context(&target, &target.native.window).unwrap();
+        let mut current = target.native.window.clone();
+        current.title = "Another document".into();
+        assert_eq!(
+            validate_window_context(&target, &current).unwrap_err().code,
+            "computer_context_changed"
+        );
+    }
+}
+
+mod native_dispatch_context {
+    use super::*;
+
+    struct ContextNative {
+        native: FakeNative,
+        change_before_dispatch: bool,
+    }
+
+    impl NativeBackend for ContextNative {
+        fn capabilities(&self) -> Result<ComputerCapabilities, AgentError> {
+            self.native.capabilities()
+        }
+        fn apps(&self, guard: &OperationGuard) -> Result<Vec<ComputerApp>, AgentError> {
+            self.native.apps(guard)
+        }
+        fn window(
+            &self,
+            target: &NativeTarget,
+            guard: &OperationGuard,
+        ) -> Result<ComputerWindow, AgentError> {
+            self.native.window(target, guard)
+        }
+        fn observe(
+            &self,
+            target: &NativeTarget,
+            id: &str,
+            capture: bool,
+            guard: &OperationGuard,
+        ) -> Result<NativeObservation, AgentError> {
+            self.native.observe(target, id, capture, guard)
+        }
+        fn act(
+            &self,
+            target: &NativeTarget,
+            observation: &Observation,
+            action: &ComputerAction,
+            guard: &OperationGuard,
+        ) -> Result<(), AgentError> {
+            let changed = Arc::new(AtomicBool::new(false));
+            let context = changed.clone();
+            let mut guard = guard.clone();
+            guard.context_check = Some(Arc::new(move |_| {
+                if context.load(Ordering::SeqCst) {
+                    Err(context_changed())
+                } else {
+                    Ok(())
+                }
+            }));
+            guard.check()?;
+            changed.store(self.change_before_dispatch, Ordering::SeqCst);
+            self.native.act(target, observation, action, &guard)
+        }
+        fn request_permission(
+            &self,
+            permission: ComputerPermission,
+        ) -> Result<ComputerCapabilities, AgentError> {
+            self.native.request_permission(permission)
+        }
+    }
+
+    async fn prepare(
+        change_before_dispatch: bool,
+    ) -> (
+        ComputerState,
+        Arc<ContextNative>,
+        GrantStore,
+        tempfile::TempDir,
+        Value,
+    ) {
+        let (_, _, grants, home) = setup();
+        let native = Arc::new(ContextNative {
+            native: FakeNative::default(),
+            change_before_dispatch,
+        });
+        native.native.permission.store(true, Ordering::SeqCst);
+        let state = ComputerState::new(native.clone());
+        let selected = run(
+            &state,
+            &grants,
+            home.path(),
+            "run",
+            tool(
+                "computer_select",
+                json!({"appId":"fixture-42-1","windowId":7,"access":"control"}),
+            ),
+        )
+        .await
+        .unwrap();
+        let observation = run(
+            &state,
+            &grants,
+            home.path(),
+            "run",
+            tool("computer_observe", json!({"targetId":selected["targetId"]})),
+        )
+        .await
+        .unwrap();
+        native.native.observing.store(false, Ordering::SeqCst);
+        (state, native, grants, home, observation)
+    }
+
+    #[tokio::test]
+    async fn context_switch_after_prepare_sends_no_input_or_new_capture() {
+        let (state, native, grants, home, observation) = prepare(true).await;
+        let error = run(&state, &grants, home.path(), "run", tool("computer_click", json!({"targetId":observation["targetId"],"observationId":observation["observation"]["id"],"x":10,"y":20}))).await.unwrap_err();
+        assert_eq!(error.code, "computer_context_changed");
+        let receipt: Value = serde_json::from_str(error.tool_result.as_ref().unwrap()).unwrap();
+        assert_eq!(receipt["inputSent"], false);
+        assert_eq!(native.native.effects.load(Ordering::SeqCst), 0);
+        assert!(!native.native.observing.load(Ordering::SeqCst));
+        assert!(state.conversations.lock().unwrap()["a"]
+            .observations
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatched_input_in_valid_context_remains_uncertain_after_failure() {
+        let (state, native, grants, home, observation) = prepare(false).await;
+        native.native.uncertain.store(true, Ordering::SeqCst);
+        let error = run(&state, &grants, home.path(), "run", tool("computer_click", json!({"targetId":observation["targetId"],"observationId":observation["observation"]["id"],"x":10,"y":20}))).await.unwrap_err();
+        assert_eq!(error.code, "computer_action_uncertain");
+        let receipt: Value = serde_json::from_str(error.tool_result.as_ref().unwrap()).unwrap();
+        assert_eq!(receipt["inputSent"], true);
+        assert_eq!(native.native.effects.load(Ordering::SeqCst), 1);
+        assert!(!native.native.observing.load(Ordering::SeqCst));
+    }
 }

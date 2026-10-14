@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-14",
+  "branch": "codex/mcp-manual-oauth",
+  "baseCommit": "38612450a0752fd1c8f1c1e027b9f8df9a7bf766",
+  "issue": "jarvis-crc2",
+  "changes": [
+    "Explicit browser login in manual and plugin MCP details",
+    "Visual editor accepts browser OAuth and automatic authentication",
+    "Existing remote MCPs without an OAuth flag can use the native login flow",
+    "Fixed Authorization headers and explicit OAuth opt-out retain priority",
+    "Only authentication failures request login; other initialization errors remain connection errors",
+    "HTTPS is required except on loopback addresses",
+    "Login and disconnect refresh the tools shown in MCP details"
+  ],
+  "providerProbe": {
+    "endpoint": "https://mcp.jam.dev/mcp",
+    "status": 401,
+    "resourceMetadata": "https://mcp.jam.dev/.well-known/oauth-protected-resource",
+    "authorizationServer": "https://api.jam.dev",
+    "scopes": ["mcp:read", "mcp:write"],
+    "registrationEndpointAdvertised": true
+  },
+  "regressionEvidence": {
+    "frontendInitial": "7 failures reproduced missing login controls and the obsolete editor OAuth rejection",
+    "nativeInitial": "Default remote authentication returned mcp_error instead of mcp_auth_required",
+    "nativeExtended": "3 failures reproduced automatic OAuth rejection, incorrect auth classification, and secure transport policy",
+    "finalNativeOAuth": "All 5 OAuth tests passed, including real local HTTP discovery, registration, callback, token exchange, authenticated tool discovery, cancel and disconnect"
+  },
+  "validation": {
+    "lint": {"exitCode": 0, "warnings": 0},
+    "typecheck": {"exitCode": 0},
+    "frontend": {"exitCode": 0, "passed": 2179, "skipped": 12, "command": "CI=1 bun run test"},
+    "build": {"exitCode": 0, "warnings": 0},
+    "clippy": {"exitCode": 0, "allTargets": true, "warnings": 0},
+    "rust": {"exitCode": 0, "passed": 2120, "ignored": 42},
+    "earlierFrontendTimeouts": "Concurrent compilation runs hit UI timeouts; the full CI worker-limited run passed without changing unrelated tests"
+  },
+  "delivery": {
+    "source": "local",
+    "newCommit": false,
+    "published": false,
+    "package": "Signed production-profile 2.0.2 local patch installed at /Applications/Jarvis.app and restarted",
+    "binarySha256": "246bfb96c637eb553c8e5a204124e54c96c0942d10366392881b2d4931b4ff56",
+    "backupDirectory": "/Users/enesolucoes/Library/Application Support/Jarvis Updates/mcp-oauth-2026-10-14",
+    "supersededBy": "mcp-ui-2026-10-14.json",
+    "notarization": "not performed; packaging reported unavailable Apple notarization credentials",
+    "realJamAccountLogin": "User reported successful Jam login. Assistant subsequently clicked the account control using stale screenshot state and disconnected it; mistake acknowledged, all further account-control interaction stopped. Later user screenshot shows 35 Jam tools; no token inspection or renewed consent was performed by the assistant.",
+    "platformRuntimeUat": "macOS installed application restored five projects and two Movarte terminals; MCP details displayed native login control. Linux and Windows runtime were not tested."
+  },
+  "deferred": {
+    "pluginShareLinks": "jarvis-xtco",
+    "marketplacePreviewCounts": "jarvis-001g"
+  }
+}

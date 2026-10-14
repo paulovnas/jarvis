@@ -102,6 +102,43 @@ fn push_model_part(contents: &mut Vec<Value>, mut part: Value, claude: bool) {
 
 #[cfg(test)]
 #[test]
+fn ga4_observation_images_project_real_png_into_cloud_code_assist_request() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let mut credential = CodexCredential::new("fixture", "", 0, "account", None, None);
+    credential.project_id = Some("project".into());
+    let mut options = crate::agent::tests::options(crate::agent::ApprovalMode::Yolo);
+    options.model = "gemini-3.8-flash".into();
+    let capabilities = Arc::new(ModelCapabilities::resolve_for_options(
+        &credential,
+        &options,
+    ));
+    let step = super::tests::captured_image_step(&options, &capabilities);
+    let body = contents(step.input(), &options.model).unwrap();
+    let image = body
+        .iter()
+        .flat_map(|item| item["parts"].as_array().into_iter().flatten())
+        .find(|part| part["inlineData"].is_object());
+    assert!(
+        image.is_some(),
+        "the Cloud Code Assist request lost the actual capture"
+    );
+    let image = image.unwrap();
+    assert_eq!(image["inlineData"]["mimeType"], "image/png");
+    let data = STANDARD
+        .decode(image["inlineData"]["data"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        image::load_from_memory(&data)
+            .unwrap()
+            .into_rgba8()
+            .get_pixel(0, 0)
+            .0,
+        [80, 20, 30, 255]
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn image_parts_are_forwarded_to_gemini_and_invalid_urls_are_rejected() {
     let input = json!({"role":"user","content":[{"type":"input_text","text":"Describe"},{"type":"input_image","image_url":"data:image/png;base64,dGVzdA=="}]});
     let result = contents(&[input], "gemini-3.8-flash").unwrap();

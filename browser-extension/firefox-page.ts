@@ -1,8 +1,18 @@
 type Prepared = { token?: string; element: Element; mode?: string };
-type Action = { action: "click" | "fill" | "press"; token: string; text?: string; key?: string };
+export type FirefoxDispatch = { id: string; expiresAt: number };
+type Action = { action: "click" | "fill" | "press"; token: string; text?: string; key?: string; dispatch?: FirefoxDispatch };
 
 // Serialized into the extension's isolated world, sharing pageOperation's state.
-export function firefoxInput(args: Action): Record<string, unknown> {
+export function firefoxInput(args: Action): Record<string, unknown> | Promise<Record<string, unknown>> {
+  if (args.dispatch) {
+    const dispatch = args.dispatch;
+    const rejected = () => ({ ok: false, dispatched: false, code: Date.now() >= dispatch.expiresAt ? "browser_action_timeout" : "browser_action_cancelled" });
+    if (Date.now() >= dispatch.expiresAt) return rejected();
+    const api = (globalThis as unknown as { browser?: { runtime: { sendMessage(message: unknown): Promise<unknown> } } }).browser;
+    if (!api) return rejected();
+    // Admission happens in the owned background, immediately before DOM input.
+    return api.runtime.sendMessage({ type: "jarvis-firefox-dispatch", id: dispatch.id }).then(allowed => allowed === true && Date.now() < dispatch.expiresAt ? firefoxInput({ ...args, dispatch: undefined }) : rejected(), rejected);
+  }
   const page = window as unknown as { __jarvisPrepared?: Prepared };
   const prepared = page.__jarvisPrepared;
   if (!prepared || prepared.token !== args.token || !prepared.element.isConnected) return { ok: false, code: "browser_stale_element", dispatched: false };
@@ -74,7 +84,13 @@ export function firefoxInput(args: Action): Record<string, unknown> {
   }
   if (args.action === "fill") {
     const value = args.text ?? "";
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    if (element instanceof HTMLSelectElement) {
+      const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+      const options = Array.from(element.options).filter(option => option.value === value || normalize(option.label) === normalize(value));
+      if (options.length !== 1) return { ok: false, dispatched: false, code: options.length ? "browser_ambiguous_option" : "browser_option_not_found" };
+      if (options[0].matches(":disabled") || options[0].parentElement instanceof HTMLOptGroupElement && options[0].parentElement.disabled) return { ok: false, dispatched: false, code: "browser_element_disabled" };
+      for (const option of element.options) option.selected = option === options[0];
+    } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
       const prototype = element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
       if (!setter) return { ok: false, code: "browser_element_not_editable", dispatched: false };
@@ -138,13 +154,22 @@ export function firefoxConsole(action: "start" | "read" | "stop"): { logs: Firef
   })) : [] };
 }
 
-export async function firefoxEvaluate(expression: string): Promise<unknown> {
+export async function firefoxEvaluate(expression: string, expiresAt?: number): Promise<unknown> {
+  if (expiresAt !== undefined && Date.now() >= expiresAt) throw new Error("The Firefox evaluation expired before execution.");
   // MAIN respects the site's CSP. CSP refusal is surfaced rather than bypassed.
   // Explicit page-scoped evaluation; extension secrets are never injected.
   return await (0, eval)(expression);
 }
 
-export function firefoxScroll(point: { x: number; y: number }): { ok: true } {
+export function firefoxScroll(point: { x: number; y: number; dispatch?: FirefoxDispatch }): Record<string, unknown> | Promise<Record<string, unknown>> {
+  if (point.dispatch) {
+    const dispatch = point.dispatch;
+    const rejected = () => ({ ok: false, dispatched: false, code: Date.now() >= dispatch.expiresAt ? "browser_action_timeout" : "browser_action_cancelled" });
+    if (Date.now() >= dispatch.expiresAt) return rejected();
+    const api = (globalThis as unknown as { browser?: { runtime: { sendMessage(message: unknown): Promise<unknown> } } }).browser;
+    if (!api) return rejected();
+    return api.runtime.sendMessage({ type: "jarvis-firefox-dispatch", id: dispatch.id }).then(allowed => allowed === true && Date.now() < dispatch.expiresAt ? firefoxScroll({ ...point, dispatch: undefined }) : rejected(), rejected);
+  }
   window.scrollBy({ left: point.x, top: point.y, behavior: "instant" });
   return { ok: true };
 }

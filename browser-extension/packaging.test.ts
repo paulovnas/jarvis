@@ -46,7 +46,7 @@ it("builds a Firefox event page with its own permissions and no Chromium debugge
     const native: { bundle: { resources: Record<string, string> } } = JSON.parse(await readFile(path.resolve("src-tauri/tauri.conf.json"), "utf8"));
     expect(native.bundle.resources["../browser-extension/dist-firefox/"]).toBe("browser-extension-firefox/");
     expect(native.bundle.resources["../browser-extension/dist/"]).toBe("browser-extension/");
-    expect(manifest.background).toEqual({ scripts: ["worker.js"], type: "module", persistent: false });
+    expect(manifest.background).toEqual({ scripts: ["worker.js"], type: "module" });
     expect(manifest.browser_specific_settings.gecko).toMatchObject({ id: "browser@jarvis.foxtag.com", strict_min_version: "140.0" });
     expect(manifest.browser_specific_settings.gecko.data_collection_permissions.required).toEqual(["browsingActivity", "websiteContent", "websiteActivity"]);
     const worker = await readFile(path.join(output, manifest.background.scripts[0]), "utf8");

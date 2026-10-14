@@ -608,6 +608,7 @@ fn mutation(action: &str) -> bool {
         "list"
             | "discover"
             | "snapshot"
+            | "native_context"
             | "wait"
             | "console"
             | "network"
@@ -1222,6 +1223,7 @@ mod tests {
         assert!(inner.lock().unwrap().pending.is_empty());
         assert!(!mutation("network"));
         assert!(!mutation("wait"));
+        assert!(!mutation("native_context"));
         assert!(mutation("evaluate"));
     }
 

@@ -2526,7 +2526,7 @@ fn embedded_logo_data_uri() -> &'static str {
     &LOGO
 }
 
-fn render_callback_html(status: &str, body: &str) -> String {
+pub(crate) fn render_callback_html(status: &str, body: &str) -> String {
     let is_success = status.starts_with("200");
     let (accent_bar, badge_class, badge_icon, badge_text, heading, description, info_text) =
         if is_success {

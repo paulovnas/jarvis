@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Blocks, ChevronRight, LockKeyhole, Pencil, Plug, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,14 @@ import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHe
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { McpServer } from "@/core/mcp";
+import { PluginMcpAuth } from "./PluginMcpAuth";
 
 export function McpServerCard({ server, busy, checking = false, onToggle, onEdit, onDelete, onTest }: {
   server: McpServer; busy: boolean; checking?: boolean; onToggle: (enabled: boolean) => void; onEdit: () => void; onDelete: () => void; onTest: () => void;
 }) {
   const id = useId();
+  const [authBusy, setAuthBusy] = useState(false);
+  const disabled = busy || authBusy;
   const status = !server.enabled ? "Desativado" : !server.configured ? "Configuração pendente" : server.lastCheck?.error ? "Verificar conexão" : "Ativado";
   const statusColor = !server.enabled ? "text-muted-foreground" : !server.configured ? "border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow" : server.lastCheck?.error ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-onedark-green/30 bg-onedark-green/10 text-onedark-green";
   return <Sheet>
@@ -41,6 +44,7 @@ export function McpServerCard({ server, busy, checking = false, onToggle, onEdit
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5">
         {server.source && <div className="flex min-w-0 flex-col gap-2 text-xs"><Badge variant="outline" className="max-w-full self-start gap-1"><Blocks aria-hidden="true" className="size-3 shrink-0" /><span className="break-all whitespace-normal">Plugin · {server.source}</span></Badge><p className="text-muted-foreground">Para remover este MCP, remova o plugin na seção Plugins. Suas configurações também são gerenciadas lá.</p></div>}
         {!server.configured && <p className="text-sm text-muted-foreground">{server.source ? "Conclua a configuração na seção Plugins." : "Adicione sua chave de API."}</p>}
+        {server.kind === "remote" && server.enabled && server.configured && <PluginMcpAuth key={server.revision} serverId={server.id} name={server.name} disabled={busy} onBusyChange={setAuthBusy} onStatusChange={onTest} />}
         <section aria-label={`Ferramentas de ${server.name}`} className="flex min-w-0 flex-col gap-3">
           <h3 className="text-sm font-medium">Ferramentas{server.lastCheck && !server.lastCheck.error && ` (${server.lastCheck.toolCount})`}</h3>
           {checking && <div role="status" aria-label="Descobrindo ferramentas" className="grid gap-2 sm:grid-cols-2"><Skeleton className="h-7 bg-secondary" /><Skeleton className="h-7 bg-secondary" /><Skeleton className="h-7 bg-secondary" /></div>}
@@ -51,10 +55,10 @@ export function McpServerCard({ server, busy, checking = false, onToggle, onEdit
         </section>
       </div>
       <SheetFooter className="shrink-0 gap-4 border-t px-5 py-4">
-        {!server.source && <Label htmlFor={id} className="cursor-pointer gap-2 text-xs"><Switch id={id} checked={server.enabled} onCheckedChange={onToggle} disabled={busy} className="cursor-pointer" /><span className="sr-only">Ativar MCP {server.name}</span><span aria-hidden="true">{server.enabled ? "Ativado" : "Desativado"}</span></Label>}
+        {!server.source && <Label htmlFor={id} className="cursor-pointer gap-2 text-xs"><Switch id={id} checked={server.enabled} onCheckedChange={onToggle} disabled={disabled} className="cursor-pointer" /><span className="sr-only">Ativar MCP {server.name}</span><span aria-hidden="true">{server.enabled ? "Ativado" : "Desativado"}</span></Label>}
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="cursor-pointer" onClick={onTest} disabled={busy || !server.enabled || !server.configured}>Testar conexão</Button>
-          {!server.source && <><Button variant="ghost" size="sm" className="cursor-pointer" onClick={onEdit} disabled={busy}><Pencil aria-hidden="true" />Editar</Button><Button variant="ghost" size="sm" className="cursor-pointer text-destructive" onClick={onDelete} disabled={busy}><Trash2 aria-hidden="true" />Excluir</Button></>}
+          <Button variant="outline" size="sm" className="cursor-pointer" onClick={onTest} disabled={disabled || !server.enabled || !server.configured}>Testar conexão</Button>
+          {!server.source && <><Button variant="ghost" size="sm" className="cursor-pointer" onClick={onEdit} disabled={disabled}><Pencil aria-hidden="true" />Editar</Button><Button variant="ghost" size="sm" className="cursor-pointer text-destructive" onClick={onDelete} disabled={disabled}><Trash2 aria-hidden="true" />Excluir</Button></>}
         </div>
       </SheetFooter>
     </SheetContent>

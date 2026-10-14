@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-14",
+  "application": {
+    "path": "/Applications/Jarvis.app",
+    "version": "2.0.2",
+    "binarySha256": "d7cd18f4a285d4dfbf50b5df44961e8294ac1fbcd9414ee7aa6f5e9997c6e20f",
+    "strictDeepCodeSignatureValid": true,
+    "appleNotarized": false,
+    "normalRestartObserved": true,
+    "movarteTerminalTabsRestored": 2
+  },
+  "firefox": {
+    "version": "1.2.2",
+    "id": "browser@jarvis.foxtag.com",
+    "mozillaVersionId": 6578448,
+    "mozillaFileId": 5122581,
+    "mozillaStatusObserved": "Approved",
+    "permanentInstalledActive": true,
+    "signedState": 2,
+    "samePermissionsAsPrevious": true,
+    "pairingPreserved": true,
+    "jarvisConnectedAfterFinalRestartObserved": true,
+    "workerSha256": "31480e1d1a29adfeeec3034c7e37ef45c7a141af4ed74e45ab710711b28f77bb",
+    "signedXpiSha256": "1bd53525437592724ce63325e76af63f82490d380c532395ea63a0e3aadbb49a",
+    "sourceZipSha256": "4625f3fac70013fb40b6ce76ef5631bd408f05c2ab50d0402988520e319ca84d",
+    "mozillaSourceDownloadMatchesSubmitted": true,
+    "preparedVersion": "1.2.2",
+    "validatorErrors": 0,
+    "validatorAlerts": 3
+  },
+  "verification": {
+    "frontendPassed": 2202,
+    "frontendSkipped": 12,
+    "rustPassed": 2156,
+    "rustIgnored": 42,
+    "localQualityWarnings": 0,
+    "trackedSourceDiffSha256": "4469cf2bdf42c01e9469b7981b880f3cd0860aa7c4e8b11a23be392d8e653b74",
+    "auditedJournalSha256": "70fccfd09b0a2e0ef8e28cba8ff2335af1658550fc53453b8d507f8cb734cc1d",
+    "fullInstalledNativeVisualWorkflowVerified": false,
+    "remainingRuntimeValidationBead": "jarvis-t2n3"
+  },
+  "backupDirectory": "/Users/enesolucoes/Library/Application Support/Jarvis Updates/ga4-harness-2026-10-14.AEkW2l",
+  "gitPublicationPerformed": false,
+  "artifactCleanup": {
+    "targetBefore": "9.0G",
+    "targetAfter": "absent",
+    "freeGiBBefore": 26.22,
+    "freeGiBAfter": 34.31
+  }
+}

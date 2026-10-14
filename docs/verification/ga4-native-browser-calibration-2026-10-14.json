@@ -1,0 +1,381 @@
+{
+  "kind": "disposable_firefox_native_geometry_calibration",
+  "profileVerifiedDisposable": true,
+  "firefoxVersion": "157.0.1",
+  "fixturePages": "localhost only, identical constant titles",
+  "nativeActivation": "only profile-verified disposable Firefox PID, activate(options: []) returned true",
+  "scope": "extension context and Quartz geometry plus OS frontmost PID; no screenshot or mouse/key input",
+  "sameOwnedWindow": [
+    {
+      "label": "A",
+      "title": "Jarvis native affinity fixture",
+      "extensionBounds": {
+        "left": 110,
+        "top": 140,
+        "width": 820,
+        "height": 620
+      },
+      "quartzBounds": {
+        "height": 620,
+        "width": 820,
+        "x": 110,
+        "y": 140
+      },
+      "deltaAllCoordinates": 0
+    },
+    {
+      "label": "B",
+      "title": "Jarvis native affinity fixture",
+      "extensionBounds": {
+        "left": 220,
+        "top": 240,
+        "width": 860,
+        "height": 640
+      },
+      "quartzBounds": {
+        "height": 640,
+        "width": 860,
+        "x": 220,
+        "y": 240
+      },
+      "deltaAllCoordinates": 0
+    }
+  ],
+  "measurements": [
+    {
+      "phase": "selected_A",
+      "extension": {
+        "id": "ext:fixture:2",
+        "browser": "firefox",
+        "title": "Jarvis native affinity fixture",
+        "active": true,
+        "focused": true,
+        "windowId": 25,
+        "foregroundRevision": 3,
+        "window": {
+          "left": 110,
+          "top": 140,
+          "width": 820,
+          "height": 620
+        }
+      },
+      "native": {
+        "accessibilityGranted": false,
+        "ax": {
+          "focusedWindowResult": -25211,
+          "timeoutResult": 0,
+          "windowCount": 0,
+          "windowCountResult": -25211
+        },
+        "bundleId": "org.mozilla.firefox",
+        "frontmostIsTarget": true,
+        "quartzWindows": [
+          {
+            "bounds": {
+              "height": 620,
+              "width": 820,
+              "x": 110,
+              "y": 140
+            },
+            "id": 4575,
+            "title": "Jarvis native affinity fixture"
+          }
+        ],
+        "screenCaptureGranted": true
+      }
+    },
+    {
+      "phase": "A_while_same_title_B_focused",
+      "extension": {
+        "id": "ext:fixture:2",
+        "browser": "firefox",
+        "title": "Jarvis native affinity fixture",
+        "active": true,
+        "focused": false,
+        "windowId": 25,
+        "foregroundRevision": 6,
+        "window": {
+          "left": 110,
+          "top": 140,
+          "width": 820,
+          "height": 620
+        }
+      },
+      "native": {
+        "accessibilityGranted": false,
+        "ax": {
+          "focusedWindowResult": -25211,
+          "timeoutResult": 0,
+          "windowCount": 0,
+          "windowCountResult": -25211
+        },
+        "bundleId": "org.mozilla.firefox",
+        "frontmostIsTarget": true,
+        "quartzWindows": [
+          {
+            "bounds": {
+              "height": 620,
+              "width": 820,
+              "x": 110,
+              "y": 140
+            },
+            "id": 4575,
+            "title": "Jarvis native affinity fixture"
+          },
+          {
+            "bounds": {
+              "height": 640,
+              "width": 860,
+              "x": 220,
+              "y": 240
+            },
+            "id": 4577,
+            "title": "Jarvis native affinity fixture"
+          }
+        ],
+        "screenCaptureGranted": true
+      }
+    },
+    {
+      "phase": "selected_B",
+      "extension": {
+        "id": "ext:fixture:3",
+        "browser": "firefox",
+        "title": "Jarvis native affinity fixture",
+        "active": true,
+        "focused": true,
+        "windowId": 31,
+        "foregroundRevision": 6,
+        "window": {
+          "left": 220,
+          "top": 240,
+          "width": 860,
+          "height": 640
+        }
+      },
+      "native": {
+        "accessibilityGranted": false,
+        "ax": {
+          "focusedWindowResult": -25211,
+          "timeoutResult": 0,
+          "windowCount": 0,
+          "windowCountResult": -25211
+        },
+        "bundleId": "org.mozilla.firefox",
+        "frontmostIsTarget": true,
+        "quartzWindows": [
+          {
+            "bounds": {
+              "height": 620,
+              "width": 820,
+              "x": 110,
+              "y": 140
+            },
+            "id": 4575,
+            "title": "Jarvis native affinity fixture"
+          },
+          {
+            "bounds": {
+              "height": 640,
+              "width": 860,
+              "x": 220,
+              "y": 240
+            },
+            "id": 4577,
+            "title": "Jarvis native affinity fixture"
+          }
+        ],
+        "screenCaptureGranted": true
+      }
+    },
+    {
+      "phase": "A_while_unowned_same_title_tab_focused",
+      "extension": {
+        "id": "ext:fixture:2",
+        "browser": "firefox",
+        "title": "Jarvis native affinity fixture",
+        "active": false,
+        "focused": true,
+        "windowId": 25,
+        "foregroundRevision": 9,
+        "window": {
+          "left": 110,
+          "top": 140,
+          "width": 820,
+          "height": 620
+        }
+      },
+      "native": {
+        "accessibilityGranted": false,
+        "ax": {
+          "focusedWindowResult": -25211,
+          "timeoutResult": 0,
+          "windowCount": 0,
+          "windowCountResult": -25211
+        },
+        "bundleId": "org.mozilla.firefox",
+        "frontmostIsTarget": true,
+        "quartzWindows": [
+          {
+            "bounds": {
+              "height": 620,
+              "width": 820,
+              "x": 110,
+              "y": 140
+            },
+            "id": 4575,
+            "title": "Jarvis native affinity fixture"
+          },
+          {
+            "bounds": {
+              "height": 640,
+              "width": 860,
+              "x": 220,
+              "y": 240
+            },
+            "id": 4577,
+            "title": "Jarvis native affinity fixture"
+          }
+        ],
+        "screenCaptureGranted": true
+      }
+    },
+    {
+      "phase": "reselected_A",
+      "extension": {
+        "id": "ext:fixture:2",
+        "browser": "firefox",
+        "title": "Jarvis native affinity fixture",
+        "active": true,
+        "focused": true,
+        "windowId": 25,
+        "foregroundRevision": 10,
+        "window": {
+          "left": 110,
+          "top": 140,
+          "width": 820,
+          "height": 620
+        }
+      },
+      "native": {
+        "accessibilityGranted": false,
+        "ax": {
+          "focusedWindowResult": -25211,
+          "timeoutResult": 0,
+          "windowCount": 0,
+          "windowCountResult": -25211
+        },
+        "bundleId": "org.mozilla.firefox",
+        "frontmostIsTarget": true,
+        "quartzWindows": [
+          {
+            "bounds": {
+              "height": 620,
+              "width": 820,
+              "x": 110,
+              "y": 140
+            },
+            "id": 4575,
+            "title": "Jarvis native affinity fixture"
+          },
+          {
+            "bounds": {
+              "height": 640,
+              "width": 860,
+              "x": 220,
+              "y": 240
+            },
+            "id": 4577,
+            "title": "Jarvis native affinity fixture"
+          }
+        ],
+        "screenCaptureGranted": true
+      }
+    }
+  ],
+  "sourceFunctionHashes": {
+    "context_changed": "3e7b8df846f00922d755cfd2c5e3ca2ede53673528692de303623246ddf3b14d",
+    "browser_family": "3a1c32b72cf1f9032ab8e2776a9cab3ded3082ef497458faf01dab208a3e8a2a",
+    "validate_browser_context": "d86b85802f27e7d512bf4db6b7dacf600e3183ffeefd0b3869b4b4e9c9dddedd",
+    "valid_bounds": "d75cf48b32d286e6281ec0fd1175dfbd35c1fc1d14a3b18510953dee9dfb76bf",
+    "bounds_match": "dd4e184dacceacb42ca2e0f494b6731d541ad1391ed11c82754c77d01bec9b88"
+  },
+  "matcherExecution": "isolated std-only rustc extracted current production functions; 10/10 expected outcomes; no Cargo or repo suite",
+  "axProbeBlocker": {
+    "accessibilityGranted": false,
+    "focusedWindowResult": -25211,
+    "windowCountResult": -25211,
+    "installedJarvisPermissions": "not assessed by this probe"
+  },
+  "notVerified": [
+    "external Firefox AX title/frame/root/focused-window affinity",
+    "full updated Jarvis computer_select/observe/input UAT",
+    "other browsers, displays or scaling settings"
+  ],
+  "minimumFullAffinityRoute": "Run a read-only fixture diagnostic inside an updated Jarvis bundle signed with its existing authorized identity/designated requirement, or use a dedicated signed calibration app with its own explicit Accessibility grant. Preserve permission checks; do not infer installed Jarvis permissions from this CLI identity.",
+  "matcherOutcomes": [
+    {
+      "name": "fresh_owned_A_matches_quartz_A",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "name": "fresh_owned_B_matches_quartz_B",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "name": "owned_A_rejects_same_title_B_focused",
+      "actual": false,
+      "expected": false,
+      "pass": true
+    },
+    {
+      "name": "expected_A_rejects_same_title_B_metadata",
+      "actual": false,
+      "expected": false,
+      "pass": true
+    },
+    {
+      "name": "fresh_B_rejects_wrong_same_title_quartz_A",
+      "actual": false,
+      "expected": false,
+      "pass": true
+    },
+    {
+      "name": "owned_A_rejects_unowned_same_title_active_tab",
+      "actual": false,
+      "expected": false,
+      "pass": true
+    },
+    {
+      "name": "fresh_reselected_A_matches_quartz_A",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "name": "old_A_binding_rejects_returned_A_revision",
+      "actual": false,
+      "expected": false,
+      "pass": true
+    },
+    {
+      "name": "existing_ax_bounds_predicate_accepts_identical_measured_frame",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    },
+    {
+      "name": "existing_ax_bounds_predicate_rejects_other_measured_frame",
+      "actual": true,
+      "expected": true,
+      "pass": true
+    }
+  ],
+  "fullNativeUAT": false,
+  "repositorySourceChangedByCalibration": false,
+  "disposableFirefoxMainProcessExited": true
+}

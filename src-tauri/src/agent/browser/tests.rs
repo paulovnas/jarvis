@@ -98,7 +98,8 @@ fn screenshot_contract_supports_video_assets_without_replacing_dom_discovery_or_
         let description = screenshot["description"].as_str().unwrap();
         assert!(description.contains("requested product/UI assets for a video"));
         assert!(description.contains("Prefer snapshot for text and element discovery"));
-        assert!(description.contains("when visual analysis is needed"));
+        assert!(description.contains("primary models receive a bounded preview directly"));
+        assert!(description.contains("explicit secondary analysis or when no inline pixels arrive"));
         assert!(description.contains("reuse captures until the page changes"));
     }
     assert!(EFFICIENCY.contains("intentional product/UI captures needed by the requested video"));

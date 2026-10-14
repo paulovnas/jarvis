@@ -17,10 +17,12 @@ export type PageOperation = {
   mode?: "click" | "fill" | "press";
   state?: "visible" | "hidden" | "attached" | "detached" | "ready";
   text?: string;
+  expiresAt?: number;
 };
 
 // Serialized into an isolated page world: every runtime dependency stays inside.
 export function pageOperation(args: PageOperation) {
+  if (args.expiresAt !== undefined && Date.now() >= args.expiresAt) return { ready: false, ok: false, dispatched: false, code: "browser_action_timeout", reason: "The page operation expired before execution." };
   type Descriptor = { tag: string; role: string; name: string; label: string; text: string; testId: string; inputType: string };
   type Record = { element: Element; descriptor: Descriptor };
   type Prepared = { element: Element; key: string; mode?: "click" | "fill" | "press"; box?: number[]; scrolled?: boolean; focused?: boolean; token?: string };

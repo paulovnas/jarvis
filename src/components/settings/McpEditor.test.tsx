@@ -62,4 +62,16 @@ describe("MCP visual editor", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("texto foi preservado");
     expect(field).toHaveValue(unknown);
   });
+  it("lets a manual remote MCP select browser login and preserve it across tabs", async () => {
+    const user = userEvent.setup(); const save = vi.fn();
+    render(<McpEditor initialValue='{"jam":{"type":"remote","url":"https://mcp.jam.dev/mcp"}}' busy={false} error={null} onSave={save} onCancel={vi.fn()} />);
+    await user.click(screen.getByRole("combobox", { name: "Autenticação" }));
+    await user.click(await screen.findByRole("option", { name: "OAuth no navegador" }));
+    await user.click(screen.getByRole("tab", { name: "JSON" }));
+    expect(JSON.parse((screen.getByRole("textbox", { name: "Configuração JSON" }) as HTMLTextAreaElement).value).jam.oauth).toBe(true);
+    await user.click(screen.getByRole("tab", { name: "Visual" }));
+    await user.click(screen.getByRole("button", { name: "Salvar MCP" }));
+    expect(JSON.parse(save.mock.calls[0][0]).jam.oauth).toBe(true);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

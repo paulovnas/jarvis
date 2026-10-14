@@ -8,8 +8,9 @@ const chromeMock = {
   tabs: {
     query: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn().mockResolvedValue(undefined),
     reload: vi.fn(), goBack: vi.fn(), goForward: vi.fn(),
+    onActivated: { addListener: vi.fn() },
   },
-  windows: { update: vi.fn(), create: vi.fn() },
+  windows: { update: vi.fn(), create: vi.fn(), get: vi.fn(), onFocusChanged: { addListener: vi.fn() } },
   debugger: { getTargets: vi.fn(), attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn() },
 };
 const tab = { id: 10, windowId: 1, url: "https://example.org", title: "Example", status: "complete" };
@@ -24,6 +25,7 @@ beforeEach(() => {
   chromeMock.tabs.create.mockResolvedValue({ ...tab, id: 20 });
   chromeMock.tabs.update.mockResolvedValue(tab);
   chromeMock.windows.update.mockResolvedValue({});
+  chromeMock.windows.get.mockResolvedValue({ id: 1, focused: true, left: 10, top: 20, width: 1000, height: 700 });
   chromeMock.debugger.getTargets.mockResolvedValue([]);
   chromeMock.debugger.attach.mockResolvedValue(undefined);
   chromeMock.debugger.detach.mockResolvedValue(undefined);
@@ -31,6 +33,11 @@ beforeEach(() => {
 });
 
 describe("extension trust boundary", () => {
+  it("accepts the internal native context request without interaction arguments", () => {
+    expect(requestSchema.safeParse(request("native_context", { id: tabHandle(epoch, 10) })).success).toBe(true);
+    expect(requestSchema.safeParse(request("native_context", { id: tabHandle(epoch, 10), locator: { text: "Save" } })).success).toBe(false);
+  });
+
   it("accepts only local authenticated pairing codes and page-scoped operations", () => {
     const config = { version: 1, endpoint: "ws://127.0.0.1:17373/extension", token: "a".repeat(64) };
     expect(pairingSchema.parse(config)).toEqual(config);
@@ -51,6 +58,31 @@ describe("extension trust boundary", () => {
 });
 
 describe("owned browser tabs", () => {
+  it("reports the owned tab's native context even when another tab has the same title", async () => {
+    const browser = new BrowserController(epoch, vi.fn()); await browser.restore();
+    const handle = tabHandle(epoch, 10); await browser.execute(request("attach", { id: handle }));
+    chromeMock.tabs.get.mockResolvedValue({ ...tab, active: false });
+    chromeMock.tabs.query.mockResolvedValue([{ ...tab, active: false }, { ...tab, id: 11, active: true }]);
+    const commands = chromeMock.debugger.sendCommand.mock.calls.length;
+    await expect(browser.execute(request("native_context", { id: handle }))).resolves.toMatchObject({ id: handle, browser: "chromium", title: "Example", active: false, focused: true, windowId: 1, foregroundRevision: 0, window: { left: 10, top: 20, width: 1000, height: 700 } });
+    await expect(browser.execute(request("native_context", { id: handle }, "chat-b"))).rejects.toMatchObject({ code: "browser_tab_not_owned" });
+    expect(chromeMock.debugger.sendCommand).toHaveBeenCalledTimes(commands);
+    expect(chromeMock.tabs.update).not.toHaveBeenCalled(); expect(chromeMock.windows.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects native context collected across a foreground switch and reports its revision", async () => {
+    const browser = new BrowserController(epoch, vi.fn()); await browser.restore();
+    const handle = tabHandle(epoch, 10); await browser.execute(request("attach", { id: handle }));
+    chromeMock.tabs.get.mockResolvedValue({ ...tab, active: true });
+    let finish!: (window: { focused: boolean }) => void;
+    chromeMock.windows.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const reading = browser.execute(request("native_context", { id: handle })).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    chromeMock.tabs.onActivated.addListener.mock.calls[0][0](); chromeMock.windows.onFocusChanged.addListener.mock.calls[0][0]();
+    finish({ focused: true }); expect(await reading).toMatchObject({ code: "browser_focus_changed", details: { dispatched: false } });
+    await expect(browser.execute(request("native_context", { id: handle }))).resolves.toMatchObject({ foregroundRevision: 2, active: true });
+  });
+
   it("creates a new tab instead of commandeering the user's focused page", async () => {
     const browser = new BrowserController(epoch, vi.fn());
     await browser.restore();

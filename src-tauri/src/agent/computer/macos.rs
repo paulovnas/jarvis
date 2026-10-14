@@ -544,6 +544,18 @@ fn ax_element(
     .map(|value| value.map(|element| element.0))
 }
 
+fn ax_child_page<T>(
+    count: isize,
+    limit: usize,
+    copy: impl FnOnce(isize) -> Result<Vec<T>, AgentError>,
+) -> Result<Vec<T>, AgentError> {
+    let count = usize::try_from(count).map_err(|_| stale())?.min(limit);
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    copy(count as isize)
+}
+
 fn ax_children(
     element: &AXUIElement,
     key: &str,
@@ -553,37 +565,41 @@ fn ax_children(
     let key = key.to_owned();
     ax_query(element, guard, move |element, guard| {
         ax_timeout(element, guard)?;
-        let mut pointer = std::ptr::null();
-        // Request a bounded page; the successful Copy call transfers one array retain.
-        let result = unsafe {
-            element.copy_attribute_values(
-                &CFString::from_str(&key),
-                0,
-                limit as isize,
-                NonNull::from(&mut pointer),
-            )
-        };
-        let array = if result == AXError::Success {
-            NonNull::new(pointer.cast_mut())
-                .map(|pointer| unsafe { CFRetained::<CFArray>::from_raw(pointer) })
-        } else {
-            None
-        };
+        let key = CFString::from_str(&key);
+        let mut count = 0;
+        let result = unsafe { element.attribute_value_count(&key, NonNull::from(&mut count)) };
         guard.check()?;
         if result == AXError::AttributeUnsupported || result == AXError::NoValue {
             return Ok(Vec::new());
         }
         ax_result(result)?;
-        let Some(array) = array else {
-            return Ok(Vec::new());
-        };
-        // AX array-valued attributes contain retained CF objects.
-        Ok(unsafe { array.cast_unchecked::<CFType>() }
-            .iter()
-            .take(limit)
-            .filter_map(|value| value.downcast::<AXUIElement>().ok())
-            .map(AxElement)
-            .collect())
+        // Index zero is illegal for an empty AX array; query its count before paging.
+        ax_child_page(count, limit, |count| {
+            ax_timeout(element, guard)?;
+            let mut pointer = std::ptr::null();
+            // The successful Copy call transfers one array retain.
+            let result = unsafe {
+                element.copy_attribute_values(&key, 0, count, NonNull::from(&mut pointer))
+            };
+            let array = if result == AXError::Success {
+                NonNull::new(pointer.cast_mut())
+                    .map(|pointer| unsafe { CFRetained::<CFArray>::from_raw(pointer) })
+            } else {
+                None
+            };
+            guard.check()?;
+            ax_result(result)?;
+            let Some(array) = array else {
+                return Ok(Vec::new());
+            };
+            // AX array-valued attributes contain retained CF objects.
+            Ok(unsafe { array.cast_unchecked::<CFType>() }
+                .iter()
+                .take(limit)
+                .filter_map(|value| value.downcast::<AXUIElement>().ok())
+                .map(AxElement)
+                .collect())
+        })
     })
     .map(|nodes| nodes.into_iter().map(|element| element.0).collect())
 }
@@ -874,11 +890,42 @@ fn focused_window(
         .is_some_and(|window| same_element(&window, root)))
 }
 
+pub(super) fn browser_target_focused(
+    target: &NativeTarget,
+    guard: &OperationGuard,
+) -> Result<bool, AgentError> {
+    autoreleasepool(|_| {
+        let root = ax_root(target, guard)?;
+        focused_window(target, &root, guard)
+    })
+}
+
+pub(super) fn browser_target_frontmost(
+    target: &NativeTarget,
+    guard: &OperationGuard,
+) -> Result<bool, AgentError> {
+    guard.check()?;
+    let frontmost = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .is_some_and(|app| app.processIdentifier() == target.app.process_id);
+    guard.check()?;
+    Ok(frontmost)
+}
+
 enum AxMutation {
     Raise,
     Press,
     Focus,
     SelectedText(String),
+}
+
+impl AxMutation {
+    fn before_dispatch(&self, guard: &OperationGuard) -> Result<(), AgentError> {
+        match self {
+            Self::Raise | Self::Focus => guard.before_focus(),
+            Self::Press | Self::SelectedText(_) => guard.before_dispatch(),
+        }
+    }
 }
 
 fn ax_mutate(
@@ -942,12 +989,12 @@ fn ax_mutate(
                 })
                 .ok_or_else(stale)?;
             // CEF's AX focus proxy can lag; own windows use their public AppKit identity on main.
-            guard.before_dispatch()?;
+            mutation.before_dispatch(guard)?;
             window.makeKeyAndOrderFront(None);
             return guard.check();
         }
-        // The actual thread records dispatch only after revalidating the queued target.
-        guard.before_dispatch()?;
+        // Focus is a side effect, separate from the requested input receipt.
+        mutation.before_dispatch(guard)?;
         if matches!(&mutation, AxMutation::Press) {
             indicate_element(element, guard, true);
         }
@@ -1050,7 +1097,7 @@ fn focus(
         return Ok(());
     }
     let app = running_target_app(target, guard)?;
-    guard.before_dispatch()?;
+    guard.before_focus()?;
     if !app.activateWithOptions(NSApplicationActivationOptions::empty()) {
         return Err(error(
             "computer_focus_failed",
@@ -2093,6 +2140,67 @@ fn permission_settings_url(permission: ComputerPermission) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accessibility_focus_only_failure_does_not_record_input() {
+        for mutation in [AxMutation::Raise, AxMutation::Focus] {
+            let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+            let result: Result<(), AgentError> = (|| {
+                mutation.before_dispatch(&guard)?;
+                Err(stale())
+            })();
+            assert_eq!(result.unwrap_err().code, "computer_stale_target");
+            assert!(!guard.dispatched.load(Ordering::SeqCst));
+            assert!(!guard.cancel());
+        }
+    }
+
+    #[test]
+    fn cancelled_accessibility_focus_refuses_the_native_side_effect() {
+        for mutation in [AxMutation::Raise, AxMutation::Focus] {
+            let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+            assert!(!guard.cancel());
+            let result = mutation.before_dispatch(&guard);
+            assert_eq!(result.unwrap_err().code, "computer_stopped");
+            assert!(!guard.dispatched.load(Ordering::SeqCst));
+        }
+    }
+
+    #[test]
+    fn failed_accessibility_input_keeps_dispatch_for_recovery() {
+        for mutation in [AxMutation::Press, AxMutation::SelectedText("Input".into())] {
+            let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+            let result: Result<(), AgentError> = (|| {
+                mutation.before_dispatch(&guard)?;
+                Err(stale())
+            })();
+            assert_eq!(result.unwrap_err().code, "computer_stale_target");
+            assert!(guard.dispatched.load(Ordering::SeqCst));
+            assert!(guard.cancel());
+            assert_eq!(guard.check().unwrap_err().code, "computer_stopped");
+        }
+    }
+
+    #[test]
+    fn empty_accessibility_children_do_not_request_an_invalid_index() {
+        let children = ax_child_page(0, 64, |_| -> Result<Vec<u8>, AgentError> {
+            panic!("Index zero is invalid for an empty AX array")
+        })
+        .unwrap();
+        assert!(children.is_empty());
+    }
+
+    #[test]
+    fn accessibility_children_requests_respect_available_count_and_limit() {
+        let children = ax_child_page(1, 64, |count| Ok(vec![count])).unwrap();
+        assert_eq!(children, [1]);
+        let children = ax_child_page(100, 64, |count| Ok(vec![count])).unwrap();
+        assert_eq!(children, [64]);
+        let result = ax_child_page(-1, 64, |_| -> Result<Vec<u8>, AgentError> {
+            panic!("Invalid AX counts must not be dispatched")
+        });
+        assert_eq!(result.unwrap_err().code, "computer_stale_target");
+    }
 
     #[test]
     fn self_input_waits_for_main_and_expires_without_dispatch_on_a_worker() {

@@ -27,8 +27,12 @@ export class BrowserController {
   private storage = new CommandQueue();
   private validity = new Map<number, () => boolean>();
   private generation = 0;
+  private foregroundRevision = 0;
 
-  constructor(readonly epoch: string, private changed: (conversationId: string) => void) {}
+  constructor(readonly epoch: string, private changed: (conversationId: string) => void) {
+    chrome.tabs.onActivated.addListener(() => { this.foregroundRevision++; });
+    chrome.windows.onFocusChanged.addListener(() => { this.foregroundRevision++; });
+  }
 
   async restore(): Promise<void> {
     const saved = await chrome.storage.session.get(["owners", "active"]);
@@ -502,8 +506,15 @@ export class BrowserController {
         await chrome.tabs.update(id, { url: address(request.url) });
         return this.tab(id, owner);
       }
+      const foregroundRevision = this.foregroundRevision;
       const tab = await chrome.tabs.get(id);
       if (tab.url !== "about:blank" || !owner.created) address(tab.url ?? "");
+      if (request.action === "native_context") {
+        const window = await chrome.windows.get(tab.windowId); this.requireConnection(valid);
+        if (foregroundRevision !== this.foregroundRevision) throw new BrowserError("browser_focus_changed", "A aba ou janela ativa mudou durante a consulta. Observe novamente antes de agir.", { dispatched: false });
+        return { id: tabHandle(this.epoch, id), browser: "chromium", title: tab.title ?? "", url: tab.url ?? "", active: tab.active === true, focused: window.focused === true,
+          windowId: tab.windowId, foregroundRevision, window: { left: window.left, top: window.top, width: window.width, height: window.height } };
+      }
       if (this.detached.has(id)) throw new BrowserError("browser_debugger_detached", "O depurador foi desconectado (por exemplo, ao abrir o DevTools). Feche o DevTools e conecte esta aba novamente com browser_attach.");
       await this.attach(id);
       this.requireConnection(valid);

@@ -225,7 +225,10 @@ pub(super) struct OperationGuard {
     dispatch_lock: Arc<Mutex<()>>,
     pub(super) signal: Option<tokio::sync::watch::Receiver<bool>>,
     pub(super) feedback: Option<Arc<AtomicBool>>,
+    pub(super) context_check: Option<InputContextCheck>,
 }
+
+type InputContextCheck = Arc<dyn Fn(&OperationGuard) -> Result<(), AgentError> + Send + Sync>;
 
 impl OperationGuard {
     pub(super) fn new(deadline: Instant) -> Self {
@@ -236,6 +239,7 @@ impl OperationGuard {
             dispatch_lock: Arc::default(),
             signal: None,
             feedback: None,
+            context_check: None,
         }
     }
 
@@ -261,7 +265,24 @@ impl OperationGuard {
     }
 
     #[cfg(any(target_os = "macos", test))]
+    pub fn before_focus(&self) -> Result<(), AgentError> {
+        if let Some(check) = &self.context_check {
+            self.check()?;
+            check(self)?;
+        }
+        let _lock = self
+            .dispatch_lock
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        self.check()
+    }
+
+    #[cfg(any(target_os = "macos", test))]
     pub fn before_dispatch(&self) -> Result<(), AgentError> {
+        if let Some(check) = &self.context_check {
+            self.check()?;
+            check(self)?;
+        }
         let _lock = self
             .dispatch_lock
             .lock()
@@ -298,4 +319,103 @@ pub(super) trait NativeBackend: Send + Sync {
         &self,
         permission: ComputerPermission,
     ) -> Result<ComputerCapabilities, AgentError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn focus_only_failure_does_not_record_input() {
+        let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        let result: Result<(), AgentError> = (|| {
+            guard.before_focus()?;
+            Err(AgentError::new("computer_stale_target", "Target changed"))
+        })();
+        assert_eq!(result.unwrap_err().code, "computer_stale_target");
+        assert!(!guard.dispatched.load(Ordering::SeqCst));
+        assert!(!guard.cancel());
+    }
+
+    #[test]
+    fn cancelled_focus_refuses_the_native_side_effect() {
+        let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        assert!(!guard.cancel());
+        let result = guard.before_focus();
+        assert_eq!(result.unwrap_err().code, "computer_stopped");
+        assert!(!guard.dispatched.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn expired_focus_refuses_the_native_side_effect() {
+        let guard = OperationGuard::new(Instant::now() - Duration::from_secs(1));
+        let result = guard.before_focus();
+        assert_eq!(result.unwrap_err().code, "computer_stopped");
+        assert!(!guard.dispatched.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn failed_input_keeps_dispatch_for_recovery() {
+        let guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        let result: Result<(), AgentError> = (|| {
+            guard.before_dispatch()?;
+            Err(AgentError::new("computer_stale_target", "Target changed"))
+        })();
+        assert_eq!(result.unwrap_err().code, "computer_stale_target");
+        assert!(guard.dispatched.load(Ordering::SeqCst));
+        assert!(guard.cancel());
+        assert_eq!(guard.check().unwrap_err().code, "computer_stopped");
+    }
+
+    #[test]
+    fn changed_context_at_the_native_boundary_refuses_focus_and_input() {
+        let mut guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        guard.context_check = Some(Arc::new(|_| {
+            Err(AgentError::new(
+                "computer_context_changed",
+                "Tab switched after preparation",
+            ))
+        }));
+        assert_eq!(
+            guard.before_focus().unwrap_err().code,
+            "computer_context_changed"
+        );
+        assert_eq!(
+            guard.before_dispatch().unwrap_err().code,
+            "computer_context_changed"
+        );
+        assert!(!guard.dispatched.load(Ordering::SeqCst));
+        assert!(!guard.cancel());
+    }
+
+    #[test]
+    fn cancellation_during_context_validation_prevents_dispatch_without_holding_the_lock() {
+        let mut guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        guard.context_check = Some(Arc::new(|guard| {
+            if guard.dispatch_lock.try_lock().is_err() {
+                return Err(AgentError::new(
+                    "cancellation_blocked",
+                    "Context validation must not hold the dispatch lock",
+                ));
+            }
+            assert!(!guard.cancel());
+            Ok(())
+        }));
+        assert_eq!(
+            guard.before_dispatch().unwrap_err().code,
+            "computer_stopped"
+        );
+        assert!(!guard.dispatched.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn valid_context_keeps_dispatched_input_for_recovery() {
+        let mut guard = OperationGuard::new(Instant::now() + Duration::from_secs(1));
+        guard.context_check = Some(Arc::new(|_| Ok(())));
+        guard.before_dispatch().unwrap();
+        assert!(guard.cancel());
+        assert!(guard.dispatched.load(Ordering::SeqCst));
+        assert_eq!(guard.check().unwrap_err().code, "computer_stopped");
+    }
 }

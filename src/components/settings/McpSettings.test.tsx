@@ -40,10 +40,10 @@ describe("McpSettings", () => {
     expect(await screen.findByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
   });
 
-  it("carrega MCPs locais, de plugins e apps remotos na mesma lista", async () => {
+  it("mostra os MCPs manuais primeiro e agrupa MCPs e apps de plugins abaixo", async () => {
     const plugin = { ...server, id: "plugin-mcp:firebase", source: "firebase@firebase", name: "firebase", revision: 8_134_910_661_641_560 };
     const app = { ...server, id: "plugin-app:firebase@official", source: "firebase@official", name: "firebase@official · Apps", kind: "remote", revision: Number.MAX_SAFE_INTEGER };
-    mocked.mockResolvedValue([server, plugin, app]);
+    mocked.mockResolvedValue([plugin, server, app]);
     const count = vi.fn();
     render(<McpSettings onCountChange={count} />);
 
@@ -55,6 +55,23 @@ describe("McpSettings", () => {
     expect(screen.getByText("Plugin · firebase@firebase")).toBeVisible();
     expect(screen.getByText("Plugin · firebase@official")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    const plugins = screen.getByRole("region", { name: "Plugins" });
+    expect(within(plugins).getByRole("heading", { name: "Plugins" })).toBeVisible();
+    expect(within(plugins).getByRole("button", { name: "Detalhes do MCP firebase" })).toBeVisible();
+    expect(within(plugins).getByRole("button", { name: `Detalhes do MCP ${app.name}` })).toBeVisible();
+    expect(within(plugins).queryByRole("button", { name: "Detalhes do MCP context7" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Detalhes do MCP/ }).map(button => button.getAttribute("aria-label"))).toEqual([
+      "Detalhes do MCP context7", "Detalhes do MCP firebase", `Detalhes do MCP ${app.name}`,
+    ]);
+    expect(screen.queryByRole("heading", { name: /Manuais/ })).not.toBeInTheDocument();
+  });
+
+  it.each([{ servers: [] }, { servers: [server] }])("não mostra uma seção Plugins vazia: %j", async ({ servers }) => {
+    mocked.mockResolvedValue(servers);
+    render(<McpSettings />);
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Carregando MCPs" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Plugins" })).not.toBeInTheDocument();
+    if (servers.length === 0) expect(screen.getByText("Nenhum MCP cadastrado.")).toBeVisible();
   });
 
   it("mantém o Context7 compacto e não conecta enquanto a chave é um exemplo", async () => {

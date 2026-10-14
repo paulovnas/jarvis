@@ -3949,8 +3949,10 @@ fn run_turn_once<'a>(
                     }
                 }
             }
-            let step_context = context_manager::StepContext::capture(
+            let step_context = context_manager::StepContext::capture_with_observations(
                 session,
+                home,
+                &owner.id,
                 &options,
                 &instructions,
                 &definitions,

@@ -11,6 +11,20 @@ describe("visual MCP configuration", () => {
     const raw = { remote: { type: "remote", url: "https://example.test/mcp?q=1", headers: { Authorization: "Bearer test-only", "X-Custom": "value" }, oauth: false, enabled: false, timeout: 6000, requestTimeout: 450000 } };
     expect(JSON.parse(writeMcpDraft(readMcpDraft(JSON.stringify(raw)), true))).toEqual(raw);
   });
+  it("saves browser OAuth without requiring a fixed credential", () => {
+    const draft = { ...emptyMcpDraft(), name: "jam", type: "remote" as const, url: "https://mcp.jam.dev/mcp", oauth: true };
+    expect(JSON.parse(writeMcpDraft(draft, true)).jam).toEqual({ type: "remote", url: "https://mcp.jam.dev/mcp", oauth: true, enabled: true, timeout: 30000, requestTimeout: 300000 });
+  });
+  it.each(["http://127.0.0.1:4000/mcp", "http://localhost:4000/mcp", "http://[::1]:4000/mcp"])("allows local browser authentication over HTTP at %s", url => {
+    expect(() => writeMcpDraft({ ...emptyMcpDraft(), name: "local", type: "remote", url, oauth: true }, true)).not.toThrow();
+  });
+  it.each([
+    { url: "http://service.test/mcp", headers: [], message: /HTTPS/ },
+    { url: "http://127.evil.test/mcp", headers: [], message: /HTTPS/ },
+    { url: "https://service.test/mcp", headers: [{ key: "authorization", value: "Bearer fixture" }], message: /Authorization/ },
+  ])("rejects unsafe or conflicting browser authentication for $url", ({ url, headers, message }) => {
+    expect(() => writeMcpDraft({ ...emptyMcpDraft(), name: "remote", type: "remote", url, headers, oauth: true }, true)).toThrow(message);
+  });
   it("rejects unsupported fields instead of silently dropping them when switching tabs", () => {
     expect(() => readMcpDraft('{"test":{"type":"local","command":["node"],"futureOption":true}}')).toThrow(/texto foi preservado/);
     expect(() => readMcpDraft("{")).toThrow(/JSON inválido/);
