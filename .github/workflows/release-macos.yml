@@ -138,6 +138,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: '1'
+          # quick-sharun's default source URL was removed from the upstream repository.
+          ANYLINUX_LIB_SOURCE: https://raw.githubusercontent.com/FabianLars/Anylinux-AppImages/df9cd3246ccbcf61eb22fc321a52277351047b4b/useful-tools/lib/anylinux.c
         run: bun run tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb,appimage --config src-tauri/tauri.release.conf.json -- --locked
       - name: Verificar e preparar artefatos
         env:

@@ -192,6 +192,11 @@ it("declares Linux desktop and Chromium dependencies for a clean DEB installatio
     expect(config.bundle.linux.deb.depends).toContain(dependency);
   }
 });
+it("uses a pinned portability shim source when packaging the Linux AppImage", () => {
+  const workflow = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
+  const linuxBuild = workflow.split("- name: Compilar DEB e AppImage e assinar atualização")[1].split("- name: Verificar e preparar artefatos")[0];
+  expect(linuxBuild).toMatch(/ANYLINUX_LIB_SOURCE: https:\/\/raw\.githubusercontent\.com\/FabianLars\/Anylinux-AppImages\/[a-f0-9]{40}\/useful-tools\/lib\/anylinux\.c/);
+});
 it("prepares matching native Chromium libraries and the pinned bundler for every CI platform", () => {
   const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
   const release = readFileSync(path.join(process.cwd(), ".github/workflows/release-macos.yml"), "utf8");
