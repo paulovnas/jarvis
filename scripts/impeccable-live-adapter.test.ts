@@ -58,6 +58,23 @@ it("queues one scoped cancel intent and renders recoverable errors without modif
   expect(shader.style.visibility).toBe("");
 });
 
+it("keeps cancellation available after a failed action and hides inherited button chrome at idle", () => {
+  const { adapter, status, bar } = fixture();
+  adapter.update({ ...status, revision: 2, phase: "blocked", state: "setup", error: "O Designer não concluiu o protocolo." });
+  const cancel = within(bar).getByRole("button", { name: "Cancelar alteração" });
+  cancel.style.display = "flex";
+  cancel.click();
+  const [request] = adapter.drain();
+  expect(request).toMatchObject({ action: "cancel", actionId: "a1", revision: 2 });
+  // Native completion must release the controls even when the feedback response is lost.
+  adapter.update({ ...status, revision: 3, phase: "idle", actionId: null, activity: "Alteração removida. As alterações anteriores foram preservadas." });
+  expect(cancel.style.getPropertyValue("display")).toBe("none");
+  expect(cancel.style.getPropertyPriority("display")).toBe("important");
+  expect(within(bar).getByRole("status")).toHaveTextContent("Live pronto para editar");
+  expect(within(bar).getByRole("status")).not.toHaveTextContent("Alteração concluída");
+  expect(within(bar).getByRole("status")).toHaveTextContent("Alteração removida");
+});
+
 it("retains real errors, rejects stale foreign status, and confirms completion only from native idle", () => {
   const { adapter, status, bar } = fixture();
   adapter.update({ ...status, revision: 4, phase: "blocked", error: "O provedor não respondeu." });

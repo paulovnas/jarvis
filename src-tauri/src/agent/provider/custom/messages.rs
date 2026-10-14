@@ -100,7 +100,8 @@ impl Stream {
                 if !self.pending.remove(&index) {
                     return Err(protocol_error());
                 }
-                if let Some(arguments) = self.arguments.remove(&index) {
+                if let Some(arguments) = self.arguments.remove(&index).filter(|raw| !raw.is_empty())
+                {
                     self.blocks.get_mut(&index).ok_or_else(protocol_error)?["input"] =
                         serde_json::from_str(&arguments).map_err(|_| protocol_error())?;
                 }

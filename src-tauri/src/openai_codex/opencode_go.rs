@@ -180,6 +180,11 @@ fn model_config_from_metadata(id: &str, raw: &Value) -> Option<Config> {
 fn normalize_contract(config: &mut Config) {
     for model in &mut config.models {
         model.max_output_tokens = model.max_output_tokens.min(MAX_OUTPUT_TOKENS);
+        // Go currently routes this alias to a thinking-only upstream model.
+        if model.id == "glm-5.1" && model.reasoning == Reasoning::Toggle {
+            model.reasoning_levels = vec!["on".into()];
+            model.default_reasoning_level = Some("on".into());
+        }
         // Go's DeepSeek routes use the OpenAI effort dialect, not the native
         // DeepSeek thinking toggle. OMP pins the original Flash to Responses;
         // V4.1 and the vision experiment use Completions with a different cap field.

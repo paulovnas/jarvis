@@ -853,7 +853,7 @@ pub(super) fn remove(
     mutate(root, home, request_id, Some(expected_revision), |record| {
         if !matches!(
             record.task.status,
-            Status::Pending | Status::Paused | Status::Blocked
+            Status::Pending | Status::Paused | Status::Blocked | Status::Cancelled
         ) {
             return Err(error(
                 "Interrompa a execução Live antes de remover este pedido.",
@@ -1753,6 +1753,40 @@ mod tests {
         let task = fixture.scan(expected - 1).remove(0);
         assert_eq!(task.created_at, expected);
         assert_eq!(task.status, Status::Pending);
+    }
+
+    #[test]
+    fn removed_request_can_retry_visual_settlement_without_replaying_or_rewriting_the_request() {
+        let fixture = Fixture::new();
+        fixture.journal("remove", &[(110, generate("remove", "Change icons", 110))]);
+        let task = fixture.scan(100).remove(0);
+        let removed = remove(
+            &fixture.root,
+            &fixture.home,
+            &task.request_id,
+            task.revision,
+        )
+        .unwrap();
+        assert_eq!(removed.status, Status::Cancelled);
+        assert!(remove(
+            &fixture.root,
+            &fixture.home,
+            &task.request_id,
+            task.revision
+        )
+        .is_err());
+        let retried = remove(
+            &fixture.root,
+            &fixture.home,
+            &removed.request_id,
+            removed.revision,
+        )
+        .unwrap();
+        assert_eq!(retried.status, Status::Cancelled);
+        assert_eq!(retried.request_id, task.request_id);
+        assert_eq!(retried.content, task.content);
+        assert_eq!(retried.event, task.event);
+        assert_eq!(fixture.scan(100)[0].status, Status::Cancelled);
     }
 
     #[test]

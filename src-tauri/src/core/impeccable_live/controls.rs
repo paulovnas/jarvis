@@ -309,6 +309,10 @@ pub async fn remove_impeccable_live_task(
     let _operation = state.operations.lock().await;
     let (home, root, _) = queue_location(&app, &conversation_id).await?;
     let task = tasks::remove(&root, &home, &request_id, expected_revision)?;
+    refresh(&app, &conversation_id).await?;
+    // Release the confirmed browser request even if Beads synchronization fails.
+    acknowledge_removed_request(&app, &conversation_id, &task).await?;
+    refresh(&app, &conversation_id).await?;
     let (_sender, signal) = watch::channel(false);
     let bead = sync_bead(
         &app,
@@ -321,7 +325,6 @@ pub async fn remove_impeccable_live_task(
     )
     .await?;
     tasks::transition(&root, &home, &request_id, task.status, Some(&bead), None)?;
-    acknowledge_removed_request(&app, &conversation_id, &task).await?;
     refresh(&app, &conversation_id).await
 }
 
@@ -446,6 +449,45 @@ fn cancellation_payload(task: &tasks::Task) -> Result<Option<Value>, CoreError> 
     })))
 }
 
+pub(super) fn reconcile_removed_action(
+    entry: &mut Entry,
+    task: &tasks::Task,
+) -> Option<watch::Receiver<bool>> {
+    if task.status != tasks::Status::Cancelled
+        || entry.status.phase != "blocked"
+        || entry.pending_id.as_deref() != Some(task.action_id.as_str())
+        || entry.stopping
+    {
+        return None;
+    }
+    let payload: Value =
+        serde_json::from_str(entry.event_content.as_deref()?.lines().nth(2)?).ok()?;
+    // Restarted owners retain an unbound legacy prompt; the confirmed helper ACK fences it.
+    let legacy = payload.get("_jarvisRequestId").is_none()
+        && payload.get("_jarvisPendingEventSeq").is_none();
+    if payload["id"] != task.action_id
+        || (!legacy
+            && (payload["_jarvisRequestId"] != task.request_id
+                || payload["_jarvisPendingEventSeq"].as_u64().is_none()
+                || payload["_jarvisPendingEventSeq"] != task.event["_jarvisPendingEventSeq"]))
+    {
+        return None;
+    }
+    let _ = entry.cancel.send(true);
+    let (cancel, receiver) = watch::channel(false);
+    entry.cancel = cancel;
+    entry.pending_id = None;
+    entry.event_content = None;
+    entry.status.state = "ready";
+    entry.status.phase = "idle";
+    entry.status.action_id = None;
+    entry.status.error = None;
+    entry.status.setup_needed = None;
+    entry.status.activity =
+        Some("Alteração removida. As alterações anteriores foram preservadas.".into());
+    Some(receiver)
+}
+
 async fn acknowledge_removed_request(
     app: &tauri::AppHandle,
     id: &str,
@@ -467,8 +509,18 @@ async fn acknowledge_removed_request(
     if !helper_compatible(&identity).await? || !verify_helper_identity(&identity)? {
         return Err(error("O pedido foi removido. O helper Live precisa da atualização nativa antes de encerrar sua visualização."));
     }
-    payload["token"] = json!(identity.2);
-    let response = helper_client(Duration::from_secs(10))?
+    let root = app
+        .state::<ImpeccableLiveState>()
+        .entries
+        .lock()
+        .map_err(|_| error("Estado Live indisponível."))?
+        .get(id)
+        .map(|entry| entry.root.clone())
+        .ok_or_else(|| error("Sessão Live indisponível."))?;
+    // A lost response may already have a durable cancellation receipt. Observe it before another POST.
+    if tasks::confirmed_outcome(&root, task)? != Some(tasks::Status::Cancelled) {
+        payload["token"] = json!(identity.2);
+        let response = helper_client(Duration::from_secs(10))?
         .post(format!("http://127.0.0.1:{}/poll", identity.1))
         .json(&payload)
         .send()
@@ -476,15 +528,47 @@ async fn acknowledge_removed_request(
         .map_err(|_| {
             error("O pedido foi removido, mas o helper ainda não confirmou o encerramento visual.")
         })?;
-    if response.status() == reqwest::StatusCode::CONFLICT {
-        // A newer request/phase replaced this one. Never clear its browser UI.
-        return Ok(());
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            // A newer request/phase replaced this one. Never clear its browser UI.
+            if tasks::confirmed_outcome(&root, task)? != Some(tasks::Status::Cancelled) {
+                return Ok(());
+            }
+        } else if !response.status().is_success() || response_json(response).await?["ok"] != true {
+            return Err(error(
+                "O pedido foi removido, mas o helper ainda não confirmou o encerramento visual.",
+            ));
+        }
     }
-    if !response.status().is_success() || response_json(response).await?["ok"] != true {
-        return Err(error(
-            "O pedido foi removido, mas o helper ainda não confirmou o encerramento visual.",
-        ));
+    let (restart, persisted) = {
+        let state = app.state::<ImpeccableLiveState>();
+        let mut entries = state
+            .entries
+            .lock()
+            .map_err(|_| error("Estado Live indisponível."))?;
+        match entries.get_mut(id) {
+            Some(entry) => match reconcile_removed_action(entry, task) {
+                Some(receiver) => {
+                    let persisted = save_owner(entry);
+                    notify(app, &entry.status);
+                    (
+                        Some((
+                            entry.home.clone(),
+                            entry.root.clone(),
+                            entry.project_root.clone(),
+                            receiver,
+                        )),
+                        persisted,
+                    )
+                }
+                None => (None, Ok(())),
+            },
+            None => (None, Ok(())),
+        }
+    };
+    if let Some((home, root, project, receiver)) = restart {
+        spawn_pump(app.clone(), id.into(), home, root, project, receiver);
     }
+    persisted?;
     Ok(())
 }
 

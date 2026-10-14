@@ -1693,8 +1693,18 @@ async fn boot(
     notify(app, &status);
     controls::retire_legacy_chat_queue(app, id).await?;
     controls::reconcile_cancelled(app, id).await?;
-    let app = app.clone();
-    let id = id.to_owned();
+    spawn_pump(app.clone(), id.into(), home, app_root, root, receiver);
+    Ok(status)
+}
+
+fn spawn_pump(
+    app: tauri::AppHandle,
+    id: String,
+    home: PathBuf,
+    app_root: PathBuf,
+    root: PathBuf,
+    mut receiver: watch::Receiver<bool>,
+) {
     tauri::async_runtime::spawn(async move {
         let result = AssertUnwindSafe(pump(&app, &id, &home, &app_root, &root, &mut receiver))
             .catch_unwind()
@@ -1702,9 +1712,18 @@ async fn boot(
             .unwrap_or_else(|_| Err(error("O processamento Live foi interrompido. Retome o Live para recuperar a ação preservada.")));
         if let Err(cause) = result {
             if !*receiver.borrow() {
+                let state = app.state::<ImpeccableLiveState>();
+                let _operation = state.operations.lock().await;
+                let owned = state.entries.lock().is_ok_and(|entries| {
+                    entries
+                        .get(&id)
+                        .is_some_and(|entry| entry.cancel.subscribe().same_channel(&receiver))
+                });
+                if !owned || *receiver.borrow() {
+                    return;
+                }
                 let reason = cause.message.clone();
                 let settlement = controls::settle(&app, &id, tasks::Status::Blocked, &reason).await;
-                let state = app.state::<ImpeccableLiveState>();
                 if let Ok(mut entries) = state.entries.lock() {
                     if let Some(entry) = entries
                         .get_mut(&id)
@@ -1723,7 +1742,6 @@ async fn boot(
             }
         }
     });
-    Ok(status)
 }
 
 fn setup(
@@ -4569,6 +4587,68 @@ mod tests {
         ));
         assert!(!entry.stopping);
         assert_eq!(entry.pending_id.as_deref(), Some("pending-action"));
+    }
+
+    #[test]
+    fn removed_request_releases_blocked_feedback_without_clearing_a_newer_request() {
+        let fixture = OwnedFixture::new();
+        let mut entry = fixture.entry();
+        entry.status.state = "setup";
+        entry.status.phase = "blocked";
+        entry.status.action_id = entry.pending_id.clone();
+        entry.status.error = Some("The Designer did not complete the protocol".into());
+        entry.status.setup_needed = Some(json!({"error":"event_failed"}));
+        let mut event = json!({"id":"pending-action","type":"generate","_jarvisRequestId":"pending-action:17","_jarvisPendingEventSeq":8});
+        let task = tasks::Task {
+            request_id: "pending-action:17".into(),
+            action_id: "pending-action".into(),
+            revision: 2,
+            content: "Move the version label".into(),
+            event: event.clone(),
+            status: tasks::Status::Cancelled,
+            bead_id: None,
+            turn_id: Some("failed-turn".into()),
+            created_at: 1,
+        };
+        let previous = entry.cancel.subscribe();
+        for replacement in [
+            json!({"_jarvisRequestId":"pending-action:18","_jarvisPendingEventSeq":8}),
+            json!({"_jarvisRequestId":"pending-action:17","_jarvisPendingEventSeq":9}),
+        ] {
+            event["_jarvisRequestId"] = replacement["_jarvisRequestId"].clone();
+            event["_jarvisPendingEventSeq"] = replacement["_jarvisPendingEventSeq"].clone();
+            entry.event_content = Some(event_prompt(&event).unwrap());
+            assert!(controls::reconcile_removed_action(&mut entry, &task).is_none());
+            assert_eq!(entry.status.phase, "blocked");
+            assert!(entry.status.error.is_some());
+            assert!(!*previous.borrow());
+        }
+        entry.event_content = Some(event_prompt(&task.event).unwrap());
+        let next = controls::reconcile_removed_action(&mut entry, &task).unwrap();
+        assert!(*previous.borrow());
+        assert!(!*next.borrow());
+        assert!(!next.same_channel(&previous));
+        assert_eq!(entry.status.state, "ready");
+        assert_eq!(entry.status.phase, "idle");
+        assert!(entry.status.action_id.is_none());
+        assert!(entry.status.error.is_none());
+        assert!(entry.status.setup_needed.is_none());
+        assert!(entry.pending_id.is_none());
+        assert!(entry.event_content.is_none());
+        assert_eq!(
+            entry.status.url.as_deref(),
+            Some("http://localhost:3001/dashboard")
+        );
+        save_owner(&entry).unwrap();
+        let owner = read_record(&ownership_path(&fixture.home, &fixture.project))
+            .unwrap()
+            .unwrap();
+        assert!(owner["pending_id"].is_null());
+        entry.pending_id = Some(task.action_id.clone());
+        entry.status.phase = "blocked";
+        entry.event_content =
+            Some(event_prompt(&json!({"id":task.action_id,"type":"generate"})).unwrap());
+        assert!(controls::reconcile_removed_action(&mut entry, &task).is_some());
     }
 
     #[test]

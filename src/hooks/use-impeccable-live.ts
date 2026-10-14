@@ -171,7 +171,12 @@ export function useImpeccableLive(conversationId: string, enabled = true, recove
       const request = parsed.data;
       if (!enabled || request.conversationId !== conversationId || request.tabId !== activeStatus.tabId || request.actionId !== activeStatus.actionId) return;
       let error: string | null;
-      if (request.action === "cancel") error = request.actionId && ["waiting", "running"].includes(activeStatus.phase) ? await cancelAction(request.actionId) : "Esta alteração Live não está mais em execução.";
+      if (request.action === "cancel") {
+        const task = [...activeStatus.tasks].reverse().find(task => task.actionId === request.actionId);
+        if (task && ["pending", "paused", "blocked", "cancelled"].includes(task.status)) error = await taskAction("remove_impeccable_live_task", task);
+        else if (task?.status === "running") error = await cancelAction(task.actionId, task.requestId, task.revision);
+        else error = !task && request.actionId && ["waiting", "running", "blocked"].includes(activeStatus.phase) ? await cancelAction(request.actionId) : "Esta alteração Live não está mais em execução.";
+      }
       else error = !recovery?.canResume || !recovery.options ? recovery?.blockedReason ?? "Selecione um modelo disponível no chat para retomar o Live." : await change(true, recovery.options, recovery.tabId === activeStatus.tabId ? recovery.url ?? activeStatus.url ?? undefined : activeStatus.url ?? undefined);
       if (!generation.current.alive || generation.current.conversationId !== conversationId) return;
       await invoke("impeccable_live_action_feedback", { conversationId, tabId: request.tabId, requestId: request.requestId, error }).catch(() => {});

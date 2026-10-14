@@ -120,6 +120,33 @@ it("cancels only the exact Live action from its own toolbar and leaves the tab o
   expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "stop_impeccable_live")).toBe(false);
 });
 
+it("interrupts the latest running request instead of removing an older blocked request with the same action ID", async () => {
+  const old: ImpeccableLiveTask = { requestId: "session:17", actionId: "session", revision: 6, content: "Pedido anterior", status: "blocked", beadId: null, turnId: "old-turn", createdAt: 1 };
+  const current: ImpeccableLiveTask = { ...old, requestId: "session:18", revision: 3, content: "Pedido atual", status: "running", turnId: "current-turn", createdAt: 2 };
+  const running = { ...status("c1", "ready"), phase: "running", actionId: "session", tasks: [old, current] };
+  vi.mocked(invoke).mockImplementation(async () => running);
+  const hook = renderHook(() => useImpeccableLive("c1"));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  await act(async () => { actionListeners.forEach(handler => handler({ event: "impeccable-live:action", id: 1, payload: { conversationId: "c1", tabId: "page-1", actionId: "session", action: "cancel", requestId: "toolbar-1", revision: 4 } })); });
+  expect(invoke).toHaveBeenCalledWith("cancel_impeccable_live_action", { conversationId: "c1", actionId: "session", requestId: current.requestId, expectedRevision: current.revision });
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "remove_impeccable_live_task")).toBe(false);
+});
+
+it.each(["blocked", "cancelled"] as const)("settles a %s toolbar action without requiring an available model", async taskStatus => {
+  const task: ImpeccableLiveTask = { requestId: "event-1:17", actionId: "event-1", revision: 6, content: "Mover a versão", status: taskStatus, beadId: null, turnId: "failed-turn", createdAt: 1 };
+  const blocked = { ...status("c1", "ready"), state: "setup", phase: "blocked", actionId: task.actionId, error: "O Designer não concluiu o protocolo.", tasks: [task] };
+  vi.mocked(invoke).mockImplementation(async command => command === "get_impeccable_live" ? blocked : { ...status("c1", "ready"), phase: "idle", actionId: null, tasks: [{ ...task, status: "cancelled", revision: 7 }] });
+  const hook = renderHook(() => useImpeccableLive("c1", true, { canResume: false }));
+  await waitFor(() => expect(hook.result.current.loaded).toBe(true));
+  await act(async () => { actionListeners.forEach(handler => handler({ event: "impeccable-live:action", id: 1, payload: { conversationId: "c1", tabId: "page-1", actionId: task.actionId, action: "cancel", requestId: "toolbar-1", revision: 4 } })); });
+  expect(invoke).toHaveBeenCalledWith("remove_impeccable_live_task", { conversationId: "c1", requestId: task.requestId, expectedRevision: task.revision });
+  expect(invoke).toHaveBeenCalledWith("impeccable_live_action_feedback", { conversationId: "c1", tabId: "page-1", requestId: "toolbar-1", error: null });
+  expect(hook.result.current.status.actionId).toBeNull();
+  expect(hook.result.current.status.error).toBeNull();
+  expect(hook.result.current.busy).toBe(false);
+  expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "start_impeccable_live" || command === "start_agent_turn")).toBe(false);
+});
+
 it("reports unavailable recovery selection back to the toolbar without submitting a provider turn", async () => {
   vi.mocked(invoke).mockImplementationOnce(async () => ({ ...status("c1", "ready"), state: "setup", phase: "blocked", actionId: "event-1" }));
   const hook = renderHook(() => useImpeccableLive("c1", true, { canResume: false }));

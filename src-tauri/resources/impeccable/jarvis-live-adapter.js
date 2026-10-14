@@ -7,6 +7,7 @@
   let panel = null;
   let observer = null;
   let pending = null;
+  let pendingAction = null;
   let feedback = null;
   let sequence = 0;
   let completed = false;
@@ -34,9 +35,10 @@
   }
   function request(action) {
     if (!current || pending || requests.length) return;
-    if (action === 'cancel' && !['waiting', 'running'].includes(current.phase)) return;
+    if (action === 'cancel' && (!current.actionId || !['waiting', 'running', 'blocked'].includes(current.phase))) return;
     if (action === 'resume' && current.phase !== 'blocked' && current.state !== 'setup' && !current.error) return;
     pending = current.conversationId + ':' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + (++sequence));
+    pendingAction = action;
     feedback = null;
     requests.push({ requestId: pending, action, conversationId: current.conversationId, tabId: current.tabId, actionId: current.actionId, revision: current.revision });
     render();
@@ -98,7 +100,7 @@
       for (const [node, previous] of indicators) { node.style.setProperty('visibility', previous.visibility, previous.priority); }
       indicators.clear();
     }
-    const title = pending ? 'Enviando ação ao Jarvis…' : completed && phase === 'idle' ? 'Alteração concluída. Revise o resultado.' : phases[phase] || phases.idle;
+    const title = pending ? 'Enviando ação ao Jarvis…' : completed && phase === 'idle' && !current.activity ? 'Alteração concluída. Revise o resultado.' : phases[phase] || phases.idle;
     text(find('title'), title);
     const details = [current.provider, current.model, current.step ? 'Etapa ' + current.step : '', current.elapsedMs ? duration(current.elapsedMs) : '', current.queueCount ? current.queueCount + ' na fila' : ''].filter(Boolean).join(' · ');
     text(find('detail'), details);
@@ -106,8 +108,10 @@
     const message = feedback || current.error || current.activity || '';
     text(find('message'), message);
     find('message').hidden = !message;
-    const cancel = find('cancel'); cancel.hidden = !current.actionId || !['waiting', 'running'].includes(phase); cancel.disabled = !!pending;
+    const cancel = find('cancel'); cancel.hidden = !current.actionId || !['waiting', 'running', 'blocked'].includes(phase); cancel.disabled = !!pending;
+    cancel.style.setProperty('display', cancel.hidden ? 'none' : 'inline-flex', 'important');
     const resume = find('resume'); resume.hidden = !blocked; resume.disabled = !!pending;
+    resume.style.setProperty('display', resume.hidden ? 'none' : 'inline-flex', 'important');
     panel.dataset.phase = phase;
     const brand = chrome.getById('impeccable-live-global-bar-brand');
     if (brand) { brand.title = title; brand.setAttribute('aria-label', title); }
@@ -115,18 +119,21 @@
   function update(value) {
     if (!value || typeof value.conversationId !== 'string' || typeof value.tabId !== 'string' || !Number.isSafeInteger(value.revision)) return;
     if (current && (value.conversationId !== current.conversationId || value.tabId !== current.tabId || value.revision < current.revision)) return;
-    if (current?.actionId && !value.actionId && value.phase === 'idle' && !value.error) completed = true;
-    if (value.actionId && value.actionId !== current?.actionId) completed = false;
+    const ended = current?.actionId && !value.actionId && value.phase === 'idle' && !value.error;
+    const replaced = value.actionId && value.actionId !== current?.actionId;
+    if (ended) completed = true;
+    if (replaced) completed = false;
+    if (pendingAction === 'cancel' && (ended || replaced)) { pending = null; pendingAction = null; feedback = null; }
     if (current && value.revision > current.revision && !value.error && value.phase !== 'blocked' && value.state !== 'setup') feedback = null;
     current = value;
     window.__JARVIS_IMPECCABLE_SESSION__?.(value);
-    if (value.feedback?.requestId === pending) { pending = null; feedback = value.feedback.error || null; }
+    if (value.feedback?.requestId === pending) { pending = null; pendingAction = null; feedback = value.feedback.error || null; }
     render();
   }
   function dispose() {
     observer?.disconnect(); observer = null;
     panel?.remove(); panel = null;
-    requests.length = 0; pending = null; current = null;
+    requests.length = 0; pending = null; pendingAction = null; current = null;
     for (const [node, previous] of indicators) node.style.setProperty('visibility', previous.visibility, previous.priority);
     indicators.clear();
   }

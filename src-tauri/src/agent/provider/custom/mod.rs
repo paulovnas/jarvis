@@ -1,5 +1,5 @@
 use super::{
-    cancelled, context_overflow, go_region_error, http_failure, overflow_error, protocol_error,
+    cancelled, context_overflow, go_policy_error, http_failure, overflow_error, protocol_error,
     request_id, request_parameter, upstream_code, with_provider_metadata, with_request_parameter,
     AgentError, CodexCredential, Delta, ModelCapabilities, Response, Sse, TurnOptions, Usage,
     MAX_STREAM,
@@ -60,6 +60,17 @@ pub(super) fn fixture_request(
 
 fn failed(event: &Value) -> AgentError {
     super::event_failure(event)
+}
+
+fn projection_error(mut error: AgentError) -> AgentError {
+    if error.code == "provider_protocol" {
+        error.message = "O histórico não pôde ser convertido para uma solicitação válida. O progresso foi preservado.".into();
+        let mut metadata = crate::diagnostics::ProviderMetadata::new(None, None, None);
+        metadata.protocol_reason =
+            Some(crate::diagnostics::ProviderProtocolReason::RequestProjection);
+        error.provider_metadata = Some(Box::new(metadata));
+    }
+    error
 }
 fn output(
     text: String,
@@ -208,7 +219,8 @@ pub(super) fn incremental_request(
         instructions,
         input,
         tools,
-    )?;
+    )
+    .map_err(projection_error)?;
     session_request_with_client(client, credential, config, body, session_id)?
         .build()
         .map_err(|_| AgentError::internal())
@@ -276,7 +288,8 @@ pub(super) async fn stream_with_client(
         instructions,
         input,
         tools,
-    )?;
+    )
+    .map_err(projection_error)?;
     let request = session_request_with_client(client, credential, config, body, session_id)?;
     let scope = request::scope(config, options);
     if config.protocol == Protocol::OpenaiResponses {
@@ -362,7 +375,7 @@ async fn receive(
                 value.as_ref().and_then(request_parameter),
                 value
                     .as_ref()
-                    .and_then(|value| go_region_error(&endpoint, value)),
+                    .and_then(|value| go_policy_error(&endpoint, value)),
             )
         };
         let (overflow, upstream_code, parameter, region_error) = tokio::select! {

@@ -164,6 +164,55 @@ fn existing_go_accounts_get_corrected_contracts_without_reconnect_or_catalog_rew
 }
 
 #[test]
+fn go_recovery_glm_thinking_only_alias_is_normalized_for_new_and_cached_accounts() {
+    let mut raw = raw_model();
+    raw["reasoning_options"] = json!([{"type":"toggle"}]);
+    let current = model_config_from_metadata("glm-5.1", &raw).unwrap();
+    assert_eq!(current.models[0].reasoning, Reasoning::Toggle);
+    assert_eq!(current.models[0].reasoning_levels, ["on"]);
+    assert_eq!(
+        current.models[0].default_reasoning_level.as_deref(),
+        Some("on")
+    );
+
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let store = InMemorySecretStore::default();
+    let alias = "opencode-go-work";
+    let mut legacy = current;
+    legacy.models[0].reasoning_levels = vec!["off".into(), "on".into()];
+    legacy.models[0].default_reasoning_level = Some("off".into());
+    state
+        .with_connection(home.path(), |db| {
+            save(db, &store, alias, "synthetic-key", false, &[legacy.clone()])
+        })
+        .unwrap();
+    let corrected = model_config(&state, home.path(), alias, "glm-5.1").unwrap();
+    assert_eq!(corrected.models[0].reasoning_levels, ["on"]);
+    assert_eq!(
+        corrected.models[0].default_reasoning_level.as_deref(),
+        Some("on")
+    );
+    assert_eq!(store.load(alias).unwrap().access, "synthetic-key");
+    state
+        .with_connection(home.path(), |db| {
+            let stored: String = db
+                .query_row(
+                    "SELECT catalog FROM opencode_go_catalogs WHERE alias=?1",
+                    [alias],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Vec<Config>>(&stored).unwrap(),
+                vec![legacy]
+            );
+            Ok::<_, ProviderError>(())
+        })
+        .unwrap();
+}
+
+#[test]
 fn qwen_named_efforts_are_preserved_and_minimax_toggle_uses_its_own_messages_dialect() {
     let mut qwen = raw_model();
     qwen["reasoning_options"] = json!([{"type":"toggle"},{"type":"effort","values":["low","medium","xhigh"]},{"type":"budget_tokens","max":262144}]);

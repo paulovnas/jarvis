@@ -1,5 +1,254 @@
 use super::*;
 
+#[cfg(target_os = "macos")]
+mod go_live;
+
+#[test]
+fn go_recovery_rejected_arguments_do_not_poison_replay_or_hide_confirmed_results() {
+    for arguments in ["{\"file\": ", "null", "42", "[]"] {
+        let saved = vec![
+            json!({"role":"user","content":"Activate Live on the existing server"}),
+            json!({"type":"function_call","call_id":"reused","name":"read","arguments":arguments}),
+            json!({"type":"function_call_output","call_id":"reused","output":"JSON inválido: this call was rejected without execution"}),
+            json!({"role":"assistant","content":"Retry with complete arguments"}),
+            json!({"type":"function_call","call_id":"reused","name":"read","arguments":"{\"path\":\"README.md\"}"}),
+            json!({"type":"function_call_output","call_id":"reused","output":"CONFIRMED_RESULT"}),
+            json!({"role":"user","content":"Continue only the current Live request"}),
+        ];
+        let replay = super::super::provider_input(saved.clone());
+        for protocol in [
+            Protocol::OpenaiResponses,
+            Protocol::OpenaiCompletions,
+            Protocol::AnthropicMessages,
+        ] {
+            let config = config(protocol);
+            let mut options = options();
+            options.model = config.models[0].id.clone();
+            let body = request::body(
+                &config,
+                &config.models[0],
+                &options,
+                "Follow the current request",
+                replay.clone(),
+                vec![tool()],
+            )
+            .unwrap();
+            let calls: Vec<&Value> = match protocol {
+                Protocol::OpenaiResponses => body["input"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|item| item["type"] == "function_call")
+                    .collect(),
+                Protocol::OpenaiCompletions => body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|item| item["tool_calls"].as_array().into_iter().flatten())
+                    .collect(),
+                Protocol::AnthropicMessages => body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|item| item["content"].as_array().into_iter().flatten())
+                    .filter(|item| item["type"] == "tool_use")
+                    .collect(),
+            };
+            assert_eq!(
+                calls.len(),
+                1,
+                "{protocol:?}: rejected calls must be historical feedback, never executable calls"
+            );
+            let args = match protocol {
+                Protocol::OpenaiResponses => {
+                    serde_json::from_str::<Value>(calls[0]["arguments"].as_str().unwrap()).unwrap()
+                }
+                Protocol::OpenaiCompletions => serde_json::from_str::<Value>(
+                    calls[0]["function"]["arguments"].as_str().unwrap(),
+                )
+                .unwrap(),
+                Protocol::AnthropicMessages => calls[0]["input"].clone(),
+            };
+            assert_eq!(args, json!({"path":"README.md"}));
+            let wire = body.to_string();
+            for feedback in [
+                "JSON inválido",
+                "CONFIRMED_RESULT",
+                "Continue only the current Live request",
+            ] {
+                assert!(wire.contains(feedback), "{protocol:?}: {feedback}");
+            }
+        }
+        assert_eq!(
+            saved[1]["arguments"], arguments,
+            "The durable history is never repaired in place"
+        );
+    }
+}
+
+#[tokio::test]
+async fn go_recovery_local_projection_error_is_not_a_remote_reconnect() {
+    let mut config = config(Protocol::AnthropicMessages);
+    config.auth_mode = AuthMode::XApiKey;
+    let mut options = options();
+    options.model = config.models[0].id.clone();
+    let credential = CodexCredential::new("synthetic-key", "", 0, "", None, None);
+    let (_cancel, signal) = watch::channel(false);
+    let error = stream(
+        &credential,
+        &config,
+        "synthetic-session",
+        &options,
+        "Continue",
+        vec![
+            json!({"role":"user","content":"Continue"}),
+            json!({"type":"function_call","call_id":"bad","name":"read","arguments":"{\"file\": "}),
+        ],
+        vec![],
+        signal,
+        |_| Ok(()),
+    )
+    .await
+    .unwrap_err();
+    assert!(!super::super::retry::retryable(&error));
+    assert_eq!(
+        error.provider_metadata.unwrap().protocol_reason,
+        Some(crate::diagnostics::ProviderProtocolReason::RequestProjection)
+    );
+}
+
+#[test]
+fn go_recovery_rejected_calls_never_split_confirmed_parallel_results() {
+    let saved = vec![
+        json!({"role":"user","content":"Read the selected files"}),
+        json!({"type":"function_call","call_id":"first","name":"read","arguments":"{\"path\":\"first.txt\"}"}),
+        json!({"type":"function_call","call_id":"rejected","name":"read","arguments":"{\"file\": "}),
+        json!({"type":"function_call","call_id":"last","name":"read","arguments":"{\"path\":\"last.txt\"}"}),
+        json!({"type":"function_call_output","call_id":"first","output":"CONFIRMED_FIRST"}),
+        json!({"type":"function_call_output","call_id":"rejected","output":"JSON inválido; no execution"}),
+        json!({"type":"function_call_output","call_id":"last","output":"CONFIRMED_LAST"}),
+        json!({"role":"user","content":"Continue the current request"}),
+    ];
+    let replay = super::super::provider_input(saved);
+    let first = replay
+        .iter()
+        .position(|item| item["call_id"] == "first" && item["type"] == "function_call_output")
+        .unwrap();
+    let last = replay
+        .iter()
+        .position(|item| item["call_id"] == "last" && item["type"] == "function_call_output")
+        .unwrap();
+    assert_eq!(
+        last,
+        first + 1,
+        "Rejected feedback cannot interrupt a parallel tool-result group"
+    );
+    assert!(replay
+        .iter()
+        .skip(last + 1)
+        .any(|item| item.to_string().contains("JSON inválido")));
+    assert_eq!(
+        replay.last().unwrap()["content"],
+        "Continue the current request"
+    );
+}
+
+#[test]
+fn go_recovery_wire_schemas_preserve_runtime_selector_validation() {
+    let originals = crate::agent::computer::definitions(crate::agent::Mode::Build);
+    let original = originals
+        .iter()
+        .find(|tool| tool["name"] == "computer_click")
+        .unwrap();
+    let projected = super::super::provider_tools(originals.clone(), true);
+    let native = super::super::provider_tools(originals.clone(), false);
+    assert_eq!(
+        native
+            .iter()
+            .find(|tool| tool["name"] == "computer_click")
+            .unwrap()["parameters"],
+        original["parameters"]
+    );
+    let click = projected
+        .iter()
+        .find(|tool| tool["name"] == "computer_click")
+        .unwrap();
+    for key in ["oneOf", "allOf", "anyOf", "dependentRequired"] {
+        assert!(
+            click["parameters"].get(key).is_none(),
+            "Unsupported root condition: {key}"
+        );
+    }
+    assert_eq!(
+        click["parameters"]["properties"],
+        original["parameters"]["properties"]
+    );
+    assert_eq!(
+        click["parameters"]["required"],
+        original["parameters"]["required"]
+    );
+    assert!(click["parameters"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("oneOf"));
+    assert!(original["parameters"]["oneOf"].is_array());
+    let runtime = crate::agent::tool_contract::Orchestrator::new(&originals);
+    for (selector, accepted) in [
+        (json!({"element":"button"}), true),
+        (json!({"x":10,"y":20}), true),
+        (json!({}), false),
+        (json!({"x":10}), false),
+        (json!({"element":"button","x":10,"y":20}), false),
+    ] {
+        let mut args = selector;
+        args["targetId"] = json!("window");
+        args["observationId"] = json!("fresh");
+        let call = crate::agent::ToolCall {
+            id: "click".into(),
+            name: "computer_click".into(),
+            args,
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert_eq!(runtime.preflight(&call).is_ok(), accepted);
+    }
+    for protocol in [
+        Protocol::OpenaiResponses,
+        Protocol::OpenaiCompletions,
+        Protocol::AnthropicMessages,
+    ] {
+        let config = config(protocol);
+        let mut options = options();
+        options.model = config.models[0].id.clone();
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options,
+            "Follow the request",
+            vec![],
+            projected.clone(),
+        )
+        .unwrap();
+        let schema = match protocol {
+            Protocol::OpenaiResponses => &body["tools"][0]["parameters"],
+            Protocol::OpenaiCompletions => &body["tools"][0]["function"]["parameters"],
+            Protocol::AnthropicMessages => &body["tools"][0]["input_schema"],
+        };
+        assert_eq!(schema, &click["parameters"]);
+    }
+    let nested = crate::core::graft::definitions();
+    assert_eq!(
+        super::super::provider_tools(nested.clone(), true),
+        {
+            let mut ordered = nested;
+            ordered.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            ordered
+        },
+        "Supported nested unions are preserved"
+    );
+}
+
 #[tokio::test]
 async fn completion_idle_timeout_keeps_the_response_stage_and_safe_request_identifier() {
     let server = super::super::tests::controlled_sse_server_with_client(
@@ -71,6 +320,29 @@ fn messages_and_completions_keep_terminal_response_validation() {
     let mut completions = completions::Stream::default();
     completions.event(&json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"}}]}, "finish_reason":null}]}), &mut |delta| { assert!(!matches!(delta, Delta::ToolReady(_))); Ok(()) }).unwrap();
     assert!(completions.finish(&json!({})).is_err());
+}
+
+#[test]
+fn go_recovery_anthropic_empty_json_delta_preserves_initial_tool_input() {
+    for initial in [json!({}), json!({"marker":"confirmed"})] {
+        let mut stream = messages::Stream::default();
+        for event in [
+            json!({"type":"message_start","message":{"usage":{}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"marker","name":"get_marker","input":initial}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}),
+            json!({"type":"message_stop"}),
+        ] {
+            stream
+                .event(&event, &mut |_| Ok(()))
+                .expect("Empty JSON deltas carry no replacement input");
+        }
+        let response = stream.finish(&json!({})).unwrap();
+        let calls = super::super::tool_calls(&response.output).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args, initial);
+    }
 }
 
 #[tokio::test]
