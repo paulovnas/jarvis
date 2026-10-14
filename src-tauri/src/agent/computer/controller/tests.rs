@@ -115,13 +115,17 @@ async fn desktop_feedback_stop_and_replacement_are_scoped_to_the_owner_and_targe
 }
 
 fn fixture() -> ComputerApp {
+    let bundle = std::env::temp_dir().join("Fixture.app");
     ComputerApp {
         app_id: "fixture-42-1".into(),
         name: "Fixture".into(),
         identity: AppIdentity {
             bundle_id: "dev.jarvis.fixture".into(),
-            bundle_path: "/Applications/Fixture.app".into(),
-            executable_path: "/Applications/Fixture.app/Contents/MacOS/Fixture".into(),
+            bundle_path: bundle.to_string_lossy().into_owned(),
+            executable_path: bundle
+                .join("Contents/MacOS/Fixture")
+                .to_string_lossy()
+                .into_owned(),
         },
         process_id: 42,
         launch_id: "1".into(),

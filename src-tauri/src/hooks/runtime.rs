@@ -530,7 +530,7 @@ async fn drain(
     Ok((String::from_utf8_lossy(&captured).into_owned(), truncated))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 async fn execute(
     hook: &Hook,
     root: &Path,
@@ -1804,12 +1804,17 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("bundle");
         std::fs::create_dir_all(&root).unwrap();
+        let command = if cfg!(windows) {
+            r#"[Console]::Write("$env:CODEX_PLUGIN_ROOT|$env:CODEX_PLUGIN_DATA|$env:CODEX_HOME|$env:CLAUDE_CONFIG_DIR")"#
+        } else {
+            r#"printf '%s' "$CODEX_PLUGIN_ROOT|$CODEX_PLUGIN_DATA|$CODEX_HOME|$CLAUDE_CONFIG_DIR""#
+        };
         let source = crate::plugins::HookSource {
             plugin_id: "helper@local".into(),
             plugin_hash: "immutable".into(),
             component_id: "hooks:main".into(),
             name: "Helper".into(),
-            definition: json!({"hooks":{"PreToolUse":[{"matcher":"write_file","hooks":[{"type":"command","command":"printf '%s' \"$CODEX_PLUGIN_ROOT|$CODEX_PLUGIN_DATA|$CODEX_HOME|$CLAUDE_CONFIG_DIR\"","timeout":2},{"type":"mcp_tool","server":"guard","tool":"inspect","input":{"path":"x"}}]}]}}),
+            definition: json!({"hooks":{"PreToolUse":[{"matcher":"write_file","hooks":[{"type":"command","command":command,"timeout":2},{"type":"mcp_tool","server":"guard","tool":"inspect","input":{"path":"x"}}]}]}}),
             root: root.clone(),
             data_path: temp.path().join("data"),
             trusted: true,
@@ -1837,21 +1842,22 @@ mod tests {
         .await
         .unwrap_or_else(|_| panic!("cancelled"))
         .unwrap();
-        assert!(output.stdout.contains(&root.to_string_lossy().into_owned()));
-        assert!(output.stdout.contains(
-            &source
+        assert_eq!(output.code, Some(0));
+        let expected = [
+            root.to_string_lossy().into_owned(),
+            source.data_path.to_string_lossy().into_owned(),
+            source
                 .data_path
                 .join("codex")
                 .to_string_lossy()
-                .into_owned()
-        ));
-        assert!(output.stdout.contains(
-            &source
+                .into_owned(),
+            source
                 .data_path
                 .join("claude")
                 .to_string_lossy()
-                .into_owned()
-        ));
+                .into_owned(),
+        ];
+        assert_eq!(output.stdout, expected.join("|"));
         match &hooks[1].handler {
             Handler::Mcp {
                 server,

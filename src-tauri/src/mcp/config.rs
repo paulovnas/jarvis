@@ -673,14 +673,15 @@ mod plugin_tests {
 
     #[test]
     fn private_plugin_variables_are_declared_scoped_and_redacted() {
+        let temporary = tempfile::tempdir().unwrap();
         let source = crate::plugins::McpContribution {
             plugin_id: "docs@local".into(),
             plugin_hash: "reviewed".into(),
             component_id: "mcp:docs".into(),
             name: "docs".into(),
             definition: json!({"url":"https://example.test/mcp","bearer_token_env_var":"DOCS_TOKEN","env_http_headers":{"X-Tenant":"TENANT"}}),
-            root: "/bundle/docs".into(),
-            data_path: "/private/docs".into(),
+            root: temporary.path().join("bundle").join("docs"),
+            data_path: temporary.path().join("private").join("docs"),
         };
         assert_eq!(plugin_fields(&source), vec!["DOCS_TOKEN", "TENANT"]);
         assert!(from_plugin(&source).is_err());
@@ -721,11 +722,20 @@ mod plugin_tests {
                 environment,
                 ..
             } => {
-                assert_eq!(command[1], "/bundle/docs/server.js");
+                assert_eq!(
+                    command[1],
+                    format!("{}/server.js", local.root.to_string_lossy())
+                );
                 assert_eq!(environment["DOCS_TOKEN"], "private-test-token");
                 assert_eq!(environment["PROJECT"], "account");
-                assert_eq!(environment["CODEX_HOME"], "/private/docs/codex");
-                assert_eq!(environment["CLAUDE_CONFIG_DIR"], "/private/docs/claude");
+                assert_eq!(
+                    environment["CODEX_HOME"],
+                    local.data_path.join("codex").to_string_lossy()
+                );
+                assert_eq!(
+                    environment["CLAUDE_CONFIG_DIR"],
+                    local.data_path.join("claude").to_string_lossy()
+                );
             }
             _ => panic!("wrong transport"),
         }

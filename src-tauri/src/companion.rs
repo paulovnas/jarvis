@@ -148,7 +148,7 @@ fn placement(
     let surface_width = surface_width.min(screen.width).max(compact_width);
     let surface_height = surface_height.min(screen.height).max(compact_height);
     // CEF keeps one canvas while the island animates inside it, like Coucou's native panel.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let (width, height) = (
         ((ISLAND_WIDTH * scale).round() as u32)
             .min(screen.width)
@@ -165,7 +165,7 @@ fn placement(
             .min(screen.height)
             .max(compact_height),
     );
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let (width, height) = (surface_width, surface_height);
     let position = PhysicalPosition::new(
         (x - i64::from((width - compact_width) / 2)).clamp(
@@ -257,6 +257,8 @@ pub(crate) struct CompanionState {
     usage: Mutex<Vec<CompanionUsage>>,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     expected_position: Mutex<Option<PhysicalPosition<i32>>>,
+    #[cfg(target_os = "windows")]
+    compact_offset: Mutex<Option<PhysicalPosition<i32>>>,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     pointer_worker_started: AtomicBool,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -392,6 +394,17 @@ fn create_at(
         return Ok(());
     }
     let state = app.state::<CompanionState>();
+    #[cfg(target_os = "windows")]
+    {
+        *state
+            .hit_rect
+            .lock()
+            .map_err(|_| "Área da ilha indisponível.")? = None;
+        *state
+            .compact_offset
+            .lock()
+            .map_err(|_| "Posição do assistente indisponível.")? = None;
+    }
     *state
         .anchor
         .lock()
@@ -420,6 +433,11 @@ fn create_at(
     #[cfg(target_os = "linux")]
     let builder = builder.background_color(tauri::utils::config::Color(0, 0, 0, 255));
     let window = builder.build().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    if let Err(error) = windows::install(&window) {
+        let _ = window.close();
+        return Err(error);
+    }
     #[cfg(target_os = "linux")]
     if let Err(error) = set_focusable(&window.as_ref().window(), false) {
         let _ = window.close();
@@ -505,15 +523,27 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
         .lock()
         .map_err(|_| "Tamanho da ilha indisponível.")? =
         Some([placement.geometry.width, placement.geometry.height]);
-    *state
-        .hit_rect
-        .lock()
-        .map_err(|_| "Área da ilha indisponível.")? = Some([
-        placement.geometry.surface_x,
-        placement.geometry.surface_y,
-        placement.geometry.surface_width,
-        placement.geometry.surface_height,
-    ]);
+    #[cfg(target_os = "windows")]
+    let (native_rect, native_rect_changed) = {
+        let hit = state
+            .hit_rect
+            .lock()
+            .map_err(|_| "Área da ilha indisponível.")?;
+        let rect = transition_hit_rect(*hit, &placement.geometry);
+        (rect, *hit != Some(rect))
+    };
+    #[cfg(not(target_os = "windows"))]
+    {
+        *state
+            .hit_rect
+            .lock()
+            .map_err(|_| "Área da ilha indisponível.")? = Some([
+            placement.geometry.surface_x,
+            placement.geometry.surface_y,
+            placement.geometry.surface_width,
+            placement.geometry.surface_height,
+        ]);
+    }
     *state
         .anchor
         .lock()
@@ -527,13 +557,14 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
     #[cfg(not(target_os = "macos"))]
     {
         #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let current_position = window.outer_position().map_err(|error| error.to_string())?;
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             *state
                 .expected_position
                 .lock()
                 .map_err(|_| "Posição do assistente indisponível.")? =
-                (window.outer_position().map_err(|error| error.to_string())? != placement.position)
-                    .then_some(placement.position);
+                (current_position != placement.position).then_some(placement.position);
             state.pointer_wake.notify_one();
         }
         #[cfg(target_os = "linux")]
@@ -546,14 +577,50 @@ fn apply_geometry(app: &tauri::AppHandle, expanded: bool) -> Result<Geometry, St
                 .set_max_size(Some(placement.size))
                 .map_err(|error| error.to_string())?;
         }
-        window
-            .set_position(placement.position)
-            .map_err(|e| e.to_string())?;
-        window.set_size(placement.size).map_err(|e| e.to_string())?;
+        #[cfg(target_os = "windows")]
+        let current_size = window.inner_size().map_err(|error| error.to_string())?;
+        #[cfg(target_os = "windows")]
+        let native_bounds_changed =
+            current_position != placement.position || current_size != placement.size;
+        #[cfg(target_os = "windows")]
+        {
+            *state
+                .compact_offset
+                .lock()
+                .map_err(|_| "Posição do assistente indisponível.")? = Some(PhysicalPosition::new(
+                placement.anchor.x - placement.position.x,
+                placement.anchor.y - placement.position.y,
+            ));
+            if current_position != placement.position {
+                window
+                    .set_position(placement.position)
+                    .map_err(|error| error.to_string())?;
+            }
+            if current_size != placement.size {
+                window
+                    .set_size(placement.size)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            window
+                .set_position(placement.position)
+                .map_err(|e| e.to_string())?;
+            window.set_size(placement.size).map_err(|e| e.to_string())?;
+        }
         if !expanded {
             set_focusable(&window.as_ref().window(), false)?;
         }
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        if native_rect_changed || native_bounds_changed {
+            native::apply_hit_rect(&window, native_rect)?;
+            *state
+                .hit_rect
+                .lock()
+                .map_err(|_| "Área da ilha indisponível.")? = Some(native_rect);
+        }
+        #[cfg(target_os = "linux")]
         native::apply_hit_rect(
             &window,
             [
@@ -662,6 +729,19 @@ fn contains_point(rect: [f64; 4], point: [f64; 2]) -> bool {
         && point[1] < rect[1] + rect[3]
 }
 
+#[cfg(target_os = "windows")]
+fn native_compact_position(
+    position: PhysicalPosition<i32>,
+    offset: Option<PhysicalPosition<i32>>,
+) -> Option<CompanionPosition> {
+    // Native move events can arrive repeatedly without another layout. Reuse
+    // the applied physical offset, including its original monitor/DPI geometry.
+    offset.map(|offset| CompanionPosition {
+        x: position.x.saturating_add(offset.x),
+        y: position.y.saturating_add(offset.y),
+    })
+}
+
 pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if window.label() == "main"
         && matches!(event, tauri::WindowEvent::Destroyed)
@@ -689,13 +769,19 @@ pub(crate) fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent
                     }
                 }
             }
-            observe_position(
-                app,
-                CompanionPosition {
-                    x: position.x,
-                    y: position.y,
-                },
-            );
+            #[cfg(target_os = "windows")]
+            let Some(position) = native_compact_position(
+                *position,
+                state.compact_offset.lock().ok().and_then(|offset| *offset),
+            ) else {
+                return;
+            };
+            #[cfg(not(target_os = "windows"))]
+            let position = CompanionPosition {
+                x: position.x,
+                y: position.y,
+            };
+            observe_position(app, position);
         }
         tauri::WindowEvent::ScaleFactorChanged { .. } => {
             if !state.dragging.load(Ordering::SeqCst) {
@@ -758,6 +844,20 @@ fn validated_hit_rect(rect: [f64; 4], canvas: [f64; 2]) -> Result<[f64; 4], Stri
         return Err("Área visual da ilha inválida.".into());
     }
     Ok(rect)
+}
+
+#[cfg(target_os = "windows")]
+fn transition_hit_rect(current: Option<[f64; 4]>, geometry: &Geometry) -> [f64; 4] {
+    // Keep the rendered clip until the spring reports its next frame. The fixed
+    // canvas shares one origin across modes, so exposing padding is unnecessary.
+    current
+        .filter(|rect| validated_hit_rect(*rect, [geometry.width, geometry.height]).is_ok())
+        .unwrap_or([
+            geometry.compact_x,
+            geometry.compact_y,
+            geometry.compact_width,
+            geometry.compact_height,
+        ])
 }
 
 #[tauri::command]
@@ -1026,10 +1126,14 @@ pub(crate) mod probe {
     }
 }
 
-#[cfg(all(feature = "browser-probe", target_os = "linux"))]
+#[cfg(all(
+    feature = "browser-probe",
+    any(target_os = "linux", target_os = "windows")
+))]
 pub(crate) mod probe {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn geometry_pending(app: &tauri::AppHandle) -> bool {
         app.state::<CompanionState>()
             .expected_position
@@ -1042,10 +1146,11 @@ pub(crate) mod probe {
         app.state::<CompanionState>()
             .enabled
             .store(true, Ordering::SeqCst);
-        linux::start_pointer_watch(app);
+        native::start_pointer_watch(app);
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn create(app: &tauri::AppHandle, url: tauri::Url) -> Result<(), String> {
         create_at(app, tauri::WebviewUrl::External(url.clone()), Some(url))?;
         app.state::<CompanionState>()
@@ -1056,6 +1161,7 @@ pub(crate) mod probe {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn close(app: &tauri::AppHandle) -> Result<(), String> {
         app.state::<CompanionState>()
             .enabled
@@ -1558,13 +1664,92 @@ mod macos {
 mod windows {
     use super::*;
     use windows_sys::Win32::{
-        Foundation::{POINT, RECT},
+        Foundation::{GetLastError, SetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn},
+        System::Threading::GetCurrentThreadId,
         UI::{
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
-            WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, GetWindowRect},
+            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
+            WindowsAndMessaging::{
+                GetCursorPos, GetForegroundWindow, GetWindowLongW, GetWindowRect,
+                GetWindowThreadProcessId, SetWindowLongW, SetWindowPos, GWL_STYLE, STYLESTRUCT,
+                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                WM_NCDESTROY, WM_STYLECHANGING, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+                WS_SYSMENU, WS_THICKFRAME,
+            },
         },
     };
+
+    const FRAME_STYLES: u32 =
+        WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME;
+    const FRAME_SUBCLASS: usize = 1;
+
+    pub(super) fn install(window: &tauri::WebviewWindow) -> Result<(), String> {
+        let handle = window.hwnd().map_err(|error| error.to_string())?.0 as usize;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        window
+            .run_on_main_thread(move || {
+                let _ = sender.send(install_frame_guard(handle as _));
+            })
+            .map_err(|error| error.to_string())?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "Não foi possível preparar a janela da ilha.".to_string())?
+    }
+
+    fn install_frame_guard(handle: HWND) -> Result<(), String> {
+        // SAFETY: Installation runs on the HWND's owner thread before first show.
+        // The callback has no borrowed state and unregisters during WM_NCDESTROY.
+        unsafe {
+            if GetWindowThreadProcessId(handle, std::ptr::null_mut()) != GetCurrentThreadId()
+                || SetWindowSubclass(handle, Some(frame_guard), FRAME_SUBCLASS, 0) == 0
+            {
+                return Err("Não foi possível preparar a janela da ilha.".into());
+            }
+            // Winit retains ordinary caption styles for undecorated Aero-snap
+            // windows and reapplies them on flag updates. Filter only this HWND.
+            let styles = GetWindowLongW(handle, GWL_STYLE) as u32 & !FRAME_STYLES;
+            SetLastError(0);
+            let previous = SetWindowLongW(handle, GWL_STYLE, styles as i32);
+            if (previous == 0 && GetLastError() != 0)
+                || SetWindowPos(
+                    handle,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+                ) == 0
+            {
+                RemoveWindowSubclass(handle, Some(frame_guard), FRAME_SUBCLASS);
+                return Err("Não foi possível remover a moldura da ilha.".into());
+            }
+        }
+        Ok(())
+    }
+
+    unsafe extern "system" fn frame_guard(
+        handle: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        // SAFETY: Common Controls supplies a live STYLESTRUCT for GWL_STYLE.
+        // Default processing and teardown continue through the existing chain.
+        unsafe {
+            if message == WM_NCDESTROY {
+                RemoveWindowSubclass(handle, Some(frame_guard), FRAME_SUBCLASS);
+            }
+            let result = DefSubclassProc(handle, message, wparam, lparam);
+            if message == WM_STYLECHANGING && wparam == GWL_STYLE as usize && lparam != 0 {
+                (*(lparam as *mut STYLESTRUCT)).styleNew &= !FRAME_STYLES;
+            }
+            result
+        }
+    }
 
     pub(super) fn cursor_x() -> Result<i32, String> {
         let mut cursor = POINT { x: 0, y: 0 };
@@ -1693,6 +1878,149 @@ mod windows {
             });
         }
         state.pointer_wake.notify_one();
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::Cell;
+        use std::ptr::{null, null_mut};
+        use windows_sys::Win32::{
+            Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+            UI::{
+                Input::KeyboardAndMouse::{GetActiveWindow, GetFocus},
+                Shell::{DefSubclassProc, GetWindowSubclass, SetWindowSubclass},
+                WindowsAndMessaging::{
+                    CreateWindowExW, DestroyWindow, GetClientRect, GetWindowLongW, IsWindowVisible,
+                    SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_STYLE,
+                    SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, WM_NCDESTROY,
+                    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW,
+                },
+            },
+        };
+
+        struct NativeWindow(HWND);
+
+        impl Drop for NativeWindow {
+            fn drop(&mut self) {
+                // SAFETY: This test created the window on the current thread.
+                unsafe { DestroyWindow(self.0) };
+            }
+        }
+
+        unsafe extern "system" fn observe_destroy(
+            handle: HWND,
+            message: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+            _id: usize,
+            data: usize,
+        ) -> LRESULT {
+            // SAFETY: The stack cell outlives the test window, and the callback
+            // runs synchronously on its owner thread during DestroyWindow.
+            unsafe {
+                if message == WM_NCDESTROY {
+                    let mut reference = 0;
+                    let removed = GetWindowSubclass(
+                        handle,
+                        Some(frame_guard),
+                        FRAME_SUBCLASS,
+                        &mut reference,
+                    ) == 0;
+                    (*(data as *const Cell<bool>)).set(removed);
+                }
+                DefSubclassProc(handle, message, wparam, lparam)
+            }
+        }
+
+        #[test]
+        fn companion_frame_stays_absent_after_native_style_and_geometry_updates() {
+            let class = "STATIC\0".encode_utf16().collect::<Vec<_>>();
+            let removed = Cell::new(false);
+            // SAFETY: All calls operate on this test-owned, offscreen window.
+            // No installed Jarvis window or system input is modified.
+            unsafe {
+                let active = GetActiveWindow();
+                let focus = GetFocus();
+                let handle = CreateWindowExW(
+                    WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                    class.as_ptr(),
+                    null(),
+                    WS_OVERLAPPEDWINDOW,
+                    -32000,
+                    -32000,
+                    320,
+                    180,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                    null(),
+                );
+                assert!(!handle.is_null(), "Native test window creation failed");
+                let window = NativeWindow(handle);
+                let styles = GetWindowLongW(handle, GWL_STYLE) as u32;
+                let preserved = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
+                let extended = GetWindowLongW(handle, GWL_EXSTYLE) as u32 & preserved;
+                assert_ne!(
+                    styles & FRAME_STYLES,
+                    0,
+                    "Regression requires caption styles"
+                );
+                assert_ne!(
+                    SetWindowSubclass(
+                        handle,
+                        Some(observe_destroy),
+                        2,
+                        std::ptr::from_ref(&removed) as usize,
+                    ),
+                    0
+                );
+                install_frame_guard(handle).unwrap();
+                assert_eq!(GetWindowLongW(handle, GWL_STYLE) as u32 & FRAME_STYLES, 0);
+                for index in 0..8 {
+                    // Winit reapplies its ordinary top-level styles on flag updates.
+                    SetWindowLongW(handle, GWL_STYLE, styles as i32);
+                    assert_eq!(GetWindowLongW(handle, GWL_STYLE) as u32 & FRAME_STYLES, 0);
+                    assert_ne!(
+                        SetWindowPos(
+                            handle,
+                            null_mut(),
+                            -32000 + index,
+                            -32000 + index,
+                            320 + index,
+                            180 + index,
+                            SWP_NOACTIVATE | SWP_NOZORDER,
+                        ),
+                        0
+                    );
+                    ShowWindow(handle, SW_SHOWNA);
+                    assert_ne!(IsWindowVisible(handle), 0);
+                    assert_eq!(GetWindowLongW(handle, GWL_STYLE) as u32 & FRAME_STYLES, 0);
+                    assert_eq!(
+                        GetWindowLongW(handle, GWL_EXSTYLE) as u32 & preserved,
+                        extended
+                    );
+                    let mut bounds = std::mem::zeroed();
+                    assert_ne!(GetWindowRect(handle, &mut bounds), 0);
+                    assert_eq!([bounds.left, bounds.top], [-32000 + index, -32000 + index]);
+                    assert_eq!(
+                        [bounds.right - bounds.left, bounds.bottom - bounds.top],
+                        [320 + index, 180 + index]
+                    );
+                    assert_ne!(GetClientRect(handle, &mut bounds), 0);
+                    assert_eq!([bounds.right, bounds.bottom], [320 + index, 180 + index]);
+                    assert_eq!(GetActiveWindow(), active);
+                    assert_eq!(GetFocus(), focus);
+                    ShowWindow(handle, SW_HIDE);
+                    assert_eq!(IsWindowVisible(handle), 0);
+                }
+                drop(window);
+                assert!(
+                    removed.get(),
+                    "Frame subclass must remove itself before native cleanup"
+                );
+            }
+        }
     }
 }
 
@@ -1926,7 +2254,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[test]
     fn opening_views_keeps_the_native_canvas_and_compact_anchor() {
         for screen in [
@@ -1936,6 +2264,14 @@ mod tests {
                 width: 1920,
                 height: 1080,
                 scale: 2.0,
+                ..Screen::default()
+            },
+            Screen {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+                scale: 1.25,
                 ..Screen::default()
             },
             Screen {
@@ -1961,6 +2297,10 @@ mod tests {
                 None,
                 Some(CompanionPosition {
                     x: screen.x,
+                    y: screen.y,
+                }),
+                Some(CompanionPosition {
+                    x: screen.x + screen.width as i32 - 1,
                     y: screen.y,
                 }),
             ] {
@@ -2003,6 +2343,151 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn geometry_transitions_preserve_the_rendered_clip_and_limit_new_canvases() {
+        let screen = Screen {
+            width: 1920,
+            height: 1080,
+            scale: 1.25,
+            ..Screen::default()
+        };
+        let compact = placement(None, &[screen], Presentation::Compact).unwrap();
+        let clip = [
+            compact.geometry.compact_x,
+            compact.geometry.compact_y,
+            compact.geometry.compact_width,
+            compact.geometry.compact_height,
+        ];
+        for mode in [
+            Presentation::Bubble,
+            Presentation::Island(400),
+            Presentation::Compact,
+        ] {
+            let view = placement(Some(compact.anchor), &[screen], mode).unwrap();
+            assert_eq!(transition_hit_rect(Some(clip), &view.geometry), clip);
+            assert_eq!(transition_hit_rect(None, &view.geometry), clip);
+            let animated = [96.0, 0.0, 480.0, 240.0];
+            assert_eq!(
+                transition_hit_rect(Some(animated), &view.geometry),
+                animated
+            );
+        }
+        let smaller = placement(
+            None,
+            &[Screen {
+                width: 320,
+                height: 200,
+                scale: 1.0,
+                ..Screen::default()
+            }],
+            Presentation::Island(400),
+        )
+        .unwrap();
+        let fallback = transition_hit_rect(Some([0.0, 0.0, 640.0, 400.0]), &smaller.geometry);
+        assert_eq!(fallback[2..], [288.0, 32.0]);
+        assert_eq!(
+            validated_hit_rect(fallback, [smaller.geometry.width, smaller.geometry.height])
+                .unwrap(),
+            fallback
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_moves_keep_the_applied_compact_offset_until_relayout() {
+        for scale in [1.0, 1.25, 2.0] {
+            let screen = Screen {
+                x: -2560,
+                y: -80,
+                width: 2560,
+                height: 1600,
+                scale,
+                ..Screen::default()
+            };
+            let compact_width = (COMPACT_WIDTH * scale).round() as i32;
+            for x in [
+                screen.x,
+                screen.x + (screen.width as i32 - compact_width) / 2,
+                screen.x + screen.width as i32 - compact_width,
+            ] {
+                let previous = placement(
+                    Some(CompanionPosition { x, y: screen.y }),
+                    &[screen],
+                    Presentation::Compact,
+                )
+                .unwrap();
+                let offset = PhysicalPosition::new(
+                    previous.anchor.x - previous.position.x,
+                    previous.anchor.y - previous.position.y,
+                );
+                let direction = if x == screen.x + screen.width as i32 - compact_width {
+                    -1
+                } else {
+                    1
+                };
+                // Multiple native events move the existing canvas before a new
+                // placement or renderer frame changes its compact offset.
+                for delta in [5, 12, 24] {
+                    let moved = PhysicalPosition::new(
+                        previous.position.x + direction * delta,
+                        previous.position.y,
+                    );
+                    let visible = CompanionPosition {
+                        x: previous.anchor.x + direction * delta,
+                        y: previous.anchor.y,
+                    };
+                    assert_eq!(native_compact_position(moved, Some(offset)), Some(visible));
+                    let reopened =
+                        placement(Some(visible), &[screen], Presentation::Compact).unwrap();
+                    assert_eq!(compact_origin(&reopened, scale), visible);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_move_without_applied_geometry_does_not_save_an_anchor() {
+        assert_eq!(
+            native_compact_position(PhysicalPosition::new(100, 0), None),
+            None
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_move_keeps_the_offset_when_the_previous_monitor_is_removed() {
+        let previous = placement(
+            None,
+            &[Screen {
+                x: -2560,
+                width: 2560,
+                height: 1600,
+                scale: 2.0,
+                ..Screen::default()
+            }],
+            Presentation::Compact,
+        )
+        .unwrap();
+        let offset = PhysicalPosition::new(previous.anchor.x - previous.position.x, 0);
+        let visible = native_compact_position(PhysicalPosition::new(100, 0), Some(offset)).unwrap();
+        assert_eq!(visible, CompanionPosition { x: 452, y: 0 });
+        let reopened = placement(
+            Some(visible),
+            &[Screen {
+                width: 1920,
+                height: 1080,
+                scale: 1.25,
+                ..Screen::default()
+            }],
+            Presentation::Compact,
+        )
+        .unwrap();
+        assert_eq!(compact_origin(&reopened, 1.25), visible);
+        assert_ne!(reopened.anchor.x - reopened.position.x, offset.x);
     }
 
     #[test]

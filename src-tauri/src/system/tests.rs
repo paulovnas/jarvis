@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(windows)]
+mod windows_manifest;
+
 #[test]
 fn snapshot_releases_status_locks_before_slow_shell_probes() {
     let home = tempfile::tempdir().unwrap();

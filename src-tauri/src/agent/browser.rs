@@ -82,6 +82,8 @@ pub struct BrowserState {
     selected: Mutex<BTreeMap<String, Option<String>>>,
     live: live::State,
     cdp: cdp::State,
+    #[cfg(windows)]
+    capture: capture::State,
 }
 
 fn address(value: &str) -> Result<url::Url, AgentError> {
@@ -714,6 +716,9 @@ pub async fn set_browser_viewport(
         for tab in &snapshot.tabs {
             if id.as_ref().is_none_or(|id| *id == tab.id) {
                 if let Some(view) = app.get_webview(&label(&tab.id)) {
+                    #[cfg(windows)]
+                    capture::hide(&view)?;
+                    #[cfg(not(windows))]
                     let _ = view.hide();
                 }
             }

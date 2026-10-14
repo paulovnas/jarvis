@@ -273,7 +273,7 @@ async fn lock(cache: &Path, mut signal: watch::Receiver<bool>) -> Result<fs::Fil
     loop {
         match file.try_lock_exclusive() {
             Ok(()) => return Ok(file),
-            Err(cause) if cause.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(cause) if cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {}
             Err(cause) => return Err(cause.into()),
         }
         tokio::select! {

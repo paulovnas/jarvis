@@ -375,7 +375,7 @@ pub(super) fn files(root: &Path) -> Result<Vec<String>, SkillError> {
                         .strip_prefix(root)
                         .map_err(|_| error("Caminho inválido."))?
                         .to_string_lossy()
-                        .into_owned(),
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
                 );
             }
         }
@@ -428,13 +428,16 @@ mod native_design_tests {
         let native = scan.skills[0].clone();
         assert!(native.managed && native.enabled && native.automatic);
         assert_eq!(native.source.as_deref(), Some("impeccable-core"));
+        let advertised = files(&native.path)
+            .unwrap()
+            .into_iter()
+            .find(|file| file.ends_with("craft-floor.md"))
+            .unwrap();
+        assert_eq!(advertised, "reference/craft-floor.md");
         assert_eq!(
-            resource(&native, "reference/craft-floor.md").unwrap(),
+            resource(&native, &advertised).unwrap(),
             "The complete edit quality floor"
         );
-        assert!(files(&native.path)
-            .unwrap()
-            .contains(&"reference/craft-floor.md".into()));
         let mut equivalent = native.clone();
         equivalent.origin = "plugin".into();
         equivalent.name = "impeccable:impeccable".into();

@@ -51,8 +51,9 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
     return Object.fromEntries(available) as Record<keyof typeof inputTypes, StateMachineInput>;
   }, [rive]);
   const ready = Boolean(rive && inputs && !failed);
-  // Linux's runtime can shrink the initially zero-size RiveComponent canvas to its CSS transform.
-  const linux = navigator.userAgent.includes("Linux");
+  // Keep the canvas non-zero before load so Rive does not resize its bitmap
+  // to the island's compact CSS transform.
+  const fullSizeCanvas = /Linux|Windows/.test(navigator.userAgent);
 
   useEffect(() => {
     const visibility = () => setPageHidden(document.hidden);
@@ -90,7 +91,7 @@ export default function RiveRobot({ status, visible = true, hovered = false, dra
 
   return <div aria-hidden="true" className="companion-robot" data-state={status} data-gesture={gesture} data-renderer={ready ? "rive" : failed || (rive && !inputs) ? "fallback" : "loading"} data-motion={reducedMotion ? "reduced" : "full"} style={{ position: "relative", pointerEvents: "none" }}>
     <div style={{ position: "absolute", inset: 0, visibility: ready ? "visible" : "hidden" }}>
-      {linux ? <div ref={setContainerRef} style={{ width: "100%", height: "100%" }}><canvas ref={setCanvasRef} aria-hidden="true" tabIndex={-1} style={{ width: "100%", height: "100%", verticalAlign: "top" }} /></div> : <RiveComponent aria-hidden="true" tabIndex={-1} />}
+      {fullSizeCanvas ? <div ref={setContainerRef} style={{ width: "100%", height: "100%" }}><canvas ref={setCanvasRef} aria-hidden="true" tabIndex={-1} style={{ width: "100%", height: "100%", verticalAlign: "top" }} /></div> : <RiveComponent aria-hidden="true" tabIndex={-1} />}
     </div>
     {!ready && <RobotFallback status={status} gesture={gesture} voiceLevel={voiceLevel} renderer={failed || rive ? "fallback" : "loading"} />}
   </div>;

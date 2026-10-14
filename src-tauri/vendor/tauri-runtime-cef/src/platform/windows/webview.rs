@@ -6,13 +6,15 @@ use cef::ImplBrowserHost;
 use tauri_runtime::dpi::{PhysicalPosition, PhysicalSize, Rect};
 use tauri_utils::config::Color;
 use windows::Win32::{
-  Foundation::{ERROR_SUCCESS, HWND, LPARAM, LRESULT, POINT, RECT, SetLastError, WPARAM},
+  Foundation::{
+    ERROR_SUCCESS, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, SetLastError, WPARAM,
+  },
   Graphics::Gdi::MapWindowPoints,
   UI::Shell::{DefSubclassProc, SetWindowSubclass},
   UI::WindowsAndMessaging::{
-    DestroyWindow, GetParent, GetWindowRect, HWND_TOP, IsWindow, IsWindowVisible, SW_HIDE, SW_SHOW,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetParent, SetWindowPos, ShowWindow,
-    WINDOWPOS, WM_WINDOWPOSCHANGING,
+    DestroyWindow, GetParent, GetWindowRect, HWND_TOP, IsWindow, IsWindowVisible, SW_HIDE,
+    SW_SHOWNA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetParent, SetWindowPos,
+    ShowWindow, WINDOWPOS, WM_WINDOWPOSCHANGING,
   },
 };
 
@@ -58,8 +60,10 @@ impl AppWebview {
   }
 
   pub(crate) fn bounds(&self) -> Option<Rect> {
-    let hwnd = self.hwnd();
+    Self::window_bounds(self.hwnd())
+  }
 
+  fn window_bounds(hwnd: HWND) -> Option<Rect> {
     let mut rect = RECT::default();
     unsafe {
       let parent = GetParent(hwnd).ok()?;
@@ -79,7 +83,9 @@ impl AppWebview {
           y: rect.bottom,
         },
       ];
-      if MapWindowPoints(None, Some(parent), &mut points) == 0 {
+      // A zero translation is valid when Win32 reports no error.
+      SetLastError(ERROR_SUCCESS);
+      if MapWindowPoints(None, Some(parent), &mut points) == 0 && GetLastError() != ERROR_SUCCESS {
         return None;
       }
 
@@ -100,7 +106,7 @@ impl AppWebview {
   }
 
   pub(crate) fn apply_visible(&self, visible: bool) {
-    let _ = unsafe { ShowWindow(self.hwnd(), if visible { SW_SHOW } else { SW_HIDE }) };
+    let _ = unsafe { ShowWindow(self.hwnd(), if visible { SW_SHOWNA } else { SW_HIDE }) };
   }
 
   /// Destroys CEF's own window for this browser, completing a close that
@@ -186,5 +192,72 @@ impl AppWebview {
         SWP_NOZORDER | SWP_NOACTIVATE,
       );
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use windows::{
+    Win32::{
+      Foundation::ERROR_INVALID_WINDOW_HANDLE,
+      UI::WindowsAndMessaging::{CreateWindowExW, WS_CHILD, WS_POPUP},
+    },
+    core::w,
+  };
+
+  #[test]
+  fn bounds_at_screen_origin_preserve_zero_offset_mapping() {
+    // SAFETY: Builtin class strings outlive creation; the invisible windows belong to this thread.
+    let create = |style, parent| unsafe {
+      CreateWindowExW(
+        Default::default(),
+        w!("STATIC"),
+        w!(""),
+        style,
+        0,
+        0,
+        64,
+        48,
+        parent,
+        None,
+        None,
+        None,
+      )
+    };
+    let parent = create(WS_POPUP, None).expect("create invisible parent");
+    let child = match create(WS_CHILD, Some(parent)) {
+      Ok(child) => child,
+      Err(error) => {
+        // SAFETY: The parent was created by this test on the current thread.
+        let _ = unsafe { DestroyWindow(parent) };
+        panic!("create invisible child: {error}");
+      }
+    };
+    // SAFETY: Last-error state is thread-local; both handles still belong to this test.
+    let (origin, bounds, child_removed, parent_removed) = unsafe {
+      let mut origin = [POINT { x: 0, y: 0 }];
+      MapWindowPoints(Some(parent), None, &mut origin);
+      SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+      let bounds = AppWebview::window_bounds(child);
+      (
+        origin[0],
+        bounds,
+        DestroyWindow(child),
+        DestroyWindow(parent),
+      )
+    };
+    child_removed.expect("destroy child");
+    parent_removed.expect("destroy parent");
+    assert_eq!((origin.x, origin.y), (0, 0));
+    let bounds = bounds.expect("identity mapping must preserve native bounds");
+    assert_eq!(
+      bounds.position.to_physical::<i32>(1.),
+      PhysicalPosition::new(0, 0)
+    );
+    assert_eq!(
+      bounds.size.to_physical::<u32>(1.),
+      PhysicalSize::new(64, 48)
+    );
   }
 }

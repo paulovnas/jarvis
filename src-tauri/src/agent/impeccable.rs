@@ -234,7 +234,9 @@ fn within_project(root: &Path, value: &str) -> bool {
     } else {
         root.join(path)
     };
-    if !candidate.starts_with(root) {
+    if !Path::new(crate::library::strip_verbatim(&candidate.to_string_lossy()).as_ref())
+        .starts_with(crate::library::strip_verbatim(&root.to_string_lossy()).as_ref())
+    {
         return false;
     }
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.into());
@@ -816,8 +818,20 @@ mod tests {
         );
         let file_url = url::Url::from_file_path(root.join("app/index.css")).unwrap();
         assert_eq!(
-            design_target(&root, "detect", &[file_url.to_string()]).unwrap(),
-            Some(root.join("app/index.css").to_string_lossy().into_owned())
+            arguments(
+                &root,
+                &json!({"command":"detect","args":[file_url.as_str()]})
+            )
+            .unwrap()
+            .1,
+            [file_url.to_string()]
+        );
+        let target = design_target(&root, "detect", &[file_url.to_string()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            Path::new(&target).canonicalize().unwrap(),
+            root.join("app/index.css")
         );
         assert_eq!(
             design_target(&root, "detect", &["app/index.css".into(), "app".into()]).unwrap(),

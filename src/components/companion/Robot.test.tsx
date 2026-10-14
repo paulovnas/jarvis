@@ -75,13 +75,21 @@ describe("Jarvito Rive character", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir Jarvito" })); expect(clicked).toHaveBeenCalledOnce();
   });
 
-  it("keeps the Linux canvas full-size from its first mount through island expansion", async () => {
-    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
+  it.each([
+    { platform: "Linux", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" },
+    { platform: "Windows", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+  ])("keeps the $platform canvas full-size from its first mount through island expansion", async ({ userAgent }) => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+    mock.loaded = false;
     const { container, rerender } = render(<Robot status="idle" />);
-    await waitFor(() => expect(container.querySelector("[data-renderer=rive]")).toBeInTheDocument());
+    await waitFor(() => expect(container.querySelector("canvas")).toBeInTheDocument());
     const canvas = container.querySelector("canvas");
     expect(canvas).toHaveStyle({ width: "100%", height: "100%" });
     expect(mock.setCanvasRef).toHaveBeenCalledWith(canvas);
+    mock.loaded = true;
+    rerender(<Robot status="idle" />);
+    await waitFor(() => expect(container.querySelector("[data-renderer=rive]")).toBeInTheDocument());
+    expect(container.querySelector("canvas")).toBe(canvas);
     rerender(<Robot status="idle" expanded />);
     expect(container.querySelector("canvas")).toBe(canvas);
     expect(canvas).toHaveStyle({ width: "100%", height: "100%" });

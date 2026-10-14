@@ -11,19 +11,30 @@ mod linux;
 pub(crate) mod linux_agent;
 #[cfg(target_os = "linux")]
 mod linux_island;
+#[cfg(target_os = "windows")]
+mod windows_island;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub(crate) fn observe_companion(app: &tauri::AppHandle) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     if std::env::var("JARVIS_COMPANION_SMOKE").is_ok_and(|value| value == "1") {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
+            #[cfg(target_os = "linux")]
             let result = linux_island::smoke_actual(&app).await;
-            crate::app_exit::allow(&app);
+            #[cfg(target_os = "windows")]
+            let result = windows_island::smoke_actual(&app).await;
+            // This probe owns a full app; granting exit also marks it prepared.
+            // Run the production cleanup before requesting native teardown.
+            if let Err(cause) = crate::prepare_exit(&app) {
+                eprintln!("Real companion shutdown failed: {cause}");
+                app.exit(1);
+                return;
+            }
             match result {
                 Ok(()) => app.exit(0),
                 Err(cause) => {
-                    eprintln!("Real Linux companion failed: {}", cause.message);
+                    eprintln!("Real companion failed: {}", cause.message);
                     app.exit(1);
                 }
             }
@@ -136,6 +147,168 @@ fn page_bounds_match(bounds: &Value, rect: &Viewport) -> bool {
         .is_ok_and(|bounds| native_bounds_match(bounds, rect))
 }
 
+async fn native_snapshot(view: &Webview) -> Result<tauri_runtime_cef::WebviewSnapshot, AgentError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    view.with_cef_webview(move |native| {
+        let _ = tx.send(native.snapshot().clone());
+    })
+    .map_err(|_| error("Probe could not access the CEF browser"))?;
+    tokio::time::timeout(Duration::from_secs(5), rx)
+        .await
+        .map_err(|_| error("CEF native observation timed out"))?
+        .map_err(|_| error("CEF browser closed during native observation"))
+}
+
+#[cfg(windows)]
+async fn check_capture_restored(view: &Webview, bounds: tauri::Rect) -> Result<(), AgentError> {
+    let native = native_snapshot(view).await?;
+    let restored = native
+        .bounds
+        .ok_or_else(|| error("Capture lost native bounds"))?;
+    if native.visible != Some(false)
+        || restored.position.to_physical::<i32>(1.) != bounds.position.to_physical::<i32>(1.)
+        || restored.size.to_physical::<u32>(1.) != bounds.size.to_physical::<u32>(1.)
+    {
+        return Err(error("Hidden capture did not restore its native state"));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn check_cancelled_capture(
+    app: &tauri::AppHandle,
+    tab: &BrowserTab,
+    view: &Webview,
+    main: &Webview,
+    bounds: tauri::Rect,
+) -> Result<(), AgentError> {
+    let state = app.state::<BrowserState>();
+    let _operation = state.operations.lock().await;
+    let before = capture::capture(main).await?;
+    let (ready, received) = tokio::sync::oneshot::channel();
+    let child = view.clone();
+    let task = tokio::spawn(async move {
+        let _surface = capture::CaptureSurface::prepare(&child).await?;
+        let _ = ready.send(());
+        std::future::pending::<()>().await;
+        Ok::<(), AgentError>(())
+    });
+    let during = async {
+        tokio::time::timeout(Duration::from_secs(10), received)
+            .await
+            .map_err(|_| error("Cancelled capture preparation timed out"))?
+            .map_err(|_| error("Cancelled capture could not prepare the surface"))?;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            set_browser_viewport(
+                app.clone(),
+                tab.conversation_id.clone(),
+                Some(tab.id.clone()),
+                None,
+            ),
+        )
+        .await
+        .map_err(|_| error("Frontend hide waited for the pending capture"))??;
+        if native_snapshot(view).await?.visible != Some(true) {
+            return Err(error("Frontend hide stopped the capture surface"));
+        }
+        capture::capture(main).await
+    }
+    .await;
+    task.abort();
+    let _ = task.await;
+    check_capture_restored(view, bounds).await?;
+    let before = image::load_from_memory(&before).map_err(|_| error("Host capture invalid"))?;
+    let during = image::load_from_memory(&during?).map_err(|_| error("Host capture invalid"))?;
+    if before.to_rgba8() != during.to_rgba8() {
+        return Err(error("Hidden capture changed the visible host pixels"));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn check_visible_capture_hide(
+    app: &tauri::AppHandle,
+    tab: &BrowserTab,
+    view: &Webview,
+    bounds: tauri::Rect,
+) -> Result<(), AgentError> {
+    let state = app.state::<BrowserState>();
+    let _operation = state.operations.lock().await;
+    view.show()
+        .map_err(|_| error("Visible capture probe could not show the tab"))?;
+    let surface = capture::CaptureSurface::prepare(view).await?;
+    let hidden = async {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            set_browser_viewport(
+                app.clone(),
+                tab.conversation_id.clone(),
+                Some(tab.id.clone()),
+                None,
+            ),
+        )
+        .await
+        .map_err(|_| error("Frontend hide waited for the visible capture"))??;
+        let native = native_snapshot(view).await?;
+        let bounds = native
+            .bounds
+            .ok_or_else(|| error("Capture surface lost its bounds"))?;
+        let position = bounds.position.to_physical::<i32>(1.);
+        let size = bounds.size.to_physical::<u32>(1.);
+        if native.visible != Some(true)
+            || i64::from(position.x) + i64::from(size.width) > 0
+            || i64::from(position.y) + i64::from(size.height) > 0
+        {
+            return Err(error(
+                "Frontend hide did not keep a rendering surface outside the host",
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    drop(surface);
+    check_capture_restored(view, bounds).await?;
+    hidden
+}
+
+#[cfg(windows)]
+async fn check_pending_capture_hide(
+    app: &tauri::AppHandle,
+    tab: &BrowserTab,
+    view: &Webview,
+    bounds: tauri::Rect,
+) -> Result<(), AgentError> {
+    let state = app.state::<BrowserState>();
+    let _operation = state.operations.lock().await;
+    view.show()
+        .map_err(|_| error("Pending capture probe could not show the tab"))?;
+    let pending = capture::CaptureSurface::reserve(view)?;
+    let hidden = async {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            set_browser_viewport(
+                app.clone(),
+                tab.conversation_id.clone(),
+                Some(tab.id.clone()),
+                None,
+            ),
+        )
+        .await
+        .map_err(|_| error("Frontend hide waited for capture preparation"))??;
+        if native_snapshot(view).await?.visible != Some(false) {
+            return Err(error(
+                "Pending capture left the tab visible after frontend hide",
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    drop(pending);
+    check_capture_restored(view, bounds).await?;
+    hidden
+}
+
 async fn check_layout(
     app: &tauri::AppHandle,
     tab: &BrowserTab,
@@ -163,15 +336,7 @@ async fn check_layout(
         // Content grows after the viewport is assigned, as in a real application.
         evaluate(view, format!("(() => {{ document.body.style.minWidth='{}px'; document.body.style.minHeight='{}px'; return true; }})()", width * 2., height * 3.)).await?;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        view.with_cef_webview(move |native| {
-            let _ = tx.send(native.snapshot().clone());
-        })
-        .map_err(|_| error("Probe could not access the CEF browser"))?;
-        let native = tokio::time::timeout(Duration::from_secs(5), rx)
-            .await
-            .map_err(|_| error("CEF native observation timed out"))?
-            .map_err(|_| error("CEF browser closed during native observation"))?;
+        let native = native_snapshot(view).await?;
         if native.parent_matches != Some(true) || native.visible != Some(true) {
             return Err(error("CEF child is not visibly embedded in its host"));
         }
@@ -430,8 +595,43 @@ async fn check(
     std::fs::write(output.join("native-browser.png"), &bytes).map_err(|_| AgentError::storage())?;
     set_browser_viewport(app.clone(), conversation.into(), Some(tab.id.clone()), None).await?;
     evaluate(&view, "(() => { document.querySelector('#result').textContent='Background updated'; return true; })()".into()).await?;
+    #[cfg(windows)]
+    let hidden_bounds = native_snapshot(&view)
+        .await?
+        .bounds
+        .ok_or_else(|| error("Hidden capture bounds unavailable"))?;
+    #[cfg(windows)]
+    let foreground =
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } as usize;
+    #[cfg(windows)]
+    check_cancelled_capture(
+        app,
+        &tab,
+        &view,
+        &app.get_webview("main").unwrap(),
+        hidden_bounds,
+    )
+    .await?;
     // Capturing a background tab must still return pixels, not an empty image.
     let hidden = capture::capture(&view).await?;
+    #[cfg(windows)]
+    {
+        check_capture_restored(&view, hidden_bounds).await?;
+        if app
+            .state::<BrowserState>()
+            .snapshot(app, conversation)?
+            .active_id
+            .as_deref()
+            != Some(&tab.id)
+            || unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() }
+                as usize
+                != foreground
+        {
+            return Err(error(
+                "Hidden capture changed tab selection or foreground focus",
+            ));
+        }
+    }
     if image::load_from_memory(&hidden).is_err() {
         return Err(error("Hidden-tab capture failed"));
     }
@@ -440,6 +640,10 @@ async fn check(
     }
     std::fs::write(output.join("native-browser-background.png"), &hidden)
         .map_err(|_| AgentError::storage())?;
+    #[cfg(windows)]
+    check_visible_capture_hide(app, &tab, &view, hidden_bounds).await?;
+    #[cfg(windows)]
+    check_pending_capture_hide(app, &tab, &view, hidden_bounds).await?;
     view.show().unwrap();
     view.navigate(address(&format!("{base}/next"))?).unwrap();
     wait_page(&view, "Next page").await?;

@@ -364,7 +364,8 @@ mod tests {
             .is_ok());
         assert!(product_project(library::companion::GLOBAL_PROJECT_ID).is_err());
         assert!(library_directory("relative/project").is_err());
-        assert!(library_directory("/existing/project").is_ok());
+        let project_path = std::env::temp_dir().join("existing/project");
+        assert!(library_directory(project_path.to_str().unwrap()).is_ok());
         let choice = json!({"account":"configured","model":"primary","reasoning":"high","fallback":{"executor":"claude","account":"","model":"sonnet","reasoning":null}});
         assert!(catalog
             .validate(&call(

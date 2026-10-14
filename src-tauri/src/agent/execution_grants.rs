@@ -776,10 +776,14 @@ mod tests {
     }
 
     fn app_identity() -> super::super::computer::AppIdentity {
+        let bundle = std::env::temp_dir().join("Editor.app");
         super::super::computer::AppIdentity {
             bundle_id: "com.example.Editor".into(),
-            bundle_path: "/Applications/Editor.app".into(),
-            executable_path: "/Applications/Editor.app/Contents/MacOS/Editor".into(),
+            bundle_path: bundle.to_string_lossy().into_owned(),
+            executable_path: bundle
+                .join("Contents/MacOS/Editor")
+                .to_string_lossy()
+                .into_owned(),
         }
     }
 
@@ -801,7 +805,10 @@ mod tests {
             .computer_authorized("other", &identity, Observe, 11)
             .unwrap());
         let mut other = identity.clone();
-        other.executable_path = "/Applications/Editor.app/Contents/MacOS/Replacement".into();
+        other.executable_path = Path::new(&identity.bundle_path)
+            .join("Contents/MacOS/Replacement")
+            .to_string_lossy()
+            .into_owned();
         assert!(!store
             .computer_authorized("chat", &other, Observe, 11)
             .unwrap());
@@ -811,7 +818,10 @@ mod tests {
             .computer_authorized("chat", &other, Observe, 11)
             .unwrap());
         other = identity.clone();
-        other.bundle_path = "/Applications/Other.app".into();
+        other.bundle_path = std::env::temp_dir()
+            .join("Other.app")
+            .to_string_lossy()
+            .into_owned();
         assert!(!store
             .computer_authorized("chat", &other, Observe, 11)
             .unwrap());

@@ -169,9 +169,10 @@ pub(super) fn scoped(root: &Path, value: &str, create: bool) -> Result<PathBuf, 
         return Err(error("A pasta original do projeto não está disponível."));
     }
     let supplied = Path::new(value);
+    let normalized = crate::library::strip_verbatim(value);
     let relative = if supplied.is_absolute() {
-        supplied
-            .strip_prefix(root)
+        Path::new(normalized.as_ref())
+            .strip_prefix(crate::library::strip_verbatim(&root.to_string_lossy()).as_ref())
             .map_err(|_| error("O caminho precisa estar dentro da pasta do projeto."))?
     } else {
         supplied
@@ -798,6 +799,19 @@ mod tests {
         assert!(execute(&fixture.root, &outside, Mode::Build, signal)
             .await
             .is_err());
+        let other = tempfile::tempdir().unwrap();
+        assert!(scoped(
+            &fixture.root,
+            &other.path().join("escape.txt").to_string_lossy(),
+            true
+        )
+        .is_err());
+        assert!(!other.path().join("escape.txt").exists());
+        #[cfg(windows)]
+        {
+            assert!(scoped(&fixture.root, r"\\?\GLOBALROOT\Device\fixture.txt", true).is_err());
+            assert!(!fixture.root.join("GLOBALROOT").exists());
+        }
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&fixture.root, fixture.root.join("link")).unwrap();
@@ -809,9 +823,12 @@ mod tests {
         let fixture = Fixture::new();
         let (_send, signal) = watch::channel(false);
         fs::write(fixture.root.join("a.txt"), "first\nneedle\nlast\n").unwrap();
+        let absolute_path =
+            crate::library::strip_verbatim(&fixture.root.join("a.txt").to_string_lossy())
+                .into_owned();
         let result = execute(
             &fixture.root,
-            &tool("read", json!({"path":"a.txt","offset":2,"limit":1})),
+            &tool("read", json!({"path":absolute_path,"offset":2,"limit":1})),
             Mode::Plan,
             signal.clone(),
         )

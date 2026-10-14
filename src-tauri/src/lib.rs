@@ -295,7 +295,7 @@ pub fn run() {
             companion::setup(app.handle());
             #[cfg(all(
                 feature = "browser-probe",
-                any(target_os = "macos", target_os = "linux")
+                any(target_os = "macos", target_os = "linux", target_os = "windows")
             ))]
             agent::browser::probe::observe_companion(app.handle());
             let agent = app.state::<agent::AgentState>();

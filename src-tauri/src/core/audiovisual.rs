@@ -436,6 +436,10 @@ pub(super) async fn install(
             #[cfg(windows)]
             if let Ok(metadata) = fs::symlink_metadata(&cached) {
                 let mut permissions = metadata.permissions();
+                #[expect(
+                    clippy::permissions_set_readonly_false,
+                    reason = "This Windows-only path clears a file attribute, not Unix mode bits."
+                )]
                 permissions.set_readonly(false);
                 fs::set_permissions(&cached, permissions)?;
             }

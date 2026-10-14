@@ -171,8 +171,11 @@ async fn hook_mcp_core_call_preserves_structured_content_and_redacts_before_boun
         .await
         .unwrap();
     assert!(output.contains("Documentation: hook brief"));
-    assert!(output.contains("\"source\":\"fixture\""));
-    assert!(output.contains(&fixture.home.to_string_lossy().to_string()));
+    let structured = output
+        .lines()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .expect("the MCP structured content is preserved");
+    assert_eq!(structured, json!({"source":"fixture", "cwd":fixture.home}));
     assert!(!output.contains("fixture-sensitive-value"));
     let long = client
         .core_call(

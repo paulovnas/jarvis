@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -7,7 +7,7 @@ import { companionChatSchema, type CompanionItem, type CompanionSnapshot } from 
 import type { AccountUsage } from "@/core/provider-usage";
 import { Companion } from "./Companion";
 import type { RobotProps } from "./Robot";
-import { voiceSession, voiceSettings } from "@/test/voice-fixtures";
+import { idleVoice, voiceSession, voiceSettings } from "@/test/voice-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -24,6 +24,8 @@ const base: CompanionItem = {
   revision: 1, tasks: [],
 };
 let snapshot: CompanionSnapshot;
+let voiceRevision = 0;
+let voiceState = { ...idleVoice };
 const account: AccountUsage & { providerKind: string } = {
   alias: "openai-codex-pessoal", providerKind: "openai-codex", fetchedAt: 1_000_000, email: null, plan: null, error: null, resetCredits: null,
   windows: [{ id: "window-1", group: "Codex", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 72, resetsAt: 1_200_000 }],
@@ -57,6 +59,8 @@ describe("Desktop companion", () => {
   beforeEach(() => {
     accounts = [account];
     snapshot = { items: [{ ...base }], truncated: false };
+    // The voice store survives remounts and rejects older native revisions.
+    voiceState = { ...idleVoice, revision: ++voiceRevision };
     events.clear(); stop.mockClear();
     vi.spyOn(Date, "now").mockReturnValue(1_000_000);
     vi.stubGlobal("PointerEvent", MouseEvent);
@@ -70,6 +74,7 @@ describe("Desktop companion", () => {
       if (command === "get_companion_snapshot") return snapshot;
       if (command === "get_companion_usage") return accounts;
       if (command === "get_companion_speech_volume") return 1;
+      if (command === "get_voice_settings") return voiceSettings({ session: voiceState, speechReady: false });
       if (command === "set_companion_speech_volume") return (args as { volume: number }).volume;
       if (command === "set_companion_expanded") {
         const isExpanded = (args as { expanded: boolean }).expanded;
@@ -84,7 +89,13 @@ describe("Desktop companion", () => {
       return true;
     });
   });
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  afterEach(() => {
+    // End native audio even when an assertion or timeout interrupts the fixture.
+    voiceState = { ...idleVoice, revision: ++voiceRevision };
+    act(() => { events.get("voice:state")?.(voiceState); });
+    cleanup();
+    vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+  });
 
   it("starts compact with live activity and does not bootstrap the main app or read transcripts", async () => {
     render(<Companion />);
@@ -155,10 +166,10 @@ describe("Desktop companion", () => {
 
   it("opens an announcement only after audio is ready and keeps it visible throughout speech", async () => {
     const original = call.getMockImplementation();
-    const preparing = voiceSession({ id: "notice-audio", target: "companion-notice", owner: "companion", mode: "announcement", phase: "preparing", revision: 100 });
+    const preparing = voiceSession({ id: "notice-audio", target: "companion-notice", owner: "companion", mode: "announcement", phase: "preparing", revision: ++voiceRevision });
     call.mockImplementation(async (command, args) => {
-      if (command === "get_voice_settings") return voiceSettings();
-      if (command === "start_voice_session") return preparing;
+      if (command === "get_voice_settings") return voiceSettings({ session: voiceState });
+      if (command === "start_voice_session") { voiceState = preparing; return preparing; }
       return original?.(command, args);
     });
     render(<Companion />);
@@ -173,11 +184,11 @@ describe("Desktop companion", () => {
     vi.useFakeTimers();
     await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
     expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
-    await act(async () => { events.get("voice:state")?.({ ...preparing, phase: "speaking", revision: 101 }); });
+    await act(async () => { voiceState = { ...preparing, phase: "speaking", revision: ++voiceRevision }; events.get("voice:state")?.(voiceState); });
     expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeInTheDocument();
     await act(async () => { await vi.advanceTimersByTimeAsync(35_000); });
     expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toBeInTheDocument();
-    await act(async () => { events.get("voice:state")?.({ ...preparing, phase: "idle", revision: 102 }); });
+    await act(async () => { voiceState = { ...preparing, phase: "idle", revision: ++voiceRevision }; events.get("voice:state")?.(voiceState); });
     await act(async () => { await vi.advanceTimersByTimeAsync(30_400); });
     expect(screen.queryByRole("status", { name: "Aviso do Jarvito" })).not.toBeInTheDocument();
   });

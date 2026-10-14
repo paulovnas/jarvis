@@ -24,6 +24,14 @@ vi.mock("@/components/chat/TerminalSurface", () => ({ TerminalSurface: () => <di
 const invokeMock = vi.mocked(invoke);
 const accountsMock = vi.fn<() => Promise<ProviderAccount[]>>();
 
+async function openProjectDetails(user: ReturnType<typeof userEvent.setup>) {
+  const button = await screen.findByRole("button", { name: "Detalhes" });
+  await waitFor(() => expect(button).toBeEnabled());
+  // jsdom has no panel geometry; avoid the resize handle's (0, 0) hit area.
+  button.focus();
+  await user.keyboard("{Enter}");
+}
+
 describe("Home shell", () => {
   it("shares one Live controller with the Designer sidebar and removes a pending task without changing the composer draft", async () => {
     const user = userEvent.setup();
@@ -142,7 +150,7 @@ describe("Home shell", () => {
     render(<Home />);
     const field = await screen.findByRole("textbox", { name: "Mensagem" });
     field.focus(); await user.paste("Rascunho pessoal");
-    await user.click(screen.getByRole("button", { name: "Detalhes" }));
+    await openProjectDetails(user);
     expect(
       await screen.findByRole("tab", { name: /Kanban/ }, { timeout: 12_000 }),
     ).toBeVisible();
@@ -230,14 +238,14 @@ describe("Home shell", () => {
     });
     render(<Home />);
     await screen.findByRole("textbox", { name: "Mensagem" });
-    await user.click(screen.getByRole("button", { name: "Detalhes" }));
+    await openProjectDetails(user);
     await user.click(await screen.findByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Outro chat" }));
     await screen.findByRole("textbox", { name: "Mensagem" });
     expect(screen.queryByRole("application", { name: "Terminal em execução" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Detalhes" }));
+    await openProjectDetails(user);
     await user.click(await screen.findByRole("tab", { name: /^Terminais/ }));
     expect(await screen.findByRole("tab", { name: /Shell compartilhado/ })).toBeVisible();
     expect(screen.getByRole("tab", { name: /Vite/ })).toBeVisible();

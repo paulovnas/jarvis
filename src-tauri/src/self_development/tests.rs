@@ -273,15 +273,10 @@ fn exact_roots_and_separately_enabled_worktrees_are_required() {
         ],
     );
     let worktree = fixture.home.join("worktree");
+    let worktree_for_git = crate::library::strip_verbatim(&worktree.to_string_lossy()).into_owned();
     git_ok(
         &fixture.root,
-        &[
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            worktree.to_str().unwrap(),
-        ],
+        &["worktree", "add", "--quiet", "--detach", &worktree_for_git],
     );
     let worktree = fs::canonicalize(worktree).unwrap();
     fixture.add_project(&worktree, OTHER);

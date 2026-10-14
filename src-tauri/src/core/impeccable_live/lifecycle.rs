@@ -10,6 +10,10 @@ use std::{
 use super::{error, verify_helper_identity, CoreError};
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+// Winsock can take about two seconds to report loopback connection refusal.
+#[cfg(windows)]
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(not(windows))]
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);

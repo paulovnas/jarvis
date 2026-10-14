@@ -1,2 +1,8 @@
 # Unified diffs use one space for an unchanged empty context line.
-scripts/impeccable-native/*.patch whitespace=-blank-at-eol
+scripts/impeccable-native/*.patch text eol=lf whitespace=-blank-at-eol
+
+# Byte-checked resources and release fixtures must survive Windows checkouts unchanged.
+src-tauri/resources/** text=auto eol=lf
+src-tauri/src/agent/browser/page-cdp.js text eol=lf
+src-tauri/src/core/brag-docs/** text=auto eol=lf
+src-tauri/src/core/ponytail/fixtures/*.md text eol=lf

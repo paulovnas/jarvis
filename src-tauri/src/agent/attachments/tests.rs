@@ -29,7 +29,7 @@ fn project_images_become_owned_generation_references_without_changing_the_source
     assert_eq!(item.kind, "image");
     assert_eq!(item.name, "logo.png");
     assert_eq!(value["attachment"]["id"], id);
-    assert_eq!(value["path"], "assets/logo.png");
+    assert_eq!(value["path"], json!(Path::new("assets").join("logo.png")));
     assert!(!output.contains("base64"));
     assert_eq!(
         bounded_read(
