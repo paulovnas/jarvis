@@ -1108,9 +1108,9 @@ impl Index {
 #[serde(rename_all = "camelCase")]
 pub struct Page {
     conversation_id: String,
-    turns: Vec<Turn>,
+    pub(super) turns: Vec<Turn>,
     compactions: Vec<compaction::CompactionEvent>,
-    history: Window,
+    pub(super) history: Window,
     navigation: Vec<Excerpt>,
 }
 
@@ -1406,7 +1406,7 @@ impl AgentState {
             .unwrap_or(file_session))
     }
 
-    fn history_page(
+    pub(super) fn history_page(
         &self,
         state: &AppState,
         home: &Path,

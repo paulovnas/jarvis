@@ -29,6 +29,8 @@ mod skills;
 mod system;
 mod updater;
 mod voice;
+#[cfg(target_os = "windows")]
+mod windows_tray;
 
 fn application_context() -> tauri::Context {
     // Generate the embedded macOS Info.plist once per crate. The optional
@@ -84,6 +86,8 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
                     | "companion_answer_question"
                     | "companion_pause_question"
                     | "get_companion_chat"
+                    | "get_chat_prediction"
+                    | "dismiss_chat_prediction"
                     | "send_companion_message"
                     | "confirm_companion_project"
                     | "get_companion_conversations"
@@ -127,6 +131,8 @@ mod companion_policy_tests {
             "companion_answer_question",
             "companion_open_conversation",
             "get_companion_chat",
+            "get_chat_prediction",
+            "dismiss_chat_prediction",
             "send_companion_message",
             "confirm_companion_project",
             "get_companion_conversations",
@@ -292,6 +298,8 @@ pub fn run() {
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
+            #[cfg(target_os = "windows")]
+            windows_tray::install(app.handle())?;
             companion::setup(app.handle());
             #[cfg(all(
                 feature = "browser-probe",
@@ -413,6 +421,8 @@ pub fn run() {
                 system::get_system_preferences,
                 system::save_system_preferences,
                 agent::prompt_refinement::refine_chat_prompt,
+                agent::message_prediction::get_chat_prediction,
+                agent::message_prediction::dismiss_chat_prediction,
                 system::test_system_notification,
                 optional_tools::get_optional_tools_status,
                 optional_tools::install_optional_tool,

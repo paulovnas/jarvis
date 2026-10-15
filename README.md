@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/logo_horizontal_background.png" width="640" alt="Jarvis" />
+  <img src="public/v2/png/jarvis-banner@2x.png" width="640" alt="Jarvis" />
 </p>
 
 <p align="center">
@@ -184,6 +184,17 @@ O macOS pode pedir autorização adicional porque as versões atuais ainda não 
 - Alertas de uso podem ser configurados por conta e janela de limite. A statusbar mostra consumo, reserva ou déficit, tempo até a renovação e a posição esperada pelo tempo decorrido.
 - O terminal integrado respeita shell, argumentos, fonte e tamanho definidos pelo usuário. Terminais e processos ficam na aba **Terminais** dos detalhes do projeto, compartilhados entre suas conversas. Trocar ou excluir um chat preserva os processos; encerrá-los explicitamente ou excluir o projeto termina sua execução.
 - A opção de repouso pode ficar desligada, acompanhar execuções ativas ou permanecer ligada enquanto o Jarvis estiver aberto.
+
+### Windows system tray
+
+On Windows, closing the main window minimizes Jarvis to the system tray by default.
+Jarvito and running tasks stay active. Change this in **Configurações → Geral →
+Aplicativo → Ao fechar o Jarvis**. Right-click the tray icon to open up to four
+running chats and four recent chats, open Jarvis, Settings or About, or quit.
+Recent chats follow their last activity across all spaces and global conversations.
+Chat names use up to 28 characters and project names up to 18, including `...`.
+**Encerrar** always requests an actual exit, with the usual confirmation for active work.
+Tray integration is currently exclusive to Windows.
 
 ## Backup, dados e privacidade
 

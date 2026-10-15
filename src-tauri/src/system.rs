@@ -191,10 +191,19 @@ impl TerminalPreferences {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CloseBehavior {
+    #[default]
+    Tray,
+    Exit,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Preferences {
     pub prevent_sleep: SleepMode,
+    pub(crate) close_behavior: CloseBehavior,
     pub notifications: bool,
     pub companion_enabled: bool,
     pub ask_user_timeout_seconds: u16,
@@ -214,6 +223,8 @@ pub struct Preferences {
     pub(crate) computer_use_mode: crate::agent::computer::ComputerMode,
     pub(crate) chat_title_model: Option<crate::agent::workflow::settings::ModelChoice>,
     pub(crate) prompt_refinement_model: Option<crate::agent::workflow::settings::ModelChoice>,
+    pub(crate) message_predictions_enabled: bool,
+    pub(crate) message_prediction_model: Option<crate::agent::workflow::settings::ModelChoice>,
 }
 
 fn discard_retired_cli_preferences<'de, D: serde::Deserializer<'de>>(
@@ -226,6 +237,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             prevent_sleep: SleepMode::Off,
+            close_behavior: CloseBehavior::default(),
             notifications: false,
             companion_enabled: false,
             ask_user_timeout_seconds: DEFAULT_ASK_USER_TIMEOUT_SECONDS,
@@ -237,6 +249,8 @@ impl Default for Preferences {
             computer_use_mode: crate::agent::computer::ComputerMode::default(),
             chat_title_model: None,
             prompt_refinement_model: None,
+            message_predictions_enabled: true,
+            message_prediction_model: None,
         }
     }
 }
@@ -254,12 +268,42 @@ impl Preferences {
         if let Some(choice) = &self.prompt_refinement_model {
             validate_prompt_refinement_model(choice)?;
         }
+        if let Some(choice) = &self.message_prediction_model {
+            validate_message_prediction_model(choice)?;
+        }
         Ok(())
     }
 }
 
 pub(crate) const CHAT_TITLE_MODEL_KEY: &str = "chat_title";
 pub(crate) const PROMPT_REFINEMENT_MODEL_KEY: &str = "prompt_refinement";
+pub(crate) const MESSAGE_PREDICTION_MODEL_KEY: &str = "message_prediction";
+
+pub(crate) fn validate_message_prediction_model(
+    choice: &crate::agent::workflow::settings::ModelChoice,
+) -> Result<(), String> {
+    choice
+        .validate_shape()
+        .map_err(|error| error.message().to_owned())?;
+    if choice.executor != crate::claude::Executor::Jarvis || choice.fallback.is_some() {
+        return Err("Para prever mensagens, escolha um provedor Jarvis e um único modelo.".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn resolved_message_prediction_model(
+    db: &rusqlite::Connection,
+    preferences: &Preferences,
+) -> Result<
+    Option<crate::agent::workflow::settings::ModelChoice>,
+    crate::persistence::PersistenceError,
+> {
+    preferences
+        .message_prediction_model
+        .as_ref()
+        .map(|choice| crate::model_bindings::resolve(db, MESSAGE_PREDICTION_MODEL_KEY, choice))
+        .transpose()
+}
 
 pub(crate) fn validate_prompt_refinement_model(
     choice: &crate::agent::workflow::settings::ModelChoice,
@@ -326,6 +370,7 @@ pub struct Snapshot {
     terminal_error: Option<String>,
     terminal_font_error: Option<String>,
     companion_supported: bool,
+    tray_supported: bool,
     companion_error: Option<String>,
 }
 
@@ -493,6 +538,14 @@ impl SystemState {
             .preferences
             .clone())
     }
+    #[cfg(all(feature = "browser-probe", target_os = "windows"))]
+    pub(crate) fn initialize_tray_probe(&self, path: PathBuf) -> Result<(), String> {
+        *self
+            .store
+            .lock()
+            .map_err(|_| "System preferences lock poisoned")? = Some(Store::open(path));
+        Ok(())
+    }
     fn snapshot(&self) -> Result<Snapshot, String> {
         self.snapshot_with_shells(crate::agent::shell::interactive_shells)
     }
@@ -528,6 +581,7 @@ impl SystemState {
             };
         Ok(Snapshot {
             preferences,
+            tray_supported: cfg!(target_os = "windows"),
             sleep_inhibited,
             sleep_error,
             notification_error,
@@ -552,6 +606,7 @@ impl SystemState {
         snapshot.companion_error = crate::companion::error(app);
         if snapshot.preferences.chat_title_model.is_none()
             && snapshot.preferences.prompt_refinement_model.is_none()
+            && snapshot.preferences.message_prediction_model.is_none()
         {
             return Ok(snapshot);
         }
@@ -571,6 +626,12 @@ impl SystemState {
                 resolved_prompt_refinement_model(db, &snapshot.preferences)
             })
             .map_err(|_| "Não foi possível ler o modelo de refinamento.")?;
+        snapshot.preferences.message_prediction_model = app
+            .state::<crate::persistence::AppState>()
+            .with_connection(&home, |db| {
+                resolved_message_prediction_model(db, &snapshot.preferences)
+            })
+            .map_err(|_| "Não foi possível ler o modelo das previsões.")?;
         Ok(snapshot)
     }
     fn notification_result(&self, app: &tauri::AppHandle, result: &Result<(), String>) {
@@ -865,6 +926,11 @@ pub async fn save_system_preferences(
             &preferences.prompt_refinement_model,
             PROMPT_REFINEMENT_MODEL_KEY,
         ),
+        (
+            &previous_preferences.message_prediction_model,
+            &preferences.message_prediction_model,
+            MESSAGE_PREDICTION_MODEL_KEY,
+        ),
     ] {
         let resolved = previous
             .as_ref()
@@ -915,9 +981,22 @@ pub async fn save_system_preferences(
     }
     providers
         .with_connection(&home, |db| {
-            crate::model_bindings::forget_item(db, CHAT_TITLE_MODEL_KEY)
+            for key in [
+                CHAT_TITLE_MODEL_KEY,
+                PROMPT_REFINEMENT_MODEL_KEY,
+                MESSAGE_PREDICTION_MODEL_KEY,
+            ] {
+                crate::model_bindings::forget_item(db, key)?;
+            }
+            Ok::<_, crate::persistence::PersistenceError>(())
         })
-        .map_err(|_| "Não foi possível atualizar o modelo dos títulos.")?;
+        .map_err(|_| "Não foi possível atualizar os modelos auxiliares.")?;
+    if !preferences.message_predictions_enabled
+        || previous_preferences.message_prediction_model != preferences.message_prediction_model
+    {
+        app.state::<crate::agent::AgentState>()
+            .cancel_message_predictions(&app);
+    }
     app.state::<crate::agent::AgentState>()
         .terminals
         .set_preferences(preferences.terminal);

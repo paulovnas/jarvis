@@ -1,6 +1,6 @@
 import { JARVITO_CHAT_ID } from "@/core/companion";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { FolderGit2, Globe, MessageSquare, Send } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Globe, MessageSquare, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -138,7 +138,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
       </div>
       <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
         <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">
-          <JarvisLogo variant="vertical" alt="Jarvis" className="size-32" />
+          <JarvisLogo variant="horizontal" alt="Jarvis" className="h-auto w-64 max-w-full" />
           <h2 className="text-lg font-medium tracking-tight text-foreground">O que vamos construir?</h2>
         </div>
       </div>
@@ -150,7 +150,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   </FileWorkspace>;
 }
 
-export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefreshModels, refreshingModels, library, chat, workflow, agentModels, leftToggle, rightToggle, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts, onDesignerChange }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; leftToggle?: ReactNode; rightToggle?: ReactNode; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft>; onDesignerChange?: (session: DesignerSession | null) => void }) {
+export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefreshModels, refreshingModels, library, chat, workflow, agentModels, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts, onDesignerChange }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft>; onDesignerChange?: (session: DesignerSession | null) => void }) {
   const [httpDrafts] = useState(() => new Map<string, HttpTab[]>());
   const [localDrafts] = useState(() => new Map<string, ChatDraft>());
   const [localQuestionDrafts] = useState(() => new Map<string, QuestionDraft>());
@@ -161,16 +161,7 @@ export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefre
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);
   const conversation = library?.conversations.find(item => item.id === id);
   const global = conversation?.projectId === null;
-  return <main aria-label="Conversa" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
-      {leftToggle}
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">{global ? <MessageSquare aria-hidden="true" className="size-4" /> : <FolderGit2 aria-hidden="true" className="size-4" />}</div>
-      <div className="min-w-0 flex-1">
-        <Hint content={project?.path ?? library?.globalDirectory}><p className="mb-1 truncate font-mono text-[10px] text-muted-foreground">{global ? "Global" : workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p></Hint>
-        {conversation && <h1 className="truncate text-sm font-medium">{conversation.title}</h1>}
-      </div>
-      {rightToggle}
-    </header>
+  return <main aria-label="Conversa" aria-description={conversation?.title} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     {!library ? <ConversationSkeleton /> : id && conversation && (global || project && workspace) ? <ConversationView key={`${id}:${conversation.projectId ?? "global"}:${global ? library.globalDirectory : ""}`} httpDrafts={httpDrafts} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace: workspace ?? null, project: project ?? null, conversation, directory: library.globalDirectory }} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} files={files} onDesignerChange={onDesignerChange} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um espaço para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

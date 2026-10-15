@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
+
+export function TitleBarSlot({ side, children }: { side: "left" | "right"; children: ReactNode }) {
+  const target = document.getElementById(`titlebar-${side}-navigation`);
+  return target ? createPortal(children, target) : children;
+}
 
 export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -77,9 +83,7 @@ export function TitleBar() {
   const expanded = isMac ? isFullscreen : isMaximized;
   const greenLabel = isMac ? (isFullscreen ? "Sair da tela cheia" : "Entrar em tela cheia") : (isMaximized ? "Restaurar janela" : "Maximizar janela");
 
-  if (isMac && isFullscreen) return null;
-
-  // macOS keeps the traffic-light cluster on the left and centers the wordmark.
+  // macOS keeps its traffic-light cluster before the shared app navigation.
   // Windows (and Linux) follow the native convention: branding on the
   // left, square caption controls on the right with a destructive close hover.
   const controls = (
@@ -114,27 +118,19 @@ export function TitleBar() {
 
   return (
     <header
+      aria-label="Barra superior"
       data-tauri-drag-region
       onDoubleClick={event => { if (!(event.target instanceof Element) || !event.target.closest("button")) void handleToggleMaximize(); }}
-      className="native-titlebar relative flex h-10 w-full shrink-0 select-none items-center border-b border-border bg-sidebar px-3 text-[13px] font-medium text-muted-foreground"
+      className="native-titlebar relative flex h-10 w-full shrink-0 select-none items-center gap-2 bg-background pl-2 text-[13px] font-medium text-muted-foreground"
     >
-      {isMac ? (
-        <>
-          {controls}
-          <div data-tauri-drag-region className="h-full flex-1" />
-          <div data-tauri-drag-region className="absolute left-1/2 flex h-full min-w-0 -translate-x-1/2 items-center">
-            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-6 w-auto shrink-0" />
-          </div>
-        </>
-      ) : (
-        <>
-          <div data-tauri-drag-region className="flex items-center gap-2 min-w-0">
-            <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-6 w-auto shrink-0" />
-          </div>
-          <div data-tauri-drag-region className="h-full flex-1" />
-          {controls}
-        </>
-      )}
+      {isMac && !isFullscreen && controls}
+      <div id="titlebar-left-navigation" className="flex shrink-0 items-center" />
+      <div data-tauri-drag-region className="flex min-w-0 items-center">
+        <JarvisLogo variant="horizontal" alt="Jarvis" className="pointer-events-none h-6 w-auto shrink-0" />
+      </div>
+      <div data-tauri-drag-region className="h-full flex-1" />
+      <div id="titlebar-right-navigation" className="flex shrink-0 items-center" />
+      {!isMac && controls}
     </header>
   );
 }

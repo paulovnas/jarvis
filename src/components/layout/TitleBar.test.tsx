@@ -10,7 +10,7 @@ describe("TitleBar Component", () => {
     // Windows/Linux caption order: minimize, maximize/restore, close (right side).
     expect(buttons.map(button => button.getAttribute("aria-label"))).toEqual(["Minimizar janela", "Maximizar janela", "Fechar janela"]);
     const logo = screen.getByRole("img", { name: "Jarvis" });
-    expect(logo).toHaveAttribute("src", "/logo_horizontal.png");
+    expect(logo).toHaveAttribute("src", "/v2/png/jarvis-horizontal@2x.png");
     expect(logo).toHaveAttribute("draggable", "false");
     expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
     // The wordmark precedes the controls in the DOM (branding left, controls right).

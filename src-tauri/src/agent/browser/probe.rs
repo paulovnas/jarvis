@@ -681,6 +681,10 @@ fn probe_context() -> tauri::Context {
 }
 
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    if std::env::var("JARVIS_TRAY_PROBE").is_ok_and(|value| value == "1") {
+        return crate::windows_tray::probe::run();
+    }
     let passed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let completed = passed.clone();
     let context = probe_context();

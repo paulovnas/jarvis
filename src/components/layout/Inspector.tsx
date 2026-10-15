@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ChevronRight, ListChecks, Files, Users, ClipboardCheck, ListTodo } from "lucide-react";
+import { ChevronRight, ListChecks, Files, Users, ClipboardCheck, ListTodo, PanelRight, GitBranch, FolderOpen, Palette } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -18,13 +18,32 @@ import { WorkflowAgents } from "./WorkflowAgents";
 import { WorkflowValidation } from "./WorkflowValidation";
 import { activeAgent, ROLE_COLORS } from "@/core/workflow";
 import type { WorkflowController } from "@/hooks/use-workflow";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Hint } from "@/components/ui/hint";
+import { TitleBarSlot } from "./TitleBar";
 import { ProjectExplorer } from "@/components/files/ProjectExplorer";
 import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { DirectTasks } from "./DirectTasks";
 import { GithubRepositoriesPanel } from "./GithubRepositoriesPanel";
 import { executorOf } from "@/core/executors";
 import { DesignerPanel, type DesignerSession } from "./DesignerPanel";
+
+export type InspectorSection = "activities" | "github" | "explorer" | "designer";
+const sections = [
+  { value: "activities", label: "Inspector", icon: PanelRight },
+  { value: "github", label: "GitHub", icon: GitBranch },
+  { value: "explorer", label: "Explorer", icon: FolderOpen },
+  { value: "designer", label: "Designer", icon: Palette },
+] as const;
+
+export function InspectorNavigation({ section, collapsed, global = false, disabled = false, onSelect }: { section: InspectorSection; collapsed: boolean; global?: boolean; disabled?: boolean; onSelect: (section: InspectorSection) => void }) {
+  return <TitleBarSlot side="right"><div role="group" aria-label="Lateral direita" className="flex items-center gap-0.5 px-1">
+    {sections.map(({ value, label, icon: Icon }) => {
+      const active = !collapsed && section === value;
+      const unavailable = disabled || global && value !== "activities";
+      return <Hint key={value} content={unavailable ? "Disponível em conversas de projeto" : `${active ? "Recolher" : "Abrir"} ${label}`}><Button type="button" variant="ghost" size="icon-sm" aria-label={label} aria-pressed={active} aria-expanded={active} aria-controls="inspector-panel-content" disabled={unavailable} onClick={() => onSelect(value)} className={`size-7 cursor-pointer rounded-md ${active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}><Icon aria-hidden="true" className="size-4" /></Button></Hint>;
+    })}
+  </div></TitleBarSlot>;
+}
 
 function ActivitySection({ title, icon, count, children }: { title: string; icon: ReactNode; count?: number; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
@@ -36,7 +55,7 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace, designer }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController; designer?: DesignerSession }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace, designer, onSelectSection }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController; designer?: DesignerSession; onSelectSection?: (section: InspectorSection) => void }) {
   const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
@@ -57,12 +76,11 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const projectPath = library?.projects.find(project => project.id === projectId)?.path;
   const global = library?.conversations.find(conversation => conversation.id === library.selection.conversationId)?.projectId === null;
   const section = !global && (layout.inspectorTab === "explorer" || layout.inspectorTab === "github" || layout.inspectorTab === "designer") ? layout.inspectorTab : "activities";
-  const selectSection = (value: unknown) => { if (value === "activities" || value === "github" || value === "explorer" || value === "designer") { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
-  const tabClass = "h-7 min-w-0 cursor-pointer px-1.5 text-xs text-muted-foreground data-active:bg-accent data-active:text-foreground dark:data-active:border-border dark:data-active:bg-accent dark:data-active:text-foreground";
+  const selectSection = (value: InspectorSection) => { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); if (onSelectSection) onSelectSection(value); else updateLayout({ inspectorTab: value }); };
   return <aside aria-label="Inspector" className="native-inspector flex h-full min-h-0 flex-col bg-sidebar">
-    <Tabs value={section} onValueChange={selectSection} className="h-full min-h-0 gap-0">
-      <div className="shrink-0 border-b border-border px-2 py-2"><TabsList aria-label="Seções da lateral direita" className="h-8 w-full justify-start gap-0.5 rounded-md bg-secondary/50 p-0.5"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>Explorer</TabsTrigger><TabsTrigger value="designer" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>Designer</TabsTrigger></TabsList></div>
-      <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
+    <InspectorNavigation section={section} collapsed={layout.inspectorCollapsed} global={global} onSelect={selectSection} />
+    <div className="flex h-full min-h-0 flex-col">
+      <div hidden={section !== "activities"} className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
           {!publishingFlow && (directFlow ? <ActivitySection title="Tarefas" icon={<ListTodo aria-hidden="true" style={flow === "designer" || flow === "video" || flow === "image_generator" ? { color: ROLE_COLORS[flow] } : undefined} className="size-4 text-muted-foreground" />} count={latestTurn?.tasks?.length}>
@@ -83,16 +101,16 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
         </div></ScrollArea>
     </div>
     <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} external={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) !== "jarvis"} externalProvider={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) === "unavailable" ? "Executor removido" : "Claude Code"} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
-      </TabsContent>
-      <TabsContent value="github" keepMounted className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
+      </div>
+      <div hidden={section !== "github"} className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
         {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} active={section === "github"} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}
-      </TabsContent>
-      <TabsContent value="explorer" keepMounted className={`min-h-0 flex-1 ${section === "explorer" ? "block" : "hidden"}`}>
+      </div>
+      <div hidden={section !== "explorer"} className={`min-h-0 flex-1 ${section === "explorer" ? "block" : "hidden"}`}>
         {projectId && fileWorkspace && (explorerVisited || section === "explorer") ? <ProjectExplorer key={projectId} projectId={projectId} projectName={library?.projects.find(project => project.id === projectId)?.name ?? "Projeto"} selected={fileWorkspace.tabs.activePath} onOpen={fileWorkspace.open} /> : section === "explorer" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para explorar os arquivos do projeto.</p> : null}
-      </TabsContent>
-      <TabsContent value="designer" keepMounted className={`min-h-0 flex-1 ${section === "designer" ? "block" : "hidden"}`}>
+      </div>
+      <div hidden={section !== "designer"} className={`min-h-0 flex-1 ${section === "designer" ? "block" : "hidden"}`}>
         {!global && <DesignerPanel key={library?.selection.conversationId ?? "empty"} session={designer?.conversationId === library?.selection.conversationId ? designer : undefined} />}
-      </TabsContent>
-    </Tabs>
+      </div>
+    </div>
   </aside>;
 }

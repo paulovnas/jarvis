@@ -13,11 +13,12 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = {
-  preferences: { preventSleep: "off", notifications: false, companionEnabled: false, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
+  preferences: { preventSleep: "off", closeBehavior: "tray", notifications: false, companionEnabled: false, messagePredictionsEnabled: true, askUserTimeoutSeconds: 30, responseLanguage: "pt-BR", terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 }, browser: { mode: "embedded", application: "chrome" } },
   sleepInhibited: false,
   sleepError: null,
   notificationError: null,
   companionSupported: true,
+  traySupported: false,
   companionError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
   availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],
@@ -27,18 +28,85 @@ const initial: SystemSnapshot = {
 };
 
 describe("system preferences", () => {
+  it("offers the close behavior only on Windows and saves it independently", async () => {
+    call.mockResolvedValue({ ...initial, traySupported: true });
+    const user = userEvent.setup();
+    const view = render(<SystemSettings />);
+    const control = await screen.findByRole("combobox", { name: "Ao fechar o Jarvis" });
+    expect(control).toHaveTextContent("Minimizar na bandeja");
+    call.mockResolvedValue({ ...initial, traySupported: true, preferences: { ...initial.preferences, closeBehavior: "exit" } });
+    await user.click(control);
+    await user.click(await screen.findByRole("option", { name: "Encerrar" }));
+    await waitFor(() => expect(control).toHaveTextContent("Encerrar"));
+    expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, closeBehavior: "exit" } });
+    view.unmount();
+    call.mockResolvedValue(initial);
+    render(<SystemSettings />);
+    await screen.findByRole("switch", { name: "Notificações do sistema" });
+    expect(screen.queryByRole("combobox", { name: "Ao fechar o Jarvis" })).not.toBeInTheDocument();
+  });
+  it("groups application, conversations and editor controls by purpose", async () => {
+    render(<SystemSettings />);
+    const application = await screen.findByRole("region", { name: "Preferências do aplicativo" });
+    expect(within(application).getByRole("switch", { name: "Notificações do sistema" })).toBeVisible();
+    expect(within(application).getByRole("switch", { name: "Assistente na área de trabalho" })).toBeVisible();
+    const conversations = screen.getByRole("region", { name: "Preferências das conversas" });
+    expect(within(conversations).getByRole("combobox", { name: "Idioma dos agentes" })).toBeVisible();
+    expect(within(conversations).getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
+    expect(within(conversations).getByRole("button", { name: "Modelo para títulos das conversas" })).toBeVisible();
+    const editor = screen.getByRole("region", { name: "Preferências do editor" });
+    expect(within(editor).getByRole("button", { name: "Modelo para refinar prompts" })).toBeVisible();
+    expect(within(editor).getByRole("switch", { name: "Mostrar previsões" })).toBeVisible();
+  });
+  it("defaults predictions to enabled and Automatic and hides the model when disabled", async () => {
+    const user = userEvent.setup();
+    render(<SystemSettings />);
+    const toggle = await screen.findByRole("switch", { name: "Mostrar previsões" });
+    expect(toggle).toBeChecked();
+    expect(screen.getByRole("button", { name: "Modelo para previsão de mensagens" })).toHaveTextContent("Automático");
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, messagePredictionsEnabled: false } });
+    await user.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(screen.queryByRole("button", { name: "Modelo para previsão de mensagens" })).not.toBeInTheDocument();
+    expect(call).toHaveBeenCalledWith("save_system_preferences", { preferences: { ...initial.preferences, messagePredictionsEnabled: false } });
+  });
   beforeEach(() => {
     call.mockReset().mockResolvedValue(initial);
     vi.mocked(listen).mockReset().mockResolvedValue(vi.fn());
     vi.mocked(toast.success).mockReset();
   });
-  it("groups the system preferences in one compact control panel", async () => {
+  it("saves a prediction model independently and restores Automatic", async () => {
+    const account: ProviderAccount = {
+      alias: "openai-codex-personal", providerKind: "openai-codex", enabled: true,
+      createdAt: 1, email: null, accountType: "unknown", modelsAvailable: true,
+      models: [{ id: "predictor", name: "Predictor", reasoningLevels: [], defaultReasoningLevel: null }],
+    };
+    const user = userEvent.setup();
+    render(<SystemSettings accounts={[account]} />);
+    const picker = await screen.findByRole("button", { name: "Modelo para previsão de mensagens" });
+    const choice = { executor: "jarvis", account: account.alias, model: "predictor", reasoning: null };
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, messagePredictionModel: choice } });
+    await user.click(picker);
+    await user.hover(await screen.findByRole("menuitem", { name: account.alias }));
+    const model = await screen.findByRole("menuitem", { name: "Predictor" });
+    act(() => model.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, messagePredictionModel: choice } }));
+    expect(picker).toHaveTextContent("Predictor");
+    expect(screen.getByRole("button", { name: "Modelo para títulos das conversas" })).toHaveTextContent("Automático");
+    call.mockResolvedValue({ ...initial, preferences: { ...initial.preferences, messagePredictionModel: null } });
+    await user.click(picker);
+    await user.click(await screen.findByRole("menuitem", { name: "Automático" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_system_preferences", { preferences: { ...initial.preferences, messagePredictionModel: null } }));
+    expect(picker).toHaveTextContent("Automático");
+  });
+  it("keeps compact controls in the application and conversation groups", async () => {
     render(<SystemSettings />);
-    const panel = await screen.findByRole("region", { name: "Preferências do sistema" });
-    expect(within(panel).getByRole("combobox", { name: "Idioma dos agentes" })).toHaveAttribute("data-size", "sm");
+    const panel = await screen.findByRole("region", { name: "Preferências do aplicativo" });
+    expect(screen.getByRole("combobox", { name: "Idioma dos agentes" })).toHaveAttribute("data-size", "sm");
     expect(within(panel).getByRole("combobox", { name: "Impedir repouso" })).toHaveAttribute("data-size", "sm");
     expect(within(panel).getByRole("switch", { name: "Notificações do sistema" })).toHaveAttribute("data-size", "sm");
-    expect(within(panel).getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Tempo para resposta recomendada" })).toBeVisible();
   });
   it("enables and disables the optional desktop companion without changing the other preferences", async () => {
     const user = userEvent.setup(); render(<SystemSettings />);

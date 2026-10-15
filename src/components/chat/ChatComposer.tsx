@@ -9,7 +9,9 @@ import { toast } from "sonner";
 import { attachmentSchema, uploadFile } from "@/core/attachments";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { FlowPicker } from "./FlowPicker";
-import { ComposerSkeleton, PromptRefinementSkeleton } from "@/components/layout/LoadingSkeletons";
+import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
+import { PromptRefinementStatus } from "./PromptRefinementStatus";
+import { useMessagePrediction } from "@/hooks/use-message-prediction";
 import { refinePrompt } from "@/core/prompt-refinement";
 import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
@@ -124,7 +126,7 @@ export function ChatComposer({
   const [uploading, setUploading] = useState(false);
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
   const [refining, setRefining] = useState(false);
-  const [refinementLines, setRefinementLines] = useState(3);
+  const prediction = useMessagePrediction(draftKey, historySnapshot, Boolean(text), refining || disabled || running || compacting || uploading);
   const refinementControl = useRef({ request: 0, locked: false });
   useEffect(() => {
     const control = refinementControl.current;
@@ -144,31 +146,21 @@ export function ChatComposer({
     return () => cancelAnimationFrame(frame);
   }, [draftInsertion, draftKey, drafts]);
   const setDraft = (value: ChatDraft) => {
+    if (value.content !== draftRef.current.content && value.content) prediction.dismiss();
     draftRef.current = value;
     if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
     updateDraft(value);
   };
-  const handleRefine = async (button: HTMLButtonElement) => {
+  const handleRefine = async () => {
     if (refinementControl.current.locked || disabled || compacting || sending || uploading || !draftRef.current.content.trim()) return;
     refinementControl.current.locked = true;
     const request = ++refinementControl.current.request;
-    const field = button.closest(".chat-composer")?.querySelector<HTMLElement>('[role="textbox"]');
-    let lines = 3;
-    if (field && field.clientHeight > 0) {
-      const style = getComputedStyle(field);
-      const lineHeight = Number.parseFloat(style.lineHeight);
-      if (Number.isFinite(lineHeight) && lineHeight > 0) {
-        const padding = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
-        lines = Math.max(3, Math.ceil((field.clientHeight - padding) / lineHeight));
-      }
-    }
-    setRefinementLines(lines);
     setRefining(true);
     try {
       await stopDictation(draftKey ? `chat:${draftKey}` : undefined);
       if (request !== refinementControl.current.request) return;
       const submitted = draftRef.current;
-      const refined = await refinePrompt(submitted);
+      const refined = await refinePrompt(submitted, draftKey);
       if (request !== refinementControl.current.request) return;
       if (draftRef.current !== submitted) { toast.info("O rascunho mudou durante o refinamento. Seu texto atual foi mantido."); return; }
       setDraft(refined);
@@ -389,7 +381,7 @@ export function ChatComposer({
         onReorder={onReorderQueued}
         onResume={onResumeQueue}
       />}
-      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} actions={<Hint content="Refinar prompt"><Button type="button" variant="ghost" size="icon" aria-label="Refinar prompt" aria-busy={refining} disabled={!text.trim() || disabled || compacting || refining || sending || uploading} className="size-7 cursor-pointer rounded-lg text-muted-foreground hover:text-primary" onClick={event => { void handleRefine(event.currentTarget); }}><Sparkles aria-hidden="true" className="size-4" /></Button></Hint>} loading={refining ? <PromptRefinementSkeleton count={refinementLines} /> : undefined} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending || refining} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting || refining} compacting={compacting} working={running || compacting}>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} prediction={prediction.text} onDismissPrediction={prediction.dismiss} onAcceptPrediction={() => { if (prediction.text) { const parts = draftRef.current.parts?.filter(part => part.type === "attachment"); setDraft(parts?.length ? { content: prediction.text, parts: [{ type: "text", text: prediction.text }, ...parts] } : { content: prediction.text }); prediction.dismiss(); requestAnimationFrame(() => input.current?.focus()); } }} actions={<Hint content="Refinar prompt"><Button type="button" variant="ghost" size="icon" aria-label="Refinar prompt" aria-busy={refining} disabled={!text.trim() || disabled || compacting || refining || sending || uploading} className="size-7 cursor-pointer rounded-lg text-muted-foreground hover:text-primary" onClick={() => { void handleRefine(); }}><Sparkles aria-hidden="true" className="size-4" /></Button></Hint>} loading={refining ? <PromptRefinementStatus /> : undefined} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending || refining} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting || refining} compacting={compacting} working={running || compacting}>
 
         <div className="flex w-full min-w-0 flex-col">
         {draftKey && <div className="px-4"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}

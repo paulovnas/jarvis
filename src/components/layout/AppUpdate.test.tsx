@@ -107,7 +107,7 @@ it("abre a mesma modal pelo menu nativo e preserva os detalhes da atualização"
   await waitFor(() => expect(listen).toHaveBeenCalledWith("app:about", expect.any(Function)));
   await act(async () => aboutListener?.({ event: "app:about", id: 1, payload: null }));
   expect(screen.getByText("Paulo Vitor Nascimento")).toBeVisible();
-  expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/logo_vertical.png");
+  expect(screen.getByRole("dialog").querySelector("img")).toHaveAttribute("src", "/v2/svg/inset-symbol.svg");
   expect(screen.getByRole("heading", { name: "Sobre o Jarvis" })).toBeInTheDocument();
   expect(within(screen.getByRole("dialog")).getAllByText(displayVersion(APP_VERSION))).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Verificar atualizações" }));

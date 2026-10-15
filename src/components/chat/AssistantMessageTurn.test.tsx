@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssistantMessageTurn } from "./AssistantMessageTurn";
@@ -14,6 +14,43 @@ const message = {
   timestamp: "18:30",
   exportFileName: "Resposta-Jarvis-2026-09-14-18-30.md",
 };
+
+describe("assistant metadata header", () => {
+  const work = { durationSeconds: 12, steps: [{ thinking: "Verificando o contexto", commentary: "", tools: [{ id: "read", name: "read_file", status: "completed" as const, output: "README" }] }] };
+  it("puts the model before the completed-work disclosure on the same header without a brand assembly", async () => {
+    const user = userEvent.setup();
+    const view = render(<AssistantMessageTurn message={{ ...message, model: "provider / muse-spark-1.3-contributor", work }} />);
+    const header = view.container.querySelector("header");
+    expect(header).not.toBeNull();
+    const model = within(header!).getByText("muse-spark-1.3-contributor");
+    const disclosure = within(header!).getByRole("button", { name: /Trabalhou por 12s/ });
+    expect(model.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(header!).getByText("18:30")).toBeVisible();
+    expect(screen.queryByRole("img", { name: "Jarvis" })).not.toBeInTheDocument();
+    expect(screen.queryByText("arvis")).not.toBeInTheDocument();
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    const divider = screen.getByRole("separator");
+    expect(disclosure.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(divider.compareDocumentPosition(view.container.querySelector(".assistant-prose")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("list", { name: "Etapas da execução" })).toBeVisible();
+  });
+
+  it.each(["thinking", "tool"])("keeps only the model and timestamp above %s activity", state => {
+    const activeWork = { ...work, steps: [{ ...work.steps[0], tools: state === "thinking" ? [] : [{ ...work.steps[0].tools[0], status: "running" as const }] }] };
+    const view = render(<AssistantMessageTurn message={{ ...message, content: "", model: "provider / GPT-6", work: activeWork, streaming: true }} />);
+    const header = view.container.querySelector("header");
+    expect(header).not.toBeNull();
+    expect(within(header!).getByText("GPT-6")).toBeVisible();
+    expect(within(header!).getByText("18:30")).toBeVisible();
+    expect(within(header!).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Trabalhou por/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Jarvis" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Atividades da execução atual" })).toBeVisible();
+  });
+});
 
 describe("ações da resposta final", () => {
   beforeEach(() => { vi.mocked(invoke).mockReset(); });

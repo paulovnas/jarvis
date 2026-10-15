@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.mocked(toast.info).mockReset();
 });
 
-it.each([{ height: 84, lines: 3 }, { height: 256, lines: 10 }])("matches $lines visible composer lines, prevents concurrent send/refinement, and replaces only the draft", async ({ height, lines }) => {
+it.each([84, 256])("keeps the blurred draft at height %i, prevents concurrent actions, and replaces only the draft", async height => {
   let finish!: (value: string) => void;
   vi.mocked(invoke).mockImplementation(async command => command === "refine_chat_prompt" ? new Promise<string>(resolve => { finish = resolve; }) : catalog);
   const send = vi.fn();
@@ -32,16 +32,19 @@ it.each([{ height: 84, lines: 3 }, { height: 256, lines: 10 }])("matches $lines 
   const refine = screen.getByRole("button", { name: "Refinar prompt" });
   await user.click(refine);
   const loading = await screen.findByRole("status", { name: "Refinando prompt" });
-  expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(lines);
+  expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0);
+  expect(loading).toHaveTextContent("Refinando o texto");
+  expect(field).toHaveTextContent("Explique sem alterar código");
+  expect(field.parentElement).not.toHaveClass("invisible");
   // jsdom has no layout; guard the clipping and action-space contracts here.
   expect(loading.closest(".chat-composer")).toHaveClass("overflow-hidden");
-  expect(loading.parentElement).toHaveClass("overflow-hidden", "pr-9");
+  expect(loading.parentElement).toHaveClass("overflow-hidden");
   expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument();
   expect(field).toHaveAttribute("aria-disabled", "true");
   expect(refine).toBeDisabled();
   expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
   await user.click(refine);
-  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "refine_chat_prompt")).toEqual([["refine_chat_prompt", { prompt: "Explique sem alterar código" }]]);
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "refine_chat_prompt")).toEqual([["refine_chat_prompt", { prompt: "Explique sem alterar código", conversationId: "c1" }]]);
   await act(async () => finish("Objetivo: explicar o projeto.\nRestrição: não alterar código.\nResposta: explicação concisa."));
   await waitFor(() => expect(field).toBeVisible());
   expect(field).toHaveTextContent("Restrição: não alterar código.");

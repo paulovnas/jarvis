@@ -18,13 +18,13 @@ describe("Inspector", () => {
     const global = { ...stored, conversations: [...stored.conversations, { id: "global", projectId: null, title: "Global", createdAt: 1 }], selection: { workspaceId: "w1", projectId: null, conversationId: "global" } };
     vi.mocked(invoke).mockImplementation(async command => command === "get_desktop_layout" ? { ...DEFAULT_DESKTOP_LAYOUT, inspectorTab: "designer" } : []);
     const view = render(<DesktopLayoutProvider><Inspector library={global} /></DesktopLayoutProvider>);
-    await screen.findByRole("tab", { name: "Inspector" });
-    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("tab", { name })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("tab", { name: "Inspector" })).toHaveAttribute("aria-selected", "true");
+    await screen.findByRole("button", { name: "Inspector" });
+    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Inspector" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("region", { name: "Designer e Impeccable Live" })).not.toBeInTheDocument();
     view.rerender(<DesktopLayoutProvider><Inspector library={stored} /></DesktopLayoutProvider>);
-    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("tab", { name })).not.toHaveAttribute("aria-disabled", "true");
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Designer" })).toHaveAttribute("aria-selected", "true"));
+    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("button", { name })).not.toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute("aria-pressed", "true"));
   });
   it("keeps a collapsed activity section across tab changes and a restored layout", async () => {
     const user = userEvent.setup();
@@ -38,8 +38,8 @@ describe("Inspector", () => {
     await user.click(await screen.findByRole("button", { name: "Tarefas" }));
     await waitFor(() => expect(layout.activitySections.Tarefas).toBe(false));
     await waitFor(() => expect(screen.queryByText("Nenhuma tarefa registrada nesta solicitação.")).not.toBeInTheDocument());
-    await user.click(screen.getByRole("tab", { name: "Designer" }));
-    await user.click(screen.getByRole("tab", { name: "Inspector" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
+    await user.click(screen.getByRole("button", { name: "Inspector" }));
     expect(screen.getByRole("button", { name: "Tarefas" })).toHaveAttribute("aria-expanded", "false");
     first.unmount();
     render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} /></DesktopLayoutProvider>);
@@ -59,14 +59,14 @@ describe("Inspector", () => {
       live: { status: { conversationId: "other", state: "ready", phase: "running", actionId: "other-action", url: "http://localhost:5173/", tabId: "other-page", error: null, setupNeeded: null, tasks: [{ requestId: "other:1", actionId: "other-action", revision: 1, content: "Pedido de outra conversa", status: "pending", beadId: null, turnId: null, createdAt: 1791568800000 }] }, active: true, loaded: true, busy: false, toggle: vi.fn(async () => {}), resume: vi.fn(async () => {}), editTask: vi.fn(async () => null), removeTask: vi.fn(async () => null), resumeTask: vi.fn(async () => null), cancelAction: vi.fn(async () => null) },
     };
     const first = render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} chat={emptyChat()} designer={designer} /></DesktopLayoutProvider>);
-    await user.click(await screen.findByRole("tab", { name: "Designer" }));
+    await user.click(await screen.findByRole("button", { name: "Designer" }));
     await waitFor(() => expect(layout.inspectorTab).toBe("designer"));
     expect(screen.queryByText("Pedido de outra conversa")).not.toBeInTheDocument();
     expect(screen.getByText("Abra uma conversa para acompanhar as alterações.")).toBeVisible();
     expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "get_impeccable_live" || command === "start_impeccable_live")).toBe(false);
     first.unmount();
     render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} chat={emptyChat()} /></DesktopLayoutProvider>);
-    expect(await screen.findByRole("tab", { name: "Designer" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("button", { name: "Designer" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("region", { name: "Designer e Impeccable Live" })).toBeVisible();
   });
   it("keeps changed files visible without a publication shortcut in idle and active chats", async () => {
@@ -178,8 +178,8 @@ describe("Inspector", () => {
     ];
     vi.mocked(invoke).mockImplementation(async command => command === "get_agent_file_changes" ? [{ path: "src/main.ts", additions: 2, deletions: 1, base: "conversation" }] : []);
     render(<Inspector library={populatedLibrary()} chat={{ ...emptyChat(), turns: [turn], fileChanges: [{ path: "src/main.ts", additions: 2, deletions: 1, base: "conversation" }] }} />);
-    expect(screen.getByRole("tab", { name: "Inspector" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Explorer" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("button", { name: "Inspector" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Explorer" })).toHaveAttribute("aria-pressed", "false");
     const file = await screen.findByRole("button", { name: "Alterações em src/main.ts" });
     expect(file).toHaveTextContent("+2");
     expect(file).toHaveTextContent("−1");
@@ -200,8 +200,8 @@ describe("Inspector", () => {
     });
     const user = userEvent.setup();
     render(<Inspector library={populatedLibrary()} chat={emptyChat()} />);
-    await user.click(screen.getByRole("tab", { name: "GitHub" }));
-    expect(screen.getByRole("tab", { name: "GitHub" })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("button", { name: "GitHub" }));
+    expect(screen.getByRole("button", { name: "GitHub" })).toHaveAttribute("aria-pressed", "true");
     const repository = await screen.findByRole("article", { name: "GitHub Backend" });
     expect(repository).toHaveTextContent("feature/pagamentos");
     expect(repository).toHaveTextContent("2");
@@ -212,8 +212,8 @@ describe("Inspector", () => {
     expect(invoke).toHaveBeenCalledWith("get_project_repositories", { projectId: "p1", includeDefault: true });
     expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_project_repositories")).toHaveLength(1);
 
-    await user.click(screen.getByRole("tab", { name: "Inspector" }));
-    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    await user.click(screen.getByRole("button", { name: "Inspector" }));
+    await user.click(screen.getByRole("button", { name: "GitHub" }));
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_project_repositories")).toHaveLength(2));
   });
 

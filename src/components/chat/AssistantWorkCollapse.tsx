@@ -1,5 +1,5 @@
 import { AlertCircle, BrainCircuit, Check, ChevronRight, Layers3, TriangleAlert } from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Hint } from "@/components/ui/hint";
@@ -15,29 +15,31 @@ import { useStreamedText } from "./use-streamed-text";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
-export function AssistantWorkCollapse({ work, isStreaming = false, streamId }: { work: AssistantWorkData; isStreaming?: boolean; streamId?: string }) {
+export function AssistantWorkCollapse({ work, isStreaming = false, streamId, renderHeader }: { work: AssistantWorkData; isStreaming?: boolean; streamId?: string; renderHeader?: (summary?: ReactNode) => ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const identity = streamId ?? (work.detailContext ? `${work.detailContext.conversationId}:${work.detailContext.turnId}` : "");
   const phases = useMemo(() => buildExecutionPhases(work.steps, work.auxiliaryMessages), [work.steps, work.auxiliaryMessages]);
   const { failures, heading, retry, tools, warnings } = useMemo(() => describeExecution(work, isStreaming), [work, isStreaming]);
 
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
+    {renderHeader?.()}
     {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
     <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming streamId={identity} retrying={Boolean(work.retry)} />
     <CoreActivitySummary steps={work.steps} />
     {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
   </section>;
 
+  const summary = <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 min-w-0 max-w-full cursor-pointer justify-start gap-2 px-1 text-left text-[11px]">
+    <BrainCircuit aria-hidden="true" data-icon="inline-start" />
+    <Hint content={heading} whenTruncated><span className="min-w-0 truncate">{heading}</span></Hint>
+    {tools.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">· {tools.length} {tools.length === 1 ? "ação" : "ações"}</span>}
+    {failures > 0 && <span className="sr-only">{failures} {failures === 1 ? "ação não concluída" : "ações não concluídas"}</span>}
+    {warnings > 0 && <span className="sr-only">{warnings} {warnings === 1 ? "aviso" : "avisos"}</span>}
+    <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
+  </CollapsibleTrigger>;
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
-      <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 max-w-full cursor-pointer justify-start gap-2 px-1 text-left text-[11px]">
-        <BrainCircuit aria-hidden="true" data-icon="inline-start" />
-        <Hint content={heading} whenTruncated><span className="min-w-0 truncate">{heading}</span></Hint>
-        {tools.length > 0 && <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">· {tools.length} {tools.length === 1 ? "ação" : "ações"}</span>}
-        {failures > 0 && <span className="sr-only">{failures} {failures === 1 ? "ação não concluída" : "ações não concluídas"}</span>}
-        {warnings > 0 && <span className="sr-only">{warnings} {warnings === 1 ? "aviso" : "avisos"}</span>}
-        <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
-      </CollapsibleTrigger>
+      {renderHeader ? renderHeader(summary) : summary}
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
         <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} streamId={identity} />
         <CoreActivitySummary steps={work.steps} />

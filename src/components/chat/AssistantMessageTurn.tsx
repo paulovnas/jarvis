@@ -1,11 +1,11 @@
-import { JarvisLogo } from "@/components/JarvisLogo";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Copy, Download, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
+import { Separator } from "@/components/ui/separator";
 import { writeClipboardText } from "@/core/clipboard";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { GeneratedImageCard } from "./GeneratedImageCard";
@@ -48,19 +48,17 @@ function ResponseActions({ content, fileName }: { content: string; fileName: str
 }
 
 export function AssistantMessageTurn({ message, onRetry, retrying = false, retryUnavailableReason }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean; retryUnavailableReason?: string }) {
+  const header = (summary?: ReactNode) => <header className="flex min-w-0 items-center justify-between gap-2">
+    <div className="flex min-w-0 items-center gap-2">
+      {message.model && <Hint content={message.model}><Badge variant="outline" className="min-w-0 max-w-56 shrink border-0 bg-transparent px-1 font-mono text-[10px] text-muted-foreground"><span className="truncate">{message.model.split(" / ").pop()}</span></Badge></Hint>}
+      {summary}
+    </div>
+    <time className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{message.timestamp}</time>
+  </header>;
   return (
     <article data-testid={`assistant-message-${message.id}`} className="my-5 flex min-w-0 flex-col gap-2">
-      <header className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-        <span role="img" aria-label="Jarvis" className="inline-flex shrink-0 items-center gap-1.5">
-            <span aria-hidden="true" className="relative h-5 w-3.5 overflow-hidden"><JarvisLogo className="absolute -left-[7px] -top-1 size-7 max-w-none" /></span>
-            <span aria-hidden="true" className="text-xs font-semibold tracking-wide text-foreground">arvis</span>
-          </span>
-          {message.model && <Hint content={message.model}><Badge variant="outline" className="max-w-56 truncate border-0 bg-transparent px-1 font-mono text-[10px] text-muted-foreground">{message.model.split(" / ").pop()}</Badge></Hint>}
-        </div>
-        <time className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{message.timestamp}</time>
-      </header>
-      {message.work && <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} streamId={message.id} />}
+      {message.work ? <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} streamId={message.id} renderHeader={header} /> : header()}
+      {message.work && message.content && !message.streaming && <Separator aria-label="Resposta" />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image" || tool.name === "image_process").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot" || tool.name.startsWith("computer_")).map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}
       {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">

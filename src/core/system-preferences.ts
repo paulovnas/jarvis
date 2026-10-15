@@ -9,6 +9,7 @@ export const sleepModes = {
 } as const;
 
 export const responseLanguageValues = ["pt-BR", "en", "es", "fr", "de", "it", "ja", "zh-CN"] as const;
+export const closeBehaviors = { tray: "Minimizar na bandeja", exit: "Encerrar" } as const;
 export const responseLanguages: Record<(typeof responseLanguageValues)[number], string> = {
   "pt-BR": "Português (Brasil)",
   en: "English",
@@ -42,12 +43,15 @@ export type BrowserPreferences = z.infer<typeof browserPreferencesSchema>;
 export const systemSnapshotSchema = z.object({
   preferences: z.object({
     preventSleep: z.enum(["off", "active", "open"]),
+    closeBehavior: z.enum(["tray", "exit"]).default("tray"),
     notifications: z.boolean(),
     companionEnabled: z.boolean().default(false),
     askUserTimeoutSeconds: z.number().int().min(1).max(3600),
     responseLanguage: z.enum(responseLanguageValues).default("pt-BR"),
     chatTitleModel: modelChoiceSchema.nullish(),
     promptRefinementModel: modelChoiceSchema.nullish(),
+    messagePredictionsEnabled: z.boolean().default(true),
+    messagePredictionModel: modelChoiceSchema.nullish(),
     terminal: terminalPreferencesSchema.default(DEFAULT_TERMINAL_PREFERENCES),
     browser: browserPreferencesSchema.default(DEFAULT_BROWSER_PREFERENCES),
     computerUseMode: z.enum(["manual", "yolo"]).optional(),
@@ -57,6 +61,7 @@ export const systemSnapshotSchema = z.object({
   sleepError: z.string().nullable(),
   notificationError: z.string().nullable(),
   companionSupported: z.boolean().default(false),
+  traySupported: z.boolean().default(false),
   companionError: z.string().nullable().default(null),
   availableTerminalShells: z.array(z.string()).default([]),
   availableTerminalFonts: z.array(z.string()).default([]),

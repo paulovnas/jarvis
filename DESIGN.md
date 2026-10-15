@@ -292,6 +292,10 @@ and monospace for technical metadata. Keep headings and labels in normal case.
 
 The native shell keeps project navigation, conversation and inspector in resizable
 panels. Existing collapsed-panel flags and expanded proportions remain independent.
+The navigation and inspector are detached cards with 12px corners, a thin border,
+subtle card shadow and an 8px outer inset. Resize handles occupy the gaps between
+cards and the conversation. The conversation keeps its open-tab row without a
+second breadcrumb or title row.
 The main title bar is compact (40px); the status control row is shallow (28px), with
 a thin separator above it. The chat composer and transcript stay inside explicit
 scroll viewports; the window root does not scroll.
@@ -401,6 +405,12 @@ the responsive grids described in Layout, without turning every supporting label
 into another nested card. Section titles and card titles share the restrained type
 hierarchy.
 
+General settings groups application lifecycle, sleep, notifications and Jarvito
+separately from conversation language, automatic replies and titles. The Editor
+group owns prompt refinement and message predictions. Workspace, storage and
+backup controls follow these groups. The close-behavior selector appears only on
+Windows and defaults to minimizing to the tray.
+
 ### Navigation and window chrome
 
 Persistent sidebars use the navigation surface and soft gray active rows. Settings
@@ -408,7 +418,18 @@ tabs are compact (36px minimum height, 13px ordinary text). Every Settings navig
 glyph is white, including muted, yellow, cyan and green categories. The glyph is
 small (16px) inside a rounded identity tile (24px); subdued category fills provide
 identity while the active row provides selection. Preserve the native-style title
-bar controls and the centered Jarvis wordmark on macOS.
+bar controls. The left-sidebar toggle precedes the supplied horizontal Jarvis logo;
+four icon toggles for Inspector, GitHub, Explorer and Designer sit before the
+Windows/Linux caption controls. macOS retains its traffic-light cluster on the
+left and keeps app navigation available in fullscreen. Switching right panels
+closes the current card before opening the next; reduced motion skips that wait.
+
+Windows uses a native tray menu: Running and Recent each show up to four chats,
+followed by Open Jarvis, Settings, About and Quit, with the section separators.
+Chat and project occupy separate native menu columns and truncate independently
+to 28 and 18 characters, including three literal dots. Populate the menu from
+current runtime activity and library metadata when opened. Hiding the main
+window preserves the companion and background work; Quit uses normal shutdown.
 
 The main project sidebar keeps its real project identity accents, unread markers
 and execution status. Disclosure controls, truncation hints and resizable panels
@@ -459,9 +480,13 @@ native scrollbars and system colors for custom indicators.
 
 ### Identity and feedback
 
-Use the existing Jarvis image assets through `JarvisLogo`: compact icon, horizontal
-wordmark for the title bar and vertical mark for the established larger placements.
-Text-bearing variants already include the name. The optional Jarvito companion
+Use the supplied `public/v2` assets through `JarvisLogo`: the transparent SVG mark
+for compact UI, the SVG symbol for larger placements, and the tiled
+icon for app identity. The README uses `png/jarvis-banner@2x.png`. Assistant message
+headers show model metadata and completed-work disclosures without a brand lockup.
+Title bars use `png/jarvis-horizontal@2x.png`. Completed responses add a thin
+separator between their work header and answer; active work keeps its existing layout.
+The optional Jarvito companion
 retains its own existing identity and interactions. User actions use the installed
 Sonner notifications; errors retain clear labels and recovery actions.
 

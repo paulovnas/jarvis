@@ -26,6 +26,7 @@ pub(crate) mod image_generation;
 pub(crate) mod image_tasks;
 mod impeccable;
 pub(crate) use impeccable::observe_setup as observe_impeccable_setup;
+mod composer_context;
 mod instructions;
 mod journal;
 pub(crate) mod journal_maintenance;
@@ -33,6 +34,7 @@ pub(crate) mod knowledge;
 pub(crate) mod learning;
 mod lsp;
 pub(crate) mod maintenance;
+pub(crate) mod message_prediction;
 mod model_fallback;
 mod model_instructions;
 mod parallel_tools;
@@ -1328,6 +1330,7 @@ pub struct AgentState {
     session_gates: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     loading_sessions: Arc<Mutex<HashSet<String>>>,
     title_generations: Arc<Mutex<HashSet<String>>>,
+    predictions: message_prediction::Predictions,
     histories: history::HistoryState,
     workflows: workflow::Registry,
     companion_recent: companion::Recent,
@@ -1348,6 +1351,7 @@ impl Default for AgentState {
             session_gates: Default::default(),
             loading_sessions: Default::default(),
             title_generations: Default::default(),
+            predictions: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
             companion_recent: Default::default(),
@@ -1358,6 +1362,9 @@ impl Default for AgentState {
     }
 }
 impl AgentState {
+    pub(crate) fn cancel_message_predictions(&self, app: &tauri::AppHandle) {
+        self.predictions.cancel_all(app);
+    }
     pub(crate) fn setup_execution_grants(&self, data_root: &Path) -> Result<(), String> {
         self.grants
             .setup(data_root.join("execution-grants.json"), now())
@@ -1804,6 +1811,15 @@ impl AgentState {
                 })
             })
             .collect()
+    }
+    #[cfg(target_os = "windows")]
+    pub(crate) fn tray_running_ids(&self) -> Result<HashSet<String>, AgentError> {
+        Ok(self
+            .activity()?
+            .into_iter()
+            .filter(|item| item.active_turn_id.is_some() || item.compacting)
+            .map(|item| item.conversation_id)
+            .collect())
     }
     fn session(
         &self,
@@ -2466,6 +2482,9 @@ fn spawn_run(
                 }
             })
             .await;
+            if completed {
+                message_prediction::schedule(&app, &session, &state, &oauth, &home);
+            }
             let _ = library::dashboard::touch_activity(&state, &home, &session.id);
             let _ = app.emit("library:changed", ());
             if !completed {

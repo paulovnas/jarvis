@@ -2,6 +2,13 @@ import { expect, it } from "vitest";
 import { browserPreferencesSchema, systemSnapshotSchema } from "./system-preferences";
 import { DEFAULT_CLAUDE_PREFERENCES } from "./executors";
 
+it("defaults close behavior to tray for old preferences and accepts only supported choices", () => {
+  const input = { preferences: { preventSleep: "off", notifications: false, askUserTimeoutSeconds: 30 }, sleepInhibited: false, sleepError: null, notificationError: null };
+  expect(systemSnapshotSchema.parse(input).preferences).toHaveProperty("closeBehavior", "tray");
+  expect(systemSnapshotSchema.parse({ ...input, preferences: { ...input.preferences, closeBehavior: "exit" } }).preferences).toHaveProperty("closeBehavior", "exit");
+  expect(systemSnapshotSchema.safeParse({ ...input, preferences: { ...input.preferences, closeBehavior: "invalid" } }).success).toBe(false);
+});
+
 it("reads older settings while dropping retired CLI preferences and preserving supported features", () => {
   const claude = { enabled: true, showUsage: true, disabledModels: ["hidden"] };
   const snapshot = systemSnapshotSchema.parse({

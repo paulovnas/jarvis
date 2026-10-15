@@ -29,6 +29,24 @@ const mcpProposal = (): PendingAuthoring => ({ turnId: "turn-1", toolId: "mcp-ad
 } } });
 
 describe("Jarvito chat", () => {
+  it("accepts a shared prediction with Tab without sending and discards it after typing", async () => {
+    globalChat.chat.turns = [turn("Pedido", "Entrega pronta")];
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, options) => command === "get_chat_prediction"
+      ? { turnId: "turn-1", text: "Pode mostrar como testar?" } : original(command, args, options));
+    const user = userEvent.setup();
+    render(<CompanionChatPane />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem para Jarvito" });
+    await waitFor(() => expect(field).toHaveAttribute("placeholder", "Pode mostrar como testar?"));
+    expect(field).toHaveValue("");
+    field.focus(); await user.keyboard("{Tab}");
+    expect(field).toHaveValue("Pode mostrar como testar?");
+    expect(call).not.toHaveBeenCalledWith("send_companion_message", expect.anything());
+    await user.clear(field);
+    act(() => events.get("chat:prediction_changed")?.({ conversationId: "global-chat" }));
+    expect(field).not.toHaveAttribute("placeholder", "Pode mostrar como testar?");
+    expect(call).toHaveBeenCalledWith("dismiss_chat_prediction", { conversationId: "global-chat", turnId: "turn-1" });
+  });
   it("reviews a global hook directly in the island without requesting project scope", async () => {
     const user = userEvent.setup(); const onQuestionChange = vi.fn();
     const original = call.getMockImplementation()!;

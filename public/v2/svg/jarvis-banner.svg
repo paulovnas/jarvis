@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 340" role="img" aria-label="Jarvis"><defs><linearGradient id="a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5CC8E8"/><stop offset="1" stop-color="#2F78D2"/></linearGradient><linearGradient id="c" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7C879B"/><stop offset="1" stop-color="#3C4555"/></linearGradient><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="-1.5" dy="2" stdDeviation="2.2" flood-color="#000" flood-opacity=".4"/></filter>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A1B1F"/><stop offset="1" stop-color="#131417"/></linearGradient>
+<radialGradient id="glow" cx="339" cy="170" r="260" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5CC8E8" stop-opacity=".07"/><stop offset="1" stop-color="#5CC8E8" stop-opacity="0"/></radialGradient>
+<clipPath id="cap"><rect x="0" y="0" width="1280" height="100"/></clipPath></defs>
+<rect x=".5" y=".5" width="1279" height="339" rx="40" fill="url(#bg)" stroke="#fff" stroke-opacity=".12"/>
+<rect x=".5" y=".5" width="1279" height="339" rx="40" fill="url(#glow)"/>
+<svg x="237" y="68" width="204" height="204" viewBox="16 16 68 68" overflow="visible"><g transform="translate(4 2)">
+<rect x="12" y="56" width="68" height="26" rx="9" fill="url(#c)"/>
+<rect x="16" y="60" width="60" height="18" rx="6" fill="#fff" opacity=".1"/>
+<circle cx="25" cy="69" r="3.2" fill="#5CC8E8"/>
+<rect x="54" y="14" width="26" height="68" rx="9" fill="url(#a)" filter="url(#s)"/>
+<rect x="54.5" y="14.5" width="25" height="67" rx="8.5" fill="none" stroke="#fff" stroke-opacity=".28"/>
+</g></svg>
+<g transform="translate(0 120)" clip-path="url(#cap)"><g fill="none" stroke="#C9CFDA" stroke-width="12"><path transform="translate(485 0)" d="M2 112L52 13.2L102 112"/><path transform="translate(635 0)" d="M6 112V6H50A22 22 0 0 1 50 50H6M44 50L72 112"/><path transform="translate(759 0)" d="M2 -12L52 86.8L102 -12"/><path transform="translate(909 0)" d="M6 -10V110"/><path transform="translate(967 0)" d="M70 6H28A22 22 0 0 0 28 50H48A22 22 0 0 1 48 94H6"/></g></g></svg>

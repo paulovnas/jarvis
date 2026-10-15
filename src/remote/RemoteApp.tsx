@@ -33,7 +33,7 @@ import { chatAgentModelKey } from "@/core/chat-models";
 import { flowSelection, type FlowSelection } from "@/core/workflow-catalog";
 import type { ModelChoice } from "@/core/provider-references";
 import type { RemoteChoices } from "./client";
-import logoIcon from "../../public/logo_icon.png?url";
+import logoIcon from "../../public/v2/svg/inset-mark.svg?inline";
 
 const emptySelection: LibrarySelection = { workspaceId: null, projectId: null, conversationId: null };
 const attentionLabels: Record<RemoteRuntime["attention"][number]["kind"], string> = { question: "Pergunta", approval: "Permissão", publication: "Git e GitHub", authoring: "Configuração", validation: "Validação" };

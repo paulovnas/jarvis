@@ -23,6 +23,7 @@ pub enum Kind {
     ImageGeneration,
     ChatTitle,
     PromptRefinement,
+    MessagePrediction,
     BuiltinAgent,
     CustomAgent,
     Conversation,
@@ -220,6 +221,7 @@ fn conversations(db: &Connection) -> Result<Vec<Conversation>, ProviderError> {
 struct InventorySources {
     title: Option<ModelChoice>,
     refinement: Option<ModelChoice>,
+    prediction: Option<ModelChoice>,
     profiles: workflow::settings::ModelSettings,
     catalog: workflow::catalog::Catalog,
     conversations: Vec<Conversation>,
@@ -234,6 +236,7 @@ impl InventorySources {
         let preferences = crate::system::backup_preferences(home).map_err(storage)?;
         let title = preferences.chat_title_model;
         let refinement = preferences.prompt_refinement_model;
+        let prediction = preferences.message_prediction_model;
         let profiles = workflow::settings::read(home).map_err(storage)?;
         let catalog = workflow::catalog::read(home).map_err(storage)?;
         for conversation in &mut conversations {
@@ -252,6 +255,7 @@ impl InventorySources {
         Ok(Self {
             title,
             refinement,
+            prediction,
             profiles,
             catalog,
             conversations,
@@ -273,6 +277,7 @@ fn inventory_from_sources(
     let InventorySources {
         title,
         refinement,
+        prediction,
         profiles,
         catalog,
         conversations,
@@ -294,6 +299,16 @@ fn inventory_from_sources(
             crate::system::PROMPT_REFINEMENT_MODEL_KEY.into(),
             Kind::PromptRefinement,
             "Refinar prompt".into(),
+            vec!["Configurações gerais".into()],
+            choice,
+        )?);
+    }
+    if let Some(choice) = prediction {
+        references.push(reference(
+            db,
+            crate::system::MESSAGE_PREDICTION_MODEL_KEY.into(),
+            Kind::MessagePrediction,
+            "Previsão de mensagens".into(),
             vec!["Configurações gerais".into()],
             choice,
         )?);
@@ -592,6 +607,7 @@ fn apply(
                     | Kind::ImageGeneration
                     | Kind::ChatTitle
                     | Kind::PromptRefinement
+                    | Kind::MessagePrediction
             )
         {
             return Err(error(
@@ -821,6 +837,7 @@ pub async fn remove(
                         | Kind::ImageGeneration
                         | Kind::ChatTitle
                         | Kind::PromptRefinement
+                        | Kind::MessagePrediction
                 ) {
                     return Err(error(
                         "Esta ferramenta requer um provedor Jarvis, não um executor externo.",

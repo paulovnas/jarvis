@@ -112,6 +112,7 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
   color: var(--muted-foreground);
 }
 .skill-editor[aria-disabled="true"] { opacity: 0.5; }
+.skill-editor[data-prediction="true"]::before { opacity: 0.55; max-width: calc(100% - 80px); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .skill-editor p { margin: 0; }
 
 .markdown-editor-prose { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; scrollbar-gutter: stable; }

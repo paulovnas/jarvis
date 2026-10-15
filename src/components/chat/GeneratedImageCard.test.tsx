@@ -33,10 +33,10 @@ it("shows a skeleton without opening activity, then the persisted image and expo
   await user.click(screen.getByRole("button", { name: "Salvar imagem" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_chat_image", { conversationId: "chat1", id: "a1" }));
 });
-it("uses the logo as the J of the wordmark and announces the full brand name", () => {
+it("keeps assistant processing free of the retired brand assembly", () => {
   render(<AssistantMessageTurn message={message({ id: "t1", name: "read_file", status: "completed" })} />);
-  const brand = screen.getByRole("img", { name: "Jarvis" });
-  expect(within(brand).getByText("arvis")).toBeVisible();
+  expect(screen.queryByRole("img", { name: "Jarvis" })).not.toBeInTheDocument();
+  expect(screen.queryByText("arvis")).not.toBeInTheDocument();
   expect(screen.queryByText("Jarvis")).not.toBeInTheDocument();
 });
 it("replaces the skeleton with the failed generation message", () => {

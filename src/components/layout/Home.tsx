@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { useGroupRef } from "react-resizable-panels";
 import { visiblePanels, rememberPanelResize } from "@/core/desktop-layout";
 import { PanelToggle } from "./PanelToggle";
+import { TitleBarSlot } from "./TitleBar";
 import { StatusBar } from "./StatusBar";
 import { readResource } from "@/core/resource-request";
 import {
@@ -12,7 +13,7 @@ import {
 import { ChatArea } from "@/components/chat/ChatArea";
 import { SettingsSkeleton } from "./LoadingSkeletons";
 import { accountList, enabledModels, mergeModelCatalogRefresh, type ProviderAccount } from "@/core/provider-accounts";
-import { Inspector } from "./Inspector";
+import { Inspector, InspectorNavigation, type InspectorSection } from "./Inspector";
 import type { DesignerSession } from "./DesignerPanel";
 import { AppSidebar } from "./Sidebar";
 import { useLibrary } from "@/hooks/use-library";
@@ -79,6 +80,8 @@ export function Home() {
   const panelLayout = visiblePanels(layout, Boolean(dashboardProject));
   const groupRef = useGroupRef();
   const [animating, setAnimating] = useState(false);
+  const [closingInspector, setClosingInspector] = useState(false);
+  const pendingSection = useRef<InspectorSection | null>(null);
   const layoutKey = JSON.stringify(panelLayout);
   useLayoutEffect(() => { groupRef.current?.setLayout(JSON.parse(layoutKey) as Record<string, number>); }, [groupRef, layoutKey]);
   useEffect(() => {
@@ -86,12 +89,31 @@ export function Home() {
     const timer = setTimeout(() => setAnimating(false), 240);
     return () => clearTimeout(timer);
   }, [animating, layout.sidebarCollapsed, layout.inspectorCollapsed]);
-  const toggle = (side: "left" | "right") => {
+  const toggleSidebar = () => {
     setAnimating(true);
-    updateLayout(side === "left" ? { sidebarCollapsed: !layout.sidebarCollapsed } : { inspectorCollapsed: !layout.inspectorCollapsed });
+    updateLayout({ sidebarCollapsed: !layout.sidebarCollapsed });
   };
-  const leftToggle = <PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={() => toggle("left")} />;
-  const rightToggle = <PanelToggle side="right" collapsed={layout.inspectorCollapsed} onToggle={() => toggle("right")} />;
+  const leftToggle = <TitleBarSlot side="left"><PanelToggle side="left" collapsed={layout.sidebarCollapsed} onToggle={toggleSidebar} /></TitleBarSlot>;
+  const selectInspector = (section: InspectorSection) => {
+    if (closingInspector) { pendingSection.current = pendingSection.current === section ? null : section; return; }
+    setAnimating(true);
+    if (layout.inspectorCollapsed) { updateLayout({ inspectorTab: section, inspectorCollapsed: false }); return; }
+    const global = library.snapshot?.conversations.find(item => item.id === conversationId)?.projectId === null;
+    const current = global || layout.inspectorTab === "details" ? "activities" : layout.inspectorTab;
+    pendingSection.current = current === section ? null : section;
+    setClosingInspector(true);
+    updateLayout({ inspectorCollapsed: true });
+  };
+  useEffect(() => {
+    if (!closingInspector) return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const timer = setTimeout(() => {
+      const section = pendingSection.current;
+      setClosingInspector(false);
+      if (section) { setAnimating(true); updateLayout({ inspectorTab: section, inspectorCollapsed: false }); }
+    }, reducedMotion ? 0 : 240);
+    return () => { clearTimeout(timer); pendingSection.current = null; };
+  }, [closingInspector, conversationId, conversationScope, updateLayout]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => {
     void openAuxiliaryWindow("settings").then(native => { if (!native) setSettingsOpen(true); }).catch(() => toast.error("Não foi possível abrir Configurações."));
@@ -171,7 +193,7 @@ export function Home() {
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
   if (workspace && !library.snapshot?.selection.conversationId && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground">{leftToggle}<InspectorNavigation section="activities" collapsed disabled onSelect={selectInspector} /><div className="flex min-h-0 flex-1 gap-2 px-2 pb-2"><div inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "w-0" : "w-64"}`}><div id="workspace-panel-content" className="h-full w-64 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (
@@ -179,6 +201,8 @@ export function Home() {
       data-testid="home-shell"
       className="desktop-shell dark flex h-full min-h-0 w-full min-w-[1024px] flex-col overflow-hidden bg-background font-sans text-foreground"
     >
+      {leftToggle}
+      {dashboardProject && <InspectorNavigation section="activities" collapsed disabled onSelect={selectInspector} />}
       <ResizablePanelGroup
         key={dashboardProject ? "dashboard" : "chat"}
         id="home-shell-panels"
@@ -186,7 +210,7 @@ export function Home() {
         defaultLayout={panelLayout}
         groupRef={groupRef}
         onLayoutChanged={(panels, meta) => { if (meta.isUserInteraction) updateLayout(rememberPanelResize(layout, panels, Boolean(dashboardProject))); }}
-        className={`h-full min-h-0 w-full flex-1 ${animating ? "panels-animating" : ""}`}
+        className={`h-full min-h-0 w-full flex-1 px-2 pb-2 ${animating ? "panels-animating" : ""}`}
       >
         <ResizablePanel
           id="home-sidebar-panel"
@@ -196,7 +220,7 @@ export function Home() {
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div>
+          <div id="workspace-panel-content" inert={layout.sidebarCollapsed} aria-hidden={layout.sidebarCollapsed} className={`h-full min-w-[220px] overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm transition-transform duration-200 motion-reduce:transition-none ${layout.sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div>
         </ResizablePanel>
 
         {/* Keep each separator in geometric order: display:none breaks the panel
@@ -205,7 +229,7 @@ export function Home() {
           aria-label="Redimensionar barra lateral"
           aria-hidden={layout.sidebarCollapsed}
           inert={layout.sidebarCollapsed}
-          className={`panel-separator cursor-col-resize bg-border hover:bg-primary/50 ${layout.sidebarCollapsed ? "invisible w-0 pointer-events-none" : ""}`}
+          className={`panel-separator cursor-col-resize bg-transparent hover:bg-accent/50 ${layout.sidebarCollapsed ? "invisible w-0 pointer-events-none" : "w-2"}`}
         />
 
         <ResizablePanel
@@ -214,14 +238,14 @@ export function Home() {
           minSize="360px"
           className="h-full min-h-0 min-w-0"
         >
-          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} terminalCount={terminalCounts.get(dashboardProject.id) ?? 0} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} navigation={leftToggle} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onDesignerChange={onDesignerChange} drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} leftToggle={leftToggle} rightToggle={rightToggle} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} onRefreshModels={canRefreshModels ? refreshModels : undefined} refreshingModels={refreshingModels} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
+          {dashboardProject ? <Suspense fallback={<DashboardSkeleton />}><ProjectDashboard key={dashboardProject.id} project={dashboardProject} projectUpdater={library} terminalCount={terminalCounts.get(dashboardProject.id) ?? 0} initialTab={kanbanProjectId === dashboardProject.id ? "beads" : "general"} onSelectSession={id => { setKanbanProjectId(null); files.select(null); void library.select({ kind: "conversation", id }); }} /></Suspense> : <ChatArea onDesignerChange={onDesignerChange} drafts={drafts} questionDrafts={questionDrafts} onLatestVisibility={onLatestVisibility} modelGroups={modelGroups} modelBindings={references.bindings} modelsReady={accountsReady && !references.loading} onRefreshModels={canRefreshModels ? refreshModels : undefined} refreshingModels={refreshingModels} library={library.snapshot} chat={chat} workflow={workflow} agentModels={agentModels} files={files} />}
         </ResizablePanel>
 
         {!dashboardProject && <><ResizableHandle
           aria-label="Redimensionar inspector"
           aria-hidden={layout.inspectorCollapsed}
           inert={layout.inspectorCollapsed}
-          className={`panel-separator cursor-col-resize bg-border hover:bg-primary/50 ${layout.inspectorCollapsed ? "invisible w-0 pointer-events-none" : ""}`}
+          className={`panel-separator cursor-col-resize bg-transparent hover:bg-accent/50 ${layout.inspectorCollapsed ? "invisible w-0 pointer-events-none" : "w-2"}`}
         />
 
         <ResizablePanel
@@ -232,7 +256,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector key={`${conversationId ?? ""}:${conversationScope}`} designer={designer?.conversationId === library.snapshot?.selection.conversationId ? designer ?? undefined : undefined} library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector key={`${conversationId ?? ""}:${conversationScope}`} onSelectSection={selectInspector} designer={designer?.conversationId === library.snapshot?.selection.conversationId ? designer ?? undefined : undefined} library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={openSettings} />

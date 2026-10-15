@@ -24,14 +24,16 @@ it("shows macOS traffic-light controls before the wordmark", () => {
   const logo = screen.getByRole("img", { name: "Jarvis" });
   expect(buttons[2].compareDocumentPosition(logo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
-it("toggles macOS fullscreen with the green button and hides the custom titlebar", async () => {
+it("toggles macOS fullscreen and retains the toolbar for sidebar navigation", async () => {
   const user = userEvent.setup(); render(<TitleBar />);
   await waitFor(() => expect(native.onResized).toHaveBeenCalled());
   await user.dblClick(screen.getByRole("banner"));
   expect(native.toggleMaximize).toHaveBeenCalledOnce();
   await user.click(screen.getByRole("button", { name: "Entrar em tela cheia" }));
   expect(native.setFullscreen).toHaveBeenLastCalledWith(true);
-  await waitFor(() => expect(screen.queryByRole("banner")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Entrar em tela cheia" })).not.toBeInTheDocument());
+  expect(screen.getByRole("banner")).toBeVisible();
+  expect(screen.getByRole("img", { name: "Jarvis" })).toBeVisible();
 });
 
 it("routes the close and minimize controls to their native window actions", async () => {
@@ -45,8 +47,9 @@ it("routes the close and minimize controls to their native window actions", asyn
   expect(native.toggleMaximize).not.toHaveBeenCalled();
 });
 
-it("keeps the custom titlebar hidden when macOS already starts fullscreen", async () => {
+it("keeps sidebar navigation available without caption controls when macOS starts fullscreen", async () => {
   native.isFullscreen.mockResolvedValue(true);
   render(<TitleBar />);
-  await waitFor(() => expect(screen.queryByRole("banner")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Fechar janela" })).not.toBeInTheDocument());
+  expect(screen.getByRole("banner")).toBeVisible();
 });

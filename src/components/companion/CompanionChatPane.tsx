@@ -22,6 +22,7 @@ import { companionChatSchema, companionConversationsSchema, companionModelsSchem
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import type { McpAuthoringValues, PendingAuthoring } from "@/core/authoring";
 import { readChat } from "@/core/chat";
+import { useMessagePrediction } from "@/hooks/use-message-prediction";
 import { libraryError } from "@/core/library";
 
 const errorMessage = (cause: unknown) => typeof cause === "string" ? cause : libraryError(cause, "Não foi possível conversar com o Jarvito.");
@@ -49,6 +50,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
   const [preservedRequest, setPreservedRequest] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const prediction = useMessagePrediction(chat?.conversationId, chat?.chat, Boolean(draft), busy || loading || !active || Boolean(chat?.chat.activeTurnId));
   const [models, setModels] = useState<ProviderModelGroup[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelOverride, setModelOverride] = useState<{ conversation: string; selection: ModelSelection; choice?: ModelChoice } | null>(null);
@@ -325,7 +327,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
       </div>
     </ScrollArea>
     <form className="relative shrink-0" onSubmit={event => { event.preventDefault(); void send(); }}>
-      <Textarea aria-label="Mensagem para Jarvito" placeholder={running ? "Envie uma orientação…" : "Converse com Jarvito…"} value={draft} onChange={event => { drafts.current.set(draftKey, event.target.value); setDraft(event.target.value); }} className={`min-h-14 max-h-24 resize-none rounded-2xl border-border bg-secondary/40 text-[11px] leading-5 ${running ? "pr-20" : "pr-11"}`} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+      <Textarea aria-label="Mensagem para Jarvito" placeholder={prediction.text ?? (running ? "Envie uma orientação…" : "Converse com Jarvito…")} value={draft} onChange={event => { prediction.dismiss(); drafts.current.set(draftKey, event.target.value); setDraft(event.target.value); }} onCompositionStart={prediction.dismiss} onPaste={prediction.dismiss} className={`min-h-14 max-h-24 resize-none rounded-2xl border-border bg-secondary/40 text-[11px] leading-5 ${running ? "pr-20" : "pr-11"}`} onKeyDown={event => { if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing && !draft && prediction.text) { event.preventDefault(); drafts.current.set(draftKey, prediction.text); setDraft(prediction.text); prediction.dismiss(); return; } if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) prediction.dismiss(); if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
       <div className="absolute right-2 bottom-2 flex items-center gap-1">
         {running && <Hint content="Parar resposta"><Button type="button" variant="secondary" size="icon-sm" aria-label="Parar resposta" disabled={busy} className="cursor-pointer rounded-full" onClick={() => { void stop(); }}><Square className="size-3" /></Button></Hint>}
         <Button type="submit" size="icon-sm" aria-label={running ? "Enviar orientação agora" : "Enviar mensagem"} aria-busy={busy} disabled={busy || loading || modelInvalid || !draft.trim()} className="cursor-pointer rounded-full"><ArrowUp className="size-3.5" /></Button>

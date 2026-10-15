@@ -145,7 +145,7 @@ export function AppSidebar({
   return (
     <aside
       aria-label="Espaço"
-      className="native-sidebar h-full min-h-0 w-full overflow-hidden border-r border-border"
+      className="native-sidebar h-full min-h-0 w-full overflow-hidden"
     >
       <SidebarProvider
         defaultOpen

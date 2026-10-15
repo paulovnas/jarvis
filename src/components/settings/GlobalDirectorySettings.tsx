@@ -6,7 +6,8 @@ import { useLibrary } from "@/hooks/use-library";
 
 export function GlobalDirectorySettings() {
   const library = useLibrary();
-  return <section aria-label="Pasta de trabalho global" className="mb-5 space-y-2">
+  return <section aria-label="Pasta de trabalho global" className="space-y-3">
+    <h2 className="settings-section-title">Pasta de trabalho</h2>
     <Card size="sm" className="settings-group"><div className="settings-row">
       <div className="settings-row-copy"><h3 className="text-sm font-medium">Pasta de tarefas sem projeto</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Pasta usada pelas conversas iniciadas fora de projetos.</p></div>
       <div className="settings-row-control flex max-w-full items-center gap-2">

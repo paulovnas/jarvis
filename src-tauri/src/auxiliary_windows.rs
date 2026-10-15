@@ -298,7 +298,7 @@ pub(crate) async fn open_auxiliary_window(
         .map_err(|_| "Não foi possível abrir a janela do Jarvis.".to_owned())?
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn open_from_menu(app: &tauri::AppHandle, kind: AuxiliaryWindowKind) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {

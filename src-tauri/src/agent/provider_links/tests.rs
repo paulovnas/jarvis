@@ -316,6 +316,56 @@ fn refinement_model_joins_provider_removal_review_and_respects_later_user_change
 }
 
 #[test]
+fn prediction_model_is_included_in_provider_removal_and_preserves_later_user_choices() {
+    let (mut db, home) = fixture();
+    let preferences = crate::system::Preferences {
+        message_prediction_model: Some(choice("openai-codex-old", "old-model")),
+        ..crate::system::Preferences::default()
+    };
+    std::fs::write(
+        crate::data_dir::root(home.path()).join("system.json"),
+        serde_json::to_vec(&preferences).unwrap(),
+    )
+    .unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let prediction = preview
+        .items
+        .iter()
+        .find(|item| item.kind == Kind::MessagePrediction)
+        .unwrap();
+    assert_eq!(
+        prediction.item_key,
+        crate::system::MESSAGE_PREDICTION_MODEL_KEY
+    );
+    let replacement = choice("openai-codex-new", "new-model");
+    let transaction = db.transaction().unwrap();
+    apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[Replacement {
+            id: prediction.id.clone(),
+            choice: replacement.clone(),
+        }],
+    )
+    .unwrap();
+    transaction.commit().unwrap();
+    assert_eq!(
+        crate::system::resolved_message_prediction_model(&db, &preferences).unwrap(),
+        Some(replacement)
+    );
+    let edited = crate::system::Preferences {
+        message_prediction_model: Some(choice("openai-codex-third", "third-model")),
+        ..preferences
+    };
+    assert_eq!(
+        crate::system::resolved_message_prediction_model(&db, &edited).unwrap(),
+        edited.message_prediction_model
+    );
+}
+
+#[test]
 fn chat_title_model_is_visible_remapped_and_guarded_against_later_user_edits() {
     let (mut db, home) = fixture();
     let original = choice("openai-codex-old", "old-model");

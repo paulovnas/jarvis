@@ -73,8 +73,8 @@ describe("Persistent live conversation", () => {
     call.mockResolvedValue(snapshot);
     render(<TestChat library={library} />);
     expect(await screen.findByText("Resposta compartilhada do Jarvito")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Jarvito" })).toBeVisible();
-    expect(screen.getByText("Global")).toBeVisible();
+    expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Jarvito");
+    expect(screen.queryByRole("heading", { name: "Jarvito" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ativar Impeccable Live" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Nova requisição HTTP" })).not.toBeInTheDocument();
     expect(call.mock.calls.some(([command]) => command === "get_impeccable_live" || command === "get_http_snapshot")).toBe(false);
@@ -477,16 +477,16 @@ describe("Persistent live conversation", () => {
     expect(screen.getByText("Seu próximo projeto começa aqui")).toBeInTheDocument();
     expect(call).not.toHaveBeenCalled();
     rerender(<TestChat />);
-    await screen.findByRole("heading", { name: "Primeira conversa" });
+    await waitFor(() => expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Primeira conversa"));
     expect(await screen.findByRole("textbox")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Mais ações" })).toBeEnabled();
     expect(call).toHaveBeenCalledWith("subscribe_chat", { conversationId: "c1" });
   });
-  it("uses the vertical brand and moves the same composer into the transcript after the first turn", async () => {
+  it("uses the horizontal brand and moves the same composer into the transcript after the first turn", async () => {
     render(<TestChat />);
     const stage = await screen.findByRole("region", { name: "Nova conversa" });
     const editor = within(stage).getByRole("textbox", { name: "Mensagem" });
-    expect(within(stage).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/logo_vertical.png");
+    expect(within(stage).getByRole("img", { name: "Jarvis" })).toHaveAttribute("src", "/v2/png/jarvis-horizontal@2x.png");
     expect(within(stage).getByRole("heading", { name: "O que vamos construir?" })).toBeVisible();
     expect(editor).toBeVisible();
     expect(stage).toHaveAttribute("data-empty", "true");
@@ -743,15 +743,15 @@ describe("Persistent live conversation", () => {
     await user.type(await screen.findByRole("textbox", { name: "Sua resposta" }), "Um tema escuro");
     const next = populatedLibrary(); next.selection = { workspaceId: "w2", projectId: "p2", conversationId: "c2" };
     rerender(<TestChat library={next} />);
-    await screen.findByRole("heading", { name: "Conversa do trabalho" });
+    await waitFor(() => expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Conversa do trabalho"));
     expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
     rerender(<TestChat />);
     expect(await screen.findByRole("textbox", { name: "Sua resposta" })).toHaveValue("Um tema escuro");
     await user.click(screen.getByRole("button", { name: "Enviar respostas" }));
     rerender(<TestChat library={next} />);
-    await screen.findByRole("heading", { name: "Conversa do trabalho" });
+    await waitFor(() => expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Conversa do trabalho"));
     await act(async () => resolve({ ...running, revision: 10, pendingQuestion: null }));
-    expect(screen.getByRole("heading", { name: "Conversa do trabalho" })).toBeVisible();
+    expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Conversa do trabalho");
     expect(screen.queryByRole("region", { name: "Perguntas do Jarvis" })).not.toBeInTheDocument();
   });
   it("reports missing history and retries without inventing a session", async () => {
@@ -813,7 +813,7 @@ describe("Persistent live conversation", () => {
     await waitFor(() => expect(call).toHaveBeenCalledTimes(1));
     const next = populatedLibrary(); next.selection = { workspaceId:"w2",projectId:"p2",conversationId:"c2" };
     call.mockResolvedValue(emptyChat("c2")); rerender(<TestChat library={next} />);
-    await screen.findByRole("heading", { name:"Conversa do trabalho" });
+    await waitFor(() => expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Conversa do trabalho"));
     await act(async () => resolve({ ...emptyChat(), turns:[savedTurn()] }));
     await update({ ...emptyChat(), revision:99,turns:[savedTurn()] });
     expect(screen.queryByText("Leia o README")).not.toBeInTheDocument();
@@ -823,6 +823,6 @@ describe("Persistent live conversation", () => {
     const { rerender } = render(<TestChat />); await screen.findByRole("textbox");
     const library = populatedLibrary(); library.projects[0].name = "Meu projeto"; library.conversations[0].title = "Título editado";
     rerender(<TestChat library={library} />);
-    expect(screen.getByRole("heading", { name:"Título editado" })).toBeInTheDocument(); expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Pessoal / Meu projeto")).toBeVisible(); expect(call.mock.calls.filter(([command]) => command === "subscribe_chat")).toHaveLength(1);
+    expect(screen.getByRole("main", { name: "Conversa" })).toHaveAccessibleDescription("Título editado"); expect(screen.queryByRole("heading", { name: "Título editado" })).not.toBeInTheDocument(); expect(call.mock.calls.filter(([command]) => command === "subscribe_chat")).toHaveLength(1);
   });
 });

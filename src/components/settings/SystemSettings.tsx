@@ -15,7 +15,7 @@ import { accountGroups } from "./workflow/workflow-models";
 import { executionChoice, executionSelection } from "@/core/executors";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { libraryError } from "@/core/library";
-import { responseLanguages, sleepModes, systemSnapshotSchema, type SystemPreferences, type SystemSnapshot } from "@/core/system-preferences";
+import { closeBehaviors, responseLanguages, sleepModes, systemSnapshotSchema, type SystemPreferences, type SystemSnapshot } from "@/core/system-preferences";
 
 const systemError = (cause: unknown, fallback: string) => typeof cause === "string" ? cause : libraryError(cause, fallback);
 
@@ -73,21 +73,21 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
   };
   const problem = error ?? snapshot?.sleepError ?? snapshot?.notificationError ?? snapshot?.companionError;
   return <section aria-labelledby="system-settings-title" className="space-y-3">
-    <h2 id="system-settings-title" className="settings-section-title"><Monitor aria-hidden="true" className="size-4" />Sistema</h2>
+    <h2 id="system-settings-title" className="settings-section-title"><Monitor aria-hidden="true" className="size-4" />Aplicativo</h2>
     {!snapshot ? error ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">{error}</p><Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setError(null); setAttempt(n => n + 1); }}>Tentar novamente</Button></div> : <Card role="status" aria-label="Carregando preferências do sistema" size="sm" className="settings-group">{[0, 1, 2, 3, 4, 5, 6].map((key) => <div key={key} className="settings-row"><div className="settings-row-copy space-y-2"><Skeleton className="h-4 w-36" /><Skeleton className="h-3 w-3/4" /></div><Skeleton className="h-8 w-56 max-w-full" /></div>)}</Card> : <>
-      <Card role="region" aria-label="Preferências do sistema" size="sm" className="settings-group">
-        <div className="settings-row">
+      <Card role="region" aria-label="Preferências do aplicativo" size="sm" className="settings-group">
+        {snapshot.traySupported && <div className="settings-row">
           <div className="settings-row-copy">
-            <Label htmlFor="response-language" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Languages aria-hidden="true" className="size-4 text-muted-foreground" />Idioma dos agentes</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
+            <Label htmlFor="close-behavior" className="cursor-pointer text-sm font-medium">Ao fechar o Jarvis</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Na bandeja, as tarefas continuam e o Jarvito permanece ativo. Use Encerrar no menu da bandeja para sair.</p>
           </div>
           <div className="settings-row-control w-full sm:w-64">
-            <Select value={snapshot.preferences.responseLanguage} disabled={busy} onValueChange={value => { if (value && value in responseLanguages) void save({ responseLanguage: value as SystemPreferences["responseLanguage"] }); }}>
-              <SelectTrigger id="response-language" size="sm" className="w-full cursor-pointer text-sm"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
-              <SelectContent>{Object.entries(responseLanguages).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
+            <Select value={snapshot.preferences.closeBehavior} disabled={busy} onValueChange={value => { if (value === "tray" || value === "exit") void save({ closeBehavior: value }); }}>
+              <SelectTrigger id="close-behavior" size="sm" className="w-full cursor-pointer text-sm"><SelectValue>{closeBehaviors[snapshot.preferences.closeBehavior]}</SelectValue></SelectTrigger>
+              <SelectContent>{Object.entries(closeBehaviors).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-        </div>
+        </div>}
         <div className="settings-row">
           <div className="settings-row-copy">
             <Label htmlFor="prevent-sleep" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Moon aria-hidden="true" className="size-4 text-muted-foreground" />Impedir repouso</Label>
@@ -110,6 +110,28 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
             <Button size="sm" variant="ghost" disabled={busy || !snapshot.preferences.notifications} onClick={() => void test()} className="cursor-pointer gap-1.5 text-xs"><Send className="size-3" />Testar</Button>
           </div>
         </div>
+        {snapshot.companionSupported && <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Bot aria-hidden="true" className="size-4 text-muted-foreground" />Assistente na área de trabalho</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste a área preta do cabeçalho para reposicionar.</p>
+          </div>
+          <div className="settings-row-control"><Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" /></div>
+        </div>}
+      </Card>
+      <h2 className="settings-section-title pt-3"><Languages aria-hidden="true" className="size-4" />Conversas</h2>
+      <Card role="region" aria-label="Preferências das conversas" size="sm" className="settings-group">
+        <div className="settings-row">
+          <div className="settings-row-copy">
+            <Label htmlFor="response-language" className="cursor-pointer text-sm font-medium">Idioma dos agentes</Label>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Define o idioma das respostas. A interface permanece em pt-BR.</p>
+          </div>
+          <div className="settings-row-control w-full sm:w-64">
+            <Select value={snapshot.preferences.responseLanguage} disabled={busy} onValueChange={value => { if (value && value in responseLanguages) void save({ responseLanguage: value as SystemPreferences["responseLanguage"] }); }}>
+              <SelectTrigger id="response-language" size="sm" className="w-full cursor-pointer text-sm"><SelectValue>{responseLanguages[snapshot.preferences.responseLanguage]}</SelectValue></SelectTrigger>
+              <SelectContent>{Object.entries(responseLanguages).map(([value, label]) => <SelectItem key={value} value={value} className="cursor-pointer text-xs">{label}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        </div>
         <div className="settings-row">
           <div className="settings-row-copy">
             <Label htmlFor="ask-user-timeout" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><TimerReset aria-hidden="true" className="size-4 text-muted-foreground" />Resposta automática</Label>
@@ -120,13 +142,6 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
             <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] text-muted-foreground">segundos</span>
           </div>
         </div>
-        {snapshot.companionSupported && <div className="settings-row">
-          <div className="settings-row-copy">
-            <Label htmlFor="desktop-companion" className="flex cursor-pointer items-center gap-2 text-sm font-medium"><Bot aria-hidden="true" className="size-4 text-muted-foreground" />Assistente na área de trabalho</Label>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Converse com o Jarvito, acompanhe atividades, responda perguntas e veja os limites de uso, mesmo com o Jarvis minimizado. Clique para abrir a ilha ou arraste a área preta do cabeçalho para reposicionar.</p>
-          </div>
-          <div className="settings-row-control"><Switch id="desktop-companion" size="sm" checked={snapshot.preferences.companionEnabled} disabled={busy} onCheckedChange={companionEnabled => void save({ companionEnabled })} className="shrink-0 cursor-pointer" /></div>
-        </div>}
         <div className="settings-row">
           <div className="settings-row-copy">
             <p className="flex items-center gap-2 text-sm font-medium"><MessageSquareText aria-hidden="true" className="size-4 text-muted-foreground" />Títulos das conversas</p>
@@ -137,6 +152,9 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
             <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.chatTitleModel)} disabled={busy} ariaLabel="Modelo para títulos das conversas" showProviderIdentity clearLabel="Automático" onClear={() => void save({ chatTitleModel: null })} onSelect={selection => void save({ chatTitleModel: executionChoice(selection) })} />
           </div>
         </div>
+      </Card>
+      <h2 className="settings-section-title pt-3"><MessageSquareText aria-hidden="true" className="size-4" />Editor</h2>
+      <Card role="region" aria-label="Preferências do editor" size="sm" className="settings-group">
         <div className="settings-row">
           <div className="settings-row-copy">
             <p className="flex items-center gap-2 text-sm font-medium"><Sparkles aria-hidden="true" className="size-4 text-muted-foreground" />Refinar prompt</p>
@@ -146,6 +164,14 @@ export function SystemSettings({ accounts = [] }: { accounts?: ProviderAccount[]
             <ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.promptRefinementModel)} disabled={busy} ariaLabel="Modelo para refinar prompts" showProviderIdentity clearLabel="Não configurado" onClear={() => void save({ promptRefinementModel: null })} onSelect={selection => void save({ promptRefinementModel: executionChoice(selection) })} />
           </div>
         </div>
+        <div className="settings-row">
+          <div className="settings-row-copy"><Label htmlFor="message-predictions" className="cursor-pointer text-sm font-medium">Mostrar previsões</Label><p className="mt-1 text-xs leading-5 text-muted-foreground">Prever sua próxima mensagem com base na conversa.</p></div>
+          <div className="settings-row-control"><Switch id="message-predictions" size="sm" checked={snapshot.preferences.messagePredictionsEnabled} disabled={busy} onCheckedChange={messagePredictionsEnabled => void save({ messagePredictionsEnabled })} className="cursor-pointer" /></div>
+        </div>
+        {snapshot.preferences.messagePredictionsEnabled && <div className="settings-row">
+          <div className="settings-row-copy"><p className="text-sm font-medium">Modelo para previsões</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Automático segue o modelo da conversa. Para Claude Code, selecione um provedor conectado.</p></div>
+          <div className="settings-row-control min-w-0 flex-wrap gap-2"><ModelPicker modelGroups={accountGroups(accounts)} selection={executionSelection(snapshot.preferences.messagePredictionModel)} disabled={busy} ariaLabel="Modelo para previsão de mensagens" showProviderIdentity clearLabel="Automático" onClear={() => void save({ messagePredictionModel: null })} onSelect={selection => void save({ messagePredictionModel: executionChoice(selection) })} /></div>
+        </div>}
       </Card>
       {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
     </>}

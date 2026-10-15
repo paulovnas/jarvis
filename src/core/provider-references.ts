@@ -7,7 +7,7 @@ import { defaultReasoning } from "./reasoning";
 export type ModelChoice = z.infer<typeof modelChoiceSchema>;
 export const providerReferenceSchema = z.object({
   id: z.string(), itemKey: z.string(),
-  kind: z.enum(["web_search", "vision", "image_generation", "chat_title", "prompt_refinement", "builtin_agent", "custom_agent", "conversation"]),
+  kind: z.enum(["web_search", "vision", "image_generation", "chat_title", "prompt_refinement", "message_prediction", "builtin_agent", "custom_agent", "conversation"]),
   label: z.string(), details: z.array(z.string()), choice: modelChoiceSchema,
 });
 export const modelBindingSchema = z.object({ itemKey: z.string(), source: modelChoiceSchema, target: modelChoiceSchema });

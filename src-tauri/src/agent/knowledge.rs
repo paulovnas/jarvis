@@ -604,6 +604,54 @@ pub(super) fn retrieve(root: &Path, args: &Value) -> Result<String, AgentError> 
         .collect();
     Ok(json!({"sections":results,"unavailable":unavailable.into_iter().take(6).collect::<Vec<_>>(),"matched":total,"nextStart":(start + limit < total).then_some(start + limit),"hint":"Read a sectionId and its nextOffset to continue its text. Use nextStart to page headings/search results. Source files remain authoritative; verify stale sources before relying on a claim."}).to_string())
 }
+pub(super) fn refinement_context(root: &Path, query: &str) -> Value {
+    let snippets = retrieve(
+        root,
+        &json!({"query":query.chars().take(400).collect::<String>(), "limit":6}),
+    )
+    .and_then(|text| {
+        serde_json::from_str::<Value>(&text).map_err(|_| error("Conhecimento inválido."))
+    });
+    let documents = snapshot(root, vec![]).map(|snapshot| snapshot.documents.into_iter()
+        .filter(|doc| doc.scope == "." && doc.error.is_none() && (!doc.essential.is_empty() || !doc.content.is_empty()))
+        .map(|doc| json!({"kind":doc.kind, "source":doc.path, "revision":doc.revision,
+            "stale":!doc.stale_sources.is_empty(),
+            "content":if doc.essential.is_empty() { doc.content.chars().take(1800).collect::<String>() } else { doc.essential }}))
+        .collect::<Vec<_>>()).unwrap_or_default();
+    json!({"documents":documents, "relevantSections":snippets.unwrap_or_else(|_| json!({"unavailable":true}))})
+}
+
+#[cfg(test)]
+mod refinement_tests {
+    use super::*;
+    #[test]
+    fn refinement_uses_real_knowledge_with_sources_and_keeps_missing_knowledge_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        assert!(refinement_context(&root, "OAuth")["documents"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        fs::write(
+            root.join("TRD.md"),
+            "# Authentication\nThe API uses OAuth tokens. Never embed credentials.",
+        )
+        .unwrap();
+        let context = refinement_context(&root, "OAuth API");
+        assert!(context["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|doc| doc["source"] == "TRD.md"
+                && doc["content"].as_str().unwrap().contains("OAuth")));
+        assert!(context["relevantSections"]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|section| section["content"].as_str().unwrap().contains("OAuth")));
+    }
+}
+
 pub(super) fn overview(root: &Path) -> String {
     let Ok(snapshot) = snapshot(root, vec![]) else {
         return "\nProject knowledge is unavailable. Continue with scoped AGENTS.md and focused source reads; do not block the task.\n".into();

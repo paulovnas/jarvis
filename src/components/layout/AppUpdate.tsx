@@ -61,7 +61,7 @@ export function AppUpdate({ standalone = false, onBusyChange }: { standalone?: b
     }
   };
   const aboutIdentity = <div className="flex items-center gap-5">
-    <JarvisLogo variant="vertical" className="size-24 shrink-0" />
+    <JarvisLogo variant="symbol" className="size-24 shrink-0" />
     <div className="flex min-w-0 flex-col gap-2">
       {!standalone && <DialogTitle>{release ? "Atualizar Jarvis" : "Sobre o Jarvis"}</DialogTitle>}
       <Description>{release ? "Uma nova versão está disponível para você." : "Ambiente de desenvolvimento com agentes de IA."}</Description>

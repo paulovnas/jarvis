@@ -6,13 +6,19 @@ import { draftText, type ChatDraft } from "./chat";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => vi.mocked(invoke).mockReset());
 
+it("identifies the conversation so native refinement can use its actual context", async () => {
+  vi.mocked(invoke).mockResolvedValue("Continue a implementação descrita na conversa.");
+  await refinePrompt({ content: "Pode continuar" }, "c1");
+  expect(invoke).toHaveBeenCalledWith("refine_chat_prompt", { prompt: "Pode continuar", conversationId: "c1" });
+});
+
 it("refines only draft text and preserves selected skills and attachments", async () => {
   const skill = { type: "skill" as const, id: "skill-1", name: "beads" };
   const attachment = { type: "attachment" as const, attachment: { id: "a1", conversationId: "c1", name: "notas.txt", kind: "document" as const, mime: "text/plain", size: 8 } };
   const draft: ChatDraft = { content: "Use /beads para planejar", parts: [{ type: "text", text: "Use " }, skill, { type: "text", text: " para planejar" }, attachment] };
   vi.mocked(invoke).mockResolvedValue("  Contexto: projeto atual.\nObjetivo: planejar com /beads, preservando as restrições.  ");
   const refined = await refinePrompt(draft);
-  expect(invoke).toHaveBeenCalledWith("refine_chat_prompt", { prompt: draft.content });
+  expect(invoke).toHaveBeenCalledWith("refine_chat_prompt", { prompt: draft.content, conversationId: null });
   expect(refined.parts).toContainEqual(skill);
   expect(refined.parts).toContainEqual(attachment);
   expect(draftText(refined.parts ?? [])).toBe(refined.content);

@@ -14,9 +14,10 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 const call = vi.mocked(invoke);
 const initial: SystemSnapshot = {
   preferences: {
+    closeBehavior: "tray",
     preventSleep: "active",
     notifications: true,
-    companionEnabled: false,
+    companionEnabled: false, messagePredictionsEnabled: true,
     askUserTimeoutSeconds: 45,
     responseLanguage: "pt-BR",
     terminal: { shell: null, arguments: [], fontFamily: null, fontSize: 13 },
@@ -26,6 +27,7 @@ const initial: SystemSnapshot = {
   sleepError: null,
   notificationError: null,
   companionSupported: true,
+  traySupported: false,
   companionError: null,
   availableTerminalShells: ["/bin/zsh", "/bin/bash"],
   availableTerminalFonts: ["NotoSansM Nerd Font Mono", "JetBrains Mono"],

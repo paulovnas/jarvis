@@ -1,5 +1,26 @@
 use super::*;
 
+#[test]
+fn close_behavior_defaults_to_tray_and_persists_exit_without_changing_other_settings() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("system.json");
+    let mut store = Store::open(path.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&store.preferences).unwrap()["closeBehavior"],
+        "tray"
+    );
+    let preferences: Preferences =
+        serde_json::from_str(r#"{"notifications":true,"closeBehavior":"exit"}"#).unwrap();
+    store.save(preferences).unwrap();
+    let restored = Store::open(path).unwrap();
+    assert!(restored.preferences.notifications);
+    assert_eq!(
+        serde_json::to_value(restored.preferences).unwrap()["closeBehavior"],
+        "exit"
+    );
+    assert!(serde_json::from_str::<Preferences>(r#"{"closeBehavior":"unknown"}"#).is_err());
+}
+
 #[cfg(windows)]
 mod windows_manifest;
 
@@ -330,6 +351,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
     for mode in [SleepMode::Active, SleepMode::Open, SleepMode::Off] {
         let preferences = Preferences {
             prevent_sleep: mode,
+            close_behavior: CloseBehavior::default(),
             notifications: mode != SleepMode::Off,
             companion_enabled: false,
             ask_user_timeout_seconds: 45,
@@ -344,6 +366,8 @@ fn preferences_restore_all_modes_without_touching_layout() {
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
             prompt_refinement_model: None,
+            message_predictions_enabled: true,
+            message_prediction_model: None,
             computer_use_mode: crate::agent::computer::ComputerMode::Yolo,
         };
         store.save(preferences.clone()).unwrap();
@@ -371,6 +395,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
     assert!(store
         .save(Preferences {
             prevent_sleep: SleepMode::Open,
+            close_behavior: CloseBehavior::default(),
             notifications: true,
             companion_enabled: false,
             ask_user_timeout_seconds: 30,
@@ -381,6 +406,8 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
             prompt_refinement_model: None,
+            message_predictions_enabled: true,
+            message_prediction_model: None,
             computer_use_mode: crate::agent::computer::ComputerMode::Manual,
         })
         .is_err());

@@ -149,12 +149,15 @@ interface Props {
   attachments?: ReactNode;
   actions?: ReactNode;
   loading?: ReactNode;
+  prediction?: string;
+  onAcceptPrediction?: () => void;
+  onDismissPrediction?: () => void;
   onFiles?: (files: File[]) => void;
   loadHistory?: (before?: number) => Promise<{ messages: string[]; before: number }>;
   ref?: Ref<{ focus: () => void }>;
 }
 
-export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, actions, loading, onFiles, loadHistory, ref }: Props) {
+export function SkillInput({ draft, onChange, onSend, disabled, compacting, working, children, attachments, actions, loading, prediction, onAcceptPrediction, onDismissPrediction, onFiles, loadHistory, ref }: Props) {
   const [query, setQuery] = useState<Query | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{ skills?: Skill[]; error?: string } | null>(null);
@@ -179,7 +182,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     extensions: [Document, Paragraph, Text, HardBreak, UndoRedo, SkillToken, CleanComposerText],
     content: initialDocument,
     editable: !disabled,
-    editorProps,
+    editorProps: { ...editorProps, attributes: state => ({ ...editorProps.attributes(state), "data-placeholder": prediction ?? "Mensagem… / para skills", "data-prediction": String(Boolean(prediction)) }) },
     onUpdate: ({ editor }) => { cancelHistory(); const next = readDraft(editor); const files = current.current.parts?.filter(part => part.type === "attachment") ?? []; current.current = files.length ? { ...next, parts: [...(next.parts ?? [{ type: "text", text: next.content }]), ...files] } : next; emittedDrafts.current.add(current.current); onChange(current.current); refreshQuery(editor); },
     onSelectionUpdate: ({ editor }) => refreshQuery(editor),
     onBlur: () => { setQuery(null); setCatalog(null); },
@@ -203,6 +206,13 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     editor.setEditable(!disabled, false);
     editor.view.dom.setAttribute("aria-disabled", String(disabled));
   }, [editor, disabled, cancelHistory]);
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dom.setAttribute("data-placeholder", prediction ?? "Mensagem… / para skills");
+    editor.view.dom.setAttribute("data-prediction", String(Boolean(prediction)));
+    if (prediction) editor.view.dom.setAttribute("aria-description", "Previsão da próxima mensagem. Pressione TAB para aceitar sem enviar.");
+    else editor.view.dom.removeAttribute("aria-description");
+  }, [editor, prediction]);
   async function navigateHistory(direction: -1 | 1) {
     if (!editor || !loadHistory || historyLoading.current) return;
     let state = history.current ?? { messages: [], before: undefined, index: 0, empty: current.current };
@@ -264,11 +274,16 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     if (open && activeSkill) editor.view.dom.setAttribute("aria-activedescendant", `${listId}-${activeSkill.id}`);
     else editor.view.dom.removeAttribute("aria-activedescendant");
   }, [editor, open, activeSkill, listId]);
-  return <div onCompositionStartCapture={cancelHistory} onPasteCapture={event => {
+  return <div onCompositionStartCapture={() => { cancelHistory(); onDismissPrediction?.(); }} onPasteCapture={event => {
+    onDismissPrediction?.();
     const files = Array.from(event.clipboardData.files);
     if (files.length) { event.preventDefault(); event.stopPropagation(); if (!disabled) onFiles?.(files); }
   }} onKeyDownCapture={event => {
     if (event.nativeEvent.isComposing || editor?.view.composing || disabled) return;
+    if (event.target === editor?.view.dom && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) onDismissPrediction?.();
+    if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.target === editor?.view.dom && !current.current.content && prediction) {
+      event.preventDefault(); event.stopPropagation(); onAcceptPrediction?.(); return;
+    }
     if (open) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDismissed(queryKey); setCatalog(null); return; }
       if (["ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -298,9 +313,9 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     </Command>}
     <InputGroup aria-label="Mensagem e opções de envio" aria-busy={compacting || Boolean(loading)} data-working={working || undefined} className="chat-composer relative isolate h-auto w-full flex-col items-stretch overflow-hidden rounded-2xl border-border bg-card focus-within:border-ring/60 focus-within:ring-1 focus-within:ring-ring/30 dark:bg-card has-disabled:opacity-100 has-disabled:bg-card dark:has-disabled:bg-card">
       {attachments}
-      <div className={`relative min-w-0 w-full ${actions ? "[&_.skill-editor]:pr-14" : ""}`}>
-        <EditorContent editor={editor} aria-hidden={Boolean(loading)} className={loading ? "invisible" : undefined} />
-        {loading && <div className={`absolute inset-0 overflow-hidden bg-card ${actions ? "pr-9" : ""}`}>{loading}</div>}
+      <div className={`relative min-w-0 w-full ${loading ? "min-h-24" : ""} ${actions ? "[&_.skill-editor]:pr-14" : ""}`}>
+        <EditorContent editor={editor} aria-hidden={Boolean(loading)} className={loading ? "pointer-events-none blur-[3px] opacity-50 select-none" : undefined} />
+        {loading && <div className="absolute inset-0 overflow-hidden bg-card/25">{loading}</div>}
       </div>
       {actions && <InputGroupAddon align="inline-end" className="absolute right-3 top-3 z-10 p-0">{actions}</InputGroupAddon>}
       <InputGroupAddon align="block-end" className="p-0 font-normal select-auto">{children}</InputGroupAddon>
