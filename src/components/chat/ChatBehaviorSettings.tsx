@@ -14,7 +14,8 @@ function Setting({ label, hint, checked, disabled, onChange }: { label: string; 
   return <div className="flex items-center justify-between gap-4"><Hint content={hint}><Label htmlFor={id} className="cursor-pointer text-xs font-normal">{label}</Label></Hint><Switch id={id} size="sm" checked={checked} disabled={disabled} onCheckedChange={onChange} className="cursor-pointer" /></div>;
 }
 
-export function ChatBehaviorSettings({ manualAvailable, manualValidation, onManualChange, publication, onPublicationChange, disabled, githubSelected }: {
+export function ChatBehaviorSettings({ projectless = false, manualAvailable, manualValidation, onManualChange, publication, onPublicationChange, disabled, githubSelected }: {
+  projectless?: boolean;
   manualAvailable: boolean;
   manualValidation: boolean;
   onManualChange: (value: boolean) => void;
@@ -32,7 +33,8 @@ export function ChatBehaviorSettings({ manualAvailable, manualValidation, onManu
       <PopoverHeader><PopoverTitle>Comportamento do chat</PopoverTitle></PopoverHeader>
       {manualAvailable && <Setting label="Validação manual" hint="Aguarda sua validação da implementação antes de concluir e iniciar a publicação automática." checked={manualValidation} onChange={onManualChange} disabled={disabled} />}
       <div className="space-y-3">
-        <Setting label="Github automático" hint="Ao concluir com sucesso, chama o agente Github com seu modelo configurado para executar as ações selecionadas sem nova aprovação de publicação." checked={Boolean(publication)} disabled={disabled} onChange={checked => onPublicationChange(checked ? { commit: true, push: false, pullRequest: false } : null)} />
+        <Setting label="Github automático" hint={projectless ? "Disponível em conversas vinculadas a um projeto." : "Ao concluir com sucesso, chama o agente Github com seu modelo configurado para executar as ações selecionadas sem nova aprovação de publicação."} checked={Boolean(publication)} disabled={disabled || projectless} onChange={checked => onPublicationChange(checked ? { commit: true, push: false, pullRequest: false } : null)} />
+        {projectless && <p className="text-xs text-muted-foreground">Vincule a conversa a um projeto para usar planejamento, validação e publicação.</p>}
         {publication && <div className="space-y-3 rounded-md border border-border bg-secondary/40 p-3">
           {([
             ["commit", "Commit", "Cria um commit das alterações da implementação, seguindo as instruções do projeto."],

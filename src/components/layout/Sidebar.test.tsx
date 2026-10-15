@@ -23,6 +23,51 @@ function Harness({ runningIds, unreadIds, terminalCounts }: { runningIds?: Reado
 }
 
 describe("Persistent sidebar", () => {
+  it("moves a global conversation by dropping it on a project and ignores unrelated drops", async () => {
+    const stored = populatedLibrary();
+    const global = { id: "shared", projectId: null, title: "Chat compartilhado", createdAt: 1 };
+    call.mockResolvedValue({ ...stored, conversations: [...stored.conversations, global] });
+    render(<Harness />);
+    const chat = await screen.findByRole("button", { name: global.title });
+    const project = screen.getByRole("group", { name: "Projeto Jarvis" });
+    const data = new Map<string, string>();
+    const transfer = { types: ["application/x-jarvis-global-conversation"], setData: (type: string, value: string) => data.set(type, value), getData: (type: string) => data.get(type) ?? "", effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(chat, { dataTransfer: transfer });
+    fireEvent.dragOver(project, { dataTransfer: transfer });
+    expect(project).toHaveClass("bg-accent");
+    fireEvent.drop(project, { dataTransfer: transfer });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("move_global_conversation", { id: "shared", projectId: "p1" }));
+    const calls = call.mock.calls.filter(([command]) => command === "move_global_conversation").length;
+    data.set("application/x-jarvis-global-conversation", "foreign");
+    fireEvent.drop(project, { dataTransfer: transfer });
+    expect(call.mock.calls.filter(([command]) => command === "move_global_conversation")).toHaveLength(calls);
+  });
+  it("prevents dragging a running global conversation", async () => {
+    const stored = populatedLibrary();
+    call.mockResolvedValue({ ...stored, conversations: [...stored.conversations, { id: "running", projectId: null, title: "Global ativo", createdAt: 1 }] });
+    render(<Harness runningIds={new Set(["running"])} />);
+    expect((await screen.findByText("Global ativo")).closest("button")).toHaveAttribute("draggable", "false");
+  });
+  it("shows three global chats above spaces and reveals the remaining chats", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    call.mockResolvedValue({
+      ...stored,
+      conversations: [...stored.conversations, ...Array.from({ length: 5 }, (_, index) => ({
+        id: `global-${index}`, projectId: null, title: index === 0 ? "Jarvito" : `Global ${index}`, createdAt: 5 - index,
+      }))],
+    });
+    render(<Harness />);
+    const globals = await screen.findByRole("region", { name: "Global" });
+    expect(within(globals).getAllByRole("button", { name: /^(Jarvito|Global \d)$/ })).toHaveLength(3);
+    expect(globals.compareDocumentPosition(screen.getByText("Espaço")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(globals).getByRole("button", { name: /Ver mais/ }));
+    expect(within(globals).getAllByRole("button", { name: /^(Jarvito|Global \d)$/ })).toHaveLength(5);
+    await user.click(within(globals).getByRole("button", { name: "Jarvito" }));
+    expect(call).toHaveBeenCalledWith("select_library_item", { target: { kind: "conversation", id: "global-0" } });
+    await user.click(within(globals).getByRole("button", { name: "Nova conversa global" }));
+    expect(call).toHaveBeenCalledWith("create_global_conversation", {});
+  });
   it("restores manually ordered projects and chats instead of overriding them with activity order", async () => {
     const stored = populatedLibrary();
     stored.projects.push({ id: "p3", workspaceId: "w1", name: "Website", path: "/projects/site", createdAt: 3 });

@@ -133,7 +133,9 @@ pub(in crate::agent) fn capture(
 ) -> Result<(), AgentError> {
     // Renderer-provided snapshots are never authority for a freshly accepted message.
     options.model_selection = None;
-    let configured = if crate::agent::companion_chat::is_global_session(conversation) {
+    let configured = if crate::agent::companion_chat::is_global_session(conversation)
+        && crate::library::global::is_global(db, conversation)?
+    {
         None
     } else {
         match read(db, conversation)?.remove(&selection_key(options)?) {

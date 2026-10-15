@@ -234,7 +234,7 @@ fn queued_primary_and_secondary_remain_dependencies_after_chat_and_agent_default
 }
 
 #[test]
-fn global_jarvito_history_does_not_surface_as_an_invisible_project_model_warning() {
+fn shared_global_history_is_included_in_model_dependency_review() {
     let (mut db, home) = fixture();
     let before = inventory(&db, home.path()).unwrap();
     library::companion::ensure_global(&mut db, home.path()).unwrap();
@@ -249,11 +249,11 @@ fn global_jarvito_history_does_not_surface_as_an_invisible_project_model_warning
     let options = super::super::tests::options(super::super::ApprovalMode::Yolo);
     journal.push_str(&format!("{}\n", json!({"type":"turn_checkpoint","version":1,"data":{"turn":{"id":"global-turn","options":options}}})));
     std::fs::write(&path, journal).unwrap();
-    // The saved model exists, but global chat is never a phantom project dependency.
+    // Shared global conversations participate in model removal review.
     assert_eq!(chat_choices(&path).unwrap().len(), 1);
     let after = inventory(&db, home.path()).unwrap();
-    assert_eq!(after.len(), before.len());
-    assert!(!after.iter().any(
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(after.iter().any(
         |item| item.item_key == format!("chat:{}", library::companion::GLOBAL_CONVERSATION_ID)
     ));
 }

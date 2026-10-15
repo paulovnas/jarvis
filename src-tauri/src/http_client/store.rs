@@ -25,6 +25,9 @@ pub(super) fn valid_id(value: &str) -> Result<(), HttpError> {
     Ok(())
 }
 pub(super) fn project(db: &rusqlite::Connection, project: &str) -> Result<(), HttpError> {
+    if project == crate::library::companion::GLOBAL_PROJECT_ID {
+        return Err(invalid("O cliente HTTP usa as configurações de um projeto. Vincule a conversa a um projeto para continuar."));
+    }
     if !db.query_row(
         "SELECT EXISTS(SELECT 1 FROM projects WHERE id=?1)",
         [project],

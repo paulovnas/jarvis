@@ -3,7 +3,7 @@ use super::*;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     fs::{self, OpenOptions},
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::Path,
     time::SystemTime,
 };
@@ -15,9 +15,41 @@ const INDEX_CACHE_ENTRIES: usize = 16;
 const INDEX_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SINGLE_INDEX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDECAR_BYTES: usize = 32 * 1024 * 1024;
-const SIDECAR_VERSION: u8 = 6;
+const SIDECAR_VERSION: u8 = 7;
 const MAX_CACHED_PREVIEW_BYTES: usize = 256 * 1024;
 const DEFERRED_DETAIL_KEY: &str = "_jarvisHistoryDetailsDeferred";
+
+fn journal_file_scope(path: &Path, root: &Path) -> Result<bool, AgentError> {
+    let mut header = String::new();
+    BufReader::new(
+        fs::File::open(path)
+            .map_err(|_| AgentError::storage())?
+            .take(65_537),
+    )
+    .read_line(&mut header)
+    .map_err(|_| AgentError::storage())?;
+    if header.len() > 65_536 {
+        return Err(AgentError::storage());
+    }
+    let header: Value = serde_json::from_str(&header).map_err(|_| AgentError::storage())?;
+    Ok(header["cwd"]
+        .as_str()
+        .is_none_or(|cwd| Path::new(cwd) == root))
+}
+
+fn retain_file_scope(
+    path: &Path,
+    root: &Path,
+    files: &mut BTreeMap<String, diffs::FileRevision>,
+) -> Result<bool, AgentError> {
+    let legacy_scope = journal_file_scope(path, root)?;
+    files.retain(|_, file| {
+        file.root
+            .as_deref()
+            .map_or(legacy_scope, |origin| origin == root)
+    });
+    Ok(legacy_scope)
+}
 
 fn preview_value(value: &Value) -> Option<Value> {
     match value {
@@ -163,7 +195,7 @@ struct PersistedIndex {
     queue: Vec<queue::QueuedMessage>,
     context: Option<compaction::Checkpoint>,
     compactions: Vec<compaction::CompactionEvent>,
-    files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
+    files: BTreeMap<String, (u64, usize, diffs::FileSummary, Option<PathBuf>)>,
     tail: Option<StoredTurn>,
     damaged_turn: Option<String>,
     replay: ReplayCursor,
@@ -199,7 +231,7 @@ struct Index {
     queue: Vec<queue::QueuedMessage>,
     context: Option<compaction::Checkpoint>,
     compactions: Vec<compaction::CompactionEvent>,
-    files: BTreeMap<String, (u64, usize, diffs::FileSummary)>,
+    files: BTreeMap<String, (u64, usize, diffs::FileSummary, Option<PathBuf>)>,
     tail: Option<StoredTurn>,
     tail_size: usize,
     tail_dirty: bool,
@@ -290,7 +322,7 @@ impl PersistedIndex {
             }
             entries.push(entry.into_entry());
         }
-        if self.files.values().any(|(offset, length, _)| {
+        if self.files.values().any(|(offset, length, _, _)| {
             *length == 0
                 || *offset == 0
                 || offset
@@ -552,7 +584,7 @@ impl Index {
             compactions: self.compactions.clone(),
             files: BTreeMap::new(),
         };
-        for (name, (offset, length, _)) in &self.files {
+        for (name, (offset, length, _, _)) in &self.files {
             replayed_records.insert((*offset, *length));
             extras.files.insert(
                 name.clone(),
@@ -560,6 +592,7 @@ impl Index {
                     .map_err(|_| AgentError::storage())?,
             );
         }
+        let legacy_scope = retain_file_scope(path, root, &mut extras.files)?;
         let persisted_files: HashSet<_> = extras.files.keys().cloned().collect();
         let mut legacy = vec![];
         for (entry_index, entry) in self.entries.iter().enumerate().filter(|(_, entry)| {
@@ -573,7 +606,9 @@ impl Index {
             replayed_records.insert((entry.offset, entry.length));
             legacy.push(self.stored_turn(path, entry_index)?);
         }
-        diffs::load_legacy(root, &legacy, &mut extras.files);
+        if legacy_scope {
+            diffs::load_legacy(root, &legacy, &mut extras.files);
+        }
         let file_checkpoints = extras
             .files
             .values()
@@ -733,8 +768,10 @@ impl Index {
             "file_checkpoint" => {
                 let revision: diffs::FileRevision =
                     serde_json::from_value(record.data).map_err(|_| AgentError::storage())?;
-                self.files
-                    .insert(revision.path.clone(), (offset, length, revision.summary()));
+                self.files.insert(
+                    revision.path.clone(),
+                    (offset, length, revision.summary(), revision.root.clone()),
+                );
             }
             _ => return Err(AgentError::storage()),
         }
@@ -1132,6 +1169,16 @@ impl HistoryState {
                 .is_some_and(|entry| entry.status == TurnStatus::Running || entry.resumable))
         })
     }
+
+    pub(super) fn has_scope_work(&self, path: &Path) -> Result<bool, AgentError> {
+        self.with(path, |index| {
+            Ok(!index.queue.is_empty()
+                || index
+                    .entries
+                    .last()
+                    .is_some_and(|entry| entry.status == TurnStatus::Running || entry.resumable))
+        })
+    }
     pub(super) fn has_turn(&self, path: &Path, id: &str) -> Result<bool, AgentError> {
         self.with(path, |index| Ok(index.ids.contains(id)))
     }
@@ -1294,7 +1341,7 @@ impl AgentState {
         let writer_lease = session_writer::WriterLease::acquire(&path)?;
         let extras = self.histories.with(&path, |index| {
             let mut extras = journal::Extras::default();
-            for (name, (offset, length, _)) in &index.files {
+            for (name, (offset, length, _, _)) in &index.files {
                 extras.files.insert(
                     name.clone(),
                     serde_json::from_value(journal::record_at(&path, *offset, *length)?.data)
@@ -1319,13 +1366,16 @@ impl AgentState {
                     .map_err(|_| AgentError::storage())?,
                 );
             }
-            diffs::load_legacy(&root, &legacy, &mut extras.files);
+            if retain_file_scope(&path, &root, &mut extras.files)? {
+                diffs::load_legacy(&root, &legacy, &mut extras.files);
+            }
             Ok(extras)
         })?;
         let writer =
             session_writer::SessionWriter::start_with_lease(writer_lease, id.into(), None)?;
         let file_session = Arc::new(Session {
             id: id.into(),
+            project: library::conversation_project(state, home, id)?,
             journal: path,
             root,
             journal_maintenance: Default::default(),
@@ -1488,9 +1538,10 @@ impl AgentState {
             );
             return Ok(snapshot);
         }
-        let (path, _) = library::agent_location(state, home, id)?;
+        let (path, root) = library::agent_location(state, home, id)?;
         self.histories.with(&path, |index| {
             let page = index.page(&path, id, None, None, None)?;
+            let legacy_scope = journal_file_scope(&path, &root)?;
             Ok(ChatSnapshot {
                 protocol_version: protocol::VERSION,
                 conversation_id: id.into(),
@@ -1509,7 +1560,12 @@ impl AgentState {
                 file_changes: index
                     .files
                     .values()
-                    .map(|(_, _, summary)| summary.clone())
+                    .filter(|(_, _, _, origin)| {
+                        origin
+                            .as_deref()
+                            .map_or(legacy_scope, |origin| origin == root)
+                    })
+                    .map(|(_, _, summary, _)| summary.clone())
                     .collect(),
             })
         })
@@ -1565,6 +1621,50 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+    #[test]
+    fn global_folder_changes_keep_history_but_isolate_file_checkpoint_origins() {
+        let fixture = Fixture::new();
+        let next = Fixture::new();
+        let path = fixture.root.join("global-scope.jsonl");
+        fs::write(&path, format!("{}\n", json!({"cwd":fixture.root}))).unwrap();
+        journal::append(&path, &stored(0)).unwrap();
+        let old = diffs::FileRevision::new(
+            "same.txt".into(),
+            Some("old baseline".into()),
+            Some("old edit".into()),
+            "conversation",
+        );
+        journal::append_event(&path, "file_checkpoint", &old).unwrap();
+        let history = HistoryState::default();
+        assert_eq!(
+            history
+                .load_replay(&path, &fixture.root)
+                .unwrap()
+                .extras
+                .files
+                .len(),
+            1
+        );
+        let migrated = history.load_replay(&path, &next.root).unwrap();
+        assert_eq!(migrated.turns.len(), 1);
+        assert!(migrated.extras.files.is_empty());
+        let mut new = diffs::FileRevision::new(
+            "same.txt".into(),
+            Some("new baseline".into()),
+            Some("new edit".into()),
+            "conversation",
+        );
+        new.root = Some(next.root.clone());
+        journal::append_event(&path, "file_checkpoint", &new).unwrap();
+        let restarted = HistoryState::default()
+            .load_replay(&path, &next.root)
+            .unwrap();
+        assert_eq!(
+            restarted.extras.files["same.txt"].before.as_deref(),
+            Some("new baseline")
+        );
+        assert_eq!(restarted.turns.len(), 1);
+    }
     #[test]
     fn processed_image_previews_survive_history_pagination() {
         let mut turn = stored(0).turn;

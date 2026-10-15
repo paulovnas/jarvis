@@ -65,6 +65,22 @@ pub(super) fn usage(
                             .len();
                     }
                     for conversation in &conversations {
+                        let journal =
+                            conversation_journal_path(connection, home, &conversation.id)?;
+                        let storage = journal
+                            .parent()
+                            .and_then(|parent| parent.file_name())
+                            .and_then(|name| name.to_str())
+                            .ok_or_else(LibraryError::invalid_session)?;
+                        if storage != project.id {
+                            for file in
+                                deletion::files_to_delete(home, storage, Some(&conversation.id))?
+                            {
+                                bytes += fs::symlink_metadata(file)
+                                    .map_err(|_| LibraryError::storage())?
+                                    .len();
+                            }
+                        }
                         bytes += cleanup::related_size(home, &conversation.id)?;
                     }
                     Ok(ProjectStorage {

@@ -247,6 +247,7 @@ pub(super) fn pending(file: &FileRevision, head: Option<&str>, live: Option<&str
         Some(live.to_owned()),
         "conversation",
     );
+    result.root = file.root.clone();
     // Empty-file creation/deletion is still a change, despite zero changed lines.
     if empty_created {
         result.before = None;

@@ -35,7 +35,7 @@ export function appearanceOfProject(
 
 export interface Conversation {
   id: string;
-  projectId: string;
+  projectId: string | null;
   title: string;
   createdAt: number;
   lastActivityAt?: number;
@@ -52,6 +52,7 @@ export interface LibrarySnapshot {
   projects: Project[];
   conversations: Conversation[];
   selection: LibrarySelection;
+  globalDirectory?: string;
 }
 
 export interface LibraryTarget {
@@ -66,8 +67,9 @@ export interface LibraryDeleteTarget {
 
 export interface ConversationDetails {
   conversation: Conversation;
-  project: Project;
-  workspace: Workspace;
+  project: Project | null;
+  workspace: Workspace | null;
+  directory?: string;
 }
 
 function invalid(): never {
@@ -120,7 +122,7 @@ function conversation(value: unknown): Conversation {
   const item = record(value);
   return {
     id: text(item.id),
-    projectId: text(item.projectId),
+    projectId: item.projectId === null ? null : text(item.projectId),
     title: text(item.title),
     createdAt: timestamp(item.createdAt),
     lastActivityAt: timestamp(item.lastActivityAt ?? item.createdAt),
@@ -156,7 +158,7 @@ export function readLibrarySnapshot(value: unknown): LibrarySnapshot {
   );
   if (
     projects.some((entry) => !workspaceIds.has(entry.workspaceId)) ||
-    conversations.some((entry) => !projectMap.has(entry.projectId)) ||
+    conversations.some((entry) => entry.projectId !== null && !projectMap.has(entry.projectId)) ||
     (selection.workspaceId !== null &&
       !workspaceIds.has(selection.workspaceId)) ||
     (selection.projectId !== null &&
@@ -167,19 +169,20 @@ export function readLibrarySnapshot(value: unknown): LibrarySnapshot {
         selection.projectId)
   )
     invalid();
-  return { workspaces, projects, conversations, selection };
+  return { workspaces, projects, conversations, selection, ...(item.globalDirectory === undefined ? {} : { globalDirectory: text(item.globalDirectory) }) };
 }
 
 export function readConversationDetails(value: unknown): ConversationDetails {
   const item = record(value);
   const details = {
     conversation: conversation(item.conversation),
-    project: project(item.project),
-    workspace: workspace(item.workspace),
+    project: item.project === null ? null : project(item.project),
+    workspace: item.workspace === null ? null : workspace(item.workspace),
+    ...(item.directory === undefined ? {} : { directory: text(item.directory) }),
   };
   if (
-    details.conversation.projectId !== details.project.id ||
-    details.project.workspaceId !== details.workspace.id
+    details.conversation.projectId !== (details.project?.id ?? null) ||
+    (details.project ? details.project.workspaceId !== details.workspace?.id : details.workspace !== null)
   )
     invalid();
   return details;

@@ -55,12 +55,13 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const files = changes.files;
   const projectId = library?.selection.projectId;
   const projectPath = library?.projects.find(project => project.id === projectId)?.path;
-  const section = layout.inspectorTab === "explorer" || layout.inspectorTab === "github" || layout.inspectorTab === "designer" ? layout.inspectorTab : "activities";
+  const global = library?.conversations.find(conversation => conversation.id === library.selection.conversationId)?.projectId === null;
+  const section = !global && (layout.inspectorTab === "explorer" || layout.inspectorTab === "github" || layout.inspectorTab === "designer") ? layout.inspectorTab : "activities";
   const selectSection = (value: unknown) => { if (value === "activities" || value === "github" || value === "explorer" || value === "designer") { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); updateLayout({ inspectorTab: value }); } };
   const tabClass = "h-7 min-w-0 cursor-pointer px-1.5 text-xs text-muted-foreground data-active:bg-accent data-active:text-foreground dark:data-active:border-border dark:data-active:bg-accent dark:data-active:text-foreground";
   return <aside aria-label="Inspector" className="native-inspector flex h-full min-h-0 flex-col bg-sidebar">
     <Tabs value={section} onValueChange={selectSection} className="h-full min-h-0 gap-0">
-      <div className="shrink-0 border-b border-border px-2 py-2"><TabsList aria-label="Seções da lateral direita" className="h-8 w-full justify-start gap-0.5 rounded-md bg-secondary/50 p-0.5"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" className={tabClass}>Explorer</TabsTrigger><TabsTrigger value="designer" className={tabClass}>Designer</TabsTrigger></TabsList></div>
+      <div className="shrink-0 border-b border-border px-2 py-2"><TabsList aria-label="Seções da lateral direita" className="h-8 w-full justify-start gap-0.5 rounded-md bg-secondary/50 p-0.5"><TabsTrigger value="activities" className={tabClass}>Inspector</TabsTrigger><TabsTrigger value="github" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>GitHub</TabsTrigger><TabsTrigger value="explorer" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>Explorer</TabsTrigger><TabsTrigger value="designer" disabled={global} title={global ? "Disponível em conversas de projeto" : undefined} className={tabClass}>Designer</TabsTrigger></TabsList></div>
       <TabsContent value="activities" keepMounted className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">
         <ScrollArea className="h-full"><div key={selectedChat?.conversationId ?? "empty"} className="px-2">
@@ -70,7 +71,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
             {projectId && selectedChat ? <EpicPlans key={`${projectId}:${selectedChat.conversationId}`} projectId={projectId} conversationId={selectedChat.conversationId} active={Boolean(selectedChat.activeTurnId)} onOpenKanban={onOpenKanban} /> : <p className="text-xs text-muted-foreground">Nenhum plano em aberto.</p>}
           </ActivitySection>)}
           <ActivitySection title="Arquivos alterados" icon={<Files aria-hidden="true" className="size-4 text-muted-foreground" />} count={files.length}>
-            {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} projectPath={projectPath} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
+            {changes.loading ? <div role="status" aria-label="Conferindo alterações" className="space-y-2"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-4/5" /></div> : changes.error ? <p role="alert" className="text-xs text-destructive">{changes.error}</p> : files.length && selectedChat ? <ChangedFiles key={selectedChat.conversationId} files={files} conversationId={selectedChat.conversationId} projectPath={projectPath ?? library?.globalDirectory} /> : <p className="text-xs text-muted-foreground">Nenhuma alteração pendente.</p>}
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
           {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow) || workflow.data.flow === latestFlow && workflow.data.agents.some(agent => agent.parentId !== null)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-muted-foreground" />}>
@@ -90,7 +91,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
         {projectId && fileWorkspace && (explorerVisited || section === "explorer") ? <ProjectExplorer key={projectId} projectId={projectId} projectName={library?.projects.find(project => project.id === projectId)?.name ?? "Projeto"} selected={fileWorkspace.tabs.activePath} onOpen={fileWorkspace.open} /> : section === "explorer" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para explorar os arquivos do projeto.</p> : null}
       </TabsContent>
       <TabsContent value="designer" keepMounted className={`min-h-0 flex-1 ${section === "designer" ? "block" : "hidden"}`}>
-        <DesignerPanel key={library?.selection.conversationId ?? "empty"} session={designer?.conversationId === library?.selection.conversationId ? designer : undefined} />
+        {!global && <DesignerPanel key={library?.selection.conversationId ?? "empty"} session={designer?.conversationId === library?.selection.conversationId ? designer : undefined} />}
       </TabsContent>
     </Tabs>
   </aside>;

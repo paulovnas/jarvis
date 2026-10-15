@@ -44,7 +44,7 @@ impl<'a> Bridge<'a> {
         frozen_skills: Arc<[crate::skills::Skill]>,
     ) -> Result<Self, AgentError> {
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
-        let global_companion = companion_chat::is_global_session(&owner.id);
+        let global_companion = owner.global_companion();
         let image_specialist = execution
             .as_ref()
             .is_some_and(workflow::Execution::image_generator);
@@ -111,7 +111,7 @@ impl<'a> Bridge<'a> {
         if !image_specialist {
             core_runtime::prepare_graft(session, &graft, &user, signal.clone()).await?;
         }
-        let beads = if (direct_tasks && !image_specialist) || publication || global_companion {
+        let beads = if (direct_tasks && !image_specialist) || publication || owner.global() {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -121,7 +121,7 @@ impl<'a> Bridge<'a> {
                 image_specialist || options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if !global_companion && (direct_tasks || image_specialist) {
+        let project_beads = if !owner.global() && (direct_tasks || image_specialist) {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
@@ -137,11 +137,13 @@ impl<'a> Bridge<'a> {
         let backend = "Claude Code";
         let mcp_dispatcher = "call_mcp_tool";
         prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through {mcp_dispatcher} using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
-        prompt.push_str(&crate::library::repositories::prompt(
-            runtime.state,
-            home,
-            owner.project_id()?,
-        )?);
+        if !owner.global() {
+            prompt.push_str(&crate::library::repositories::prompt(
+                runtime.state,
+                home,
+                owner.project_id()?,
+            )?);
+        }
         if let Some(exec) = &execution {
             exec.refresh_recovery_catalog(
                 |name| !clients.requires_active_task(name),
@@ -351,7 +353,7 @@ impl<'a> Bridge<'a> {
             .execution
             .as_ref()
             .is_some_and(workflow::Execution::image_generator);
-        if image_specialist && companion_chat::is_global_session(&self.owner().id) {
+        if image_specialist && self.owner().global_companion() {
             let mut definitions = workflow::image_tools(
                 image_generation::enabled(self.runtime.state, self.runtime.home),
                 Some(super::native_vision::definition()),
@@ -361,7 +363,7 @@ impl<'a> Bridge<'a> {
             }
             return Ok(definitions);
         }
-        if companion_chat::is_global_session(&self.owner().id) {
+        if self.owner().global_companion() {
             let mut definitions = if image_specialist {
                 vec![attachments::definition()]
             } else {
@@ -468,6 +470,9 @@ impl<'a> Bridge<'a> {
         }
         if let Some(exec) = &self.execution {
             exec.filter(&mut definitions);
+        }
+        if self.owner().global() {
+            library::global::filter_tools(&mut definitions);
         }
         self.clients.ensure_scope_visible(&definitions)?;
         Ok(definitions)
@@ -719,7 +724,7 @@ impl<'a> Bridge<'a> {
         }
         let capability_context = if (registered || unavailable)
             && !self.publication
-            && !companion_chat::is_global_session(&self.owner().id)
+            && !self.owner().global_companion()
         {
             let mut context = crate::plugins::runtime_prompt(self.runtime.home, &self.session.root)
                 .map_err(|cause| AgentError::new(cause.code, &cause.message))?;
@@ -765,7 +770,7 @@ impl<'a> Bridge<'a> {
             .execution
             .as_ref()
             .map_or(self.session, |exec| exec.root());
-        if !companion_chat::is_global_session(&self.session.id) {
+        if !self.session.global_companion() {
             learning::prepare(self.session, owner, state, home).await;
         }
         match handler {
@@ -958,8 +963,7 @@ impl<'a> Bridge<'a> {
             Handler::Attachment => attachments::read_tool_with_project(
                 home,
                 &self.owner().id,
-                (!companion_chat::is_global_session(&self.owner().id))
-                    .then_some(self.session.root.as_path()),
+                (!self.owner().global_companion()).then_some(self.session.root.as_path()),
                 &tool.args,
             ),
             Handler::ImageGeneration => {
@@ -1116,7 +1120,7 @@ impl<'a> Bridge<'a> {
     }
 
     pub async fn refresh_mcp_intent(&mut self) -> Result<(), AgentError> {
-        if !companion_chat::is_global_session(&self.owner().id) {
+        if !self.owner().global_companion() {
             let changed = refresh_user_mcp_intent(
                 self.session,
                 self.runtime,
@@ -1193,7 +1197,7 @@ impl<'a> Bridge<'a> {
             return Ok(Some("Update the Jarvis task list before finishing. Mark verified outcomes completed and real unresolved dependencies blocked.".into()));
         }
         if let Some(exec) = &self.execution {
-            if companion_chat::is_global_session(&self.owner().id) && !exec.image_generator() {
+            if self.owner().global_companion() && !exec.image_generator() {
                 return Ok(None);
             }
             if exec.barrier(self.session, self.signal.clone()).await? {

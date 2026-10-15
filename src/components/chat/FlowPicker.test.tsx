@@ -4,6 +4,22 @@ import { expect, it, vi } from "vitest";
 import { builtinGithubAgent, builtinImageAgent, builtinVideoAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
 import { FlowPicker } from "./FlowPicker";
 
+it("blocks project flows in a global chat and keeps image generation available", async () => {
+  const user = userEvent.setup(), change = vi.fn();
+  render(<FlowPicker value="standard" projectless onChange={change} builtinAgents={[builtinGithubAgent, builtinVideoAgent, builtinImageAgent]} customFlows={[customFlow]} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar fluxo" }));
+  for (const name of ["Designer", "Vídeo", builtinGithubAgent.name, builtinVideoAgent.name, "Meu fluxo"]) {
+    const options = await screen.findAllByRole("option", { name });
+    for (const option of options) {
+      expect(option).toHaveAttribute("aria-disabled", "true");
+      await user.click(option);
+    }
+    expect(change).not.toHaveBeenCalled();
+  }
+  await user.click(screen.getAllByRole("option", { name: "Imagens" })[0]);
+  expect(change).toHaveBeenCalledWith("image_generator");
+});
+
 it("offers the six Jarvis flows with descriptions and commits only the chosen flow", async () => {
   const user = userEvent.setup(), change = vi.fn();
   render(<FlowPicker value="standard" onChange={change} />);

@@ -6,13 +6,7 @@ pub(crate) const GLOBAL_PROJECT_ID: &str = "00000000000000000000000000000002";
 pub(crate) const GLOBAL_CONVERSATION_ID: &str = "00000000000000000000000000000003";
 
 pub(crate) fn ensure_global(connection: &mut Connection, home: &Path) -> Result<(), LibraryError> {
-    let root = crate::data_dir::root(home).join("companion").join("global");
-    fs::create_dir_all(&root).map_err(|_| LibraryError::storage())?;
-    let metadata = fs::symlink_metadata(&root).map_err(|_| LibraryError::storage())?;
-    if metadata.is_symlink() || !metadata.is_dir() {
-        return Err(LibraryError::invalid_session());
-    }
-    let root = canonical_directory(&root)?;
+    let root = global::directory(connection, home)?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
         "INSERT OR IGNORE INTO workspaces(id,name) VALUES(?1,?2)",
@@ -22,12 +16,29 @@ pub(crate) fn ensure_global(connection: &mut Connection, home: &Path) -> Result<
         ],
     )?;
     tx.execute(
-        "INSERT OR IGNORE INTO projects(id,workspace_id,name,path,icon,color) VALUES(?1,?2,'Jarvito',?3,'bot','cyan')",
+        "INSERT OR IGNORE INTO projects(id,workspace_id,name,path,icon,color) VALUES(?1,?2,'Global',?3,'bot','cyan')",
         params![GLOBAL_PROJECT_ID, GLOBAL_WORKSPACE_ID, root.to_string_lossy()],
     )?;
-    let stored = project(&tx, GLOBAL_PROJECT_ID)?;
-    if stored.workspace_id != GLOBAL_WORKSPACE_ID || Path::new(&stored.path) != root {
+    let mut stored = project(&tx, GLOBAL_PROJECT_ID)?;
+    if stored.name != "Global" {
+        tx.execute(
+            "UPDATE projects SET name='Global' WHERE id=?1",
+            [GLOBAL_PROJECT_ID],
+        )?;
+    }
+    let legacy = crate::data_dir::root(home).join("companion").join("global");
+    if stored.workspace_id != GLOBAL_WORKSPACE_ID {
         return Err(LibraryError::invalid_session());
+    }
+    if Path::new(&stored.path) != root {
+        if fs::canonicalize(&legacy).ok().as_deref() != Some(Path::new(&stored.path)) {
+            return Err(LibraryError::invalid_session());
+        }
+        tx.execute(
+            "UPDATE projects SET path=?1 WHERE id=?2",
+            params![root.to_string_lossy(), GLOBAL_PROJECT_ID],
+        )?;
+        stored.path = root.to_string_lossy().into_owned();
     }
     let mut created_journal = None;
     let exists = tx.query_row(
@@ -37,9 +48,7 @@ pub(crate) fn ensure_global(connection: &mut Connection, home: &Path) -> Result<
     )?;
     if exists {
         let details = read_conversation(&tx, home, GLOBAL_CONVERSATION_ID)?;
-        if details.project.id != GLOBAL_PROJECT_ID {
-            return Err(LibraryError::invalid_session());
-        }
+        let _ = details;
     } else {
         tx.execute(
             "INSERT INTO conversations(id,project_id,title,title_source) VALUES(?1,?2,'Jarvito','manual')",
@@ -75,7 +84,6 @@ pub(crate) fn ensure_global(connection: &mut Connection, home: &Path) -> Result<
                     || existing.id != header.id
                     || existing.project_id != header.project_id
                     || existing.title != header.title
-                    || existing.cwd != header.cwd
                 {
                     return Err(LibraryError::invalid_session());
                 }
@@ -183,7 +191,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_scope_is_idempotent_hidden_and_does_not_change_main_selection() {
+    fn global_chat_is_shared_without_exposing_the_internal_project_or_changing_selection() {
         let home = tempfile::tempdir().unwrap();
         let mut db = Connection::open_in_memory().unwrap();
         crate::persistence::initialize_database(&mut db).unwrap();
@@ -196,7 +204,9 @@ mod tests {
         assert_eq!(visible.selection, selected);
         assert_eq!(visible.workspaces.len(), 1);
         assert!(visible.projects.is_empty());
-        assert!(visible.conversations.is_empty());
+        assert_eq!(visible.conversations.len(), 1);
+        assert_eq!(visible.conversations[0].id, GLOBAL_CONVERSATION_ID);
+        assert!(serde_json::to_value(&visible).unwrap()["conversations"][0]["projectId"].is_null());
         assert_eq!(
             read_conversation(&db, home.path(), GLOBAL_CONVERSATION_ID)
                 .unwrap()
@@ -244,10 +254,14 @@ mod tests {
         ] {
             save_selection(&db, &hidden).unwrap();
             let visible = snapshot(&db).unwrap();
-            assert_eq!(visible.selection, first);
+            let expected = Selection {
+                conversation_id: hidden.conversation_id.clone(),
+                ..first.clone()
+            };
+            assert_eq!(visible.selection, expected);
             assert_eq!(visible.workspaces.len(), 2);
             assert!(visible.projects.is_empty());
-            assert!(visible.conversations.is_empty());
+            assert_eq!(visible.conversations.len(), 1);
             let stored: (Option<String>, Option<String>, Option<String>) = db
                 .query_row(
                     "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id=1",
@@ -255,7 +269,14 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .unwrap();
-            assert_eq!(stored, (first.workspace_id.clone(), None, None));
+            assert_eq!(
+                stored,
+                (
+                    first.workspace_id.clone(),
+                    None,
+                    hidden.conversation_id.clone()
+                )
+            );
         }
         assert_eq!(fs::read(&history).unwrap(), original);
         assert_eq!(
@@ -282,15 +303,16 @@ mod tests {
             },
         )
         .unwrap();
+        let visible = snapshot(&db).unwrap();
+        assert!(visible.workspaces.is_empty());
+        assert!(visible.projects.is_empty());
+        assert_eq!(visible.conversations.len(), 1);
         assert_eq!(
-            snapshot(&db).unwrap(),
-            LibrarySnapshot {
-                workspaces: vec![],
-                projects: vec![],
-                conversations: vec![],
-                selection: Selection::default(),
-            }
+            visible.selection.conversation_id.as_deref(),
+            Some(GLOBAL_CONVERSATION_ID)
         );
+        assert!(visible.selection.project_id.is_none());
+        assert!(visible.selection.workspace_id.is_none());
         let stored: (Option<String>, Option<String>, Option<String>) = db
             .query_row(
                 "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id=1",
@@ -298,7 +320,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(stored, (None, None, None));
+        assert_eq!(stored, (None, None, Some(GLOBAL_CONVERSATION_ID.into())));
     }
 
     #[test]
@@ -312,18 +334,29 @@ mod tests {
         let expected =
             insert_conversation(&mut db, home.path(), &library.projects[0].id, "Trabalho").unwrap();
         ensure_global(&mut db, home.path()).unwrap();
-        assert_eq!(snapshot(&db).unwrap(), expected);
+        let shared = snapshot(&db).unwrap();
+        assert_eq!(shared.selection, expected.selection);
         for target in [
             LibraryTarget::Workspace(GLOBAL_WORKSPACE_ID.into()),
             LibraryTarget::Project(GLOBAL_PROJECT_ID.into()),
-            LibraryTarget::Conversation(GLOBAL_CONVERSATION_ID.into()),
         ] {
             assert_eq!(
                 select_item(&mut db, home.path(), target).unwrap_err().code,
                 "not_found"
             );
-            assert_eq!(snapshot(&db).unwrap(), expected);
+            assert_eq!(snapshot(&db).unwrap(), shared);
         }
+        let selected = select_item(
+            &mut db,
+            home.path(),
+            LibraryTarget::Conversation(GLOBAL_CONVERSATION_ID.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.selection.conversation_id.as_deref(),
+            Some(GLOBAL_CONVERSATION_ID)
+        );
+        assert!(selected.selection.project_id.is_none());
     }
 
     #[test]
@@ -332,6 +365,8 @@ mod tests {
         let mut db = Connection::open_in_memory().unwrap();
         crate::persistence::initialize_database(&mut db).unwrap();
         ensure_global(&mut db, home.path()).unwrap();
+        let next = tempfile::tempdir().unwrap();
+        global::change_directory(&mut db, next.path()).unwrap();
         let path = session_path(
             home.path(),
             GLOBAL_PROJECT_ID,

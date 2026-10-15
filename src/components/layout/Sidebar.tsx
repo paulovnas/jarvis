@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/sidebar";
 import { SidebarSkeleton } from "./LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { appearanceOfProject, type Conversation, type Project } from "@/core/library";
@@ -48,6 +49,7 @@ import { useDesktopLayout } from "@/hooks/use-desktop-layout";
 import { SortableItem, SortableList } from "./SortableList";
 import { orderedItems } from "@/core/item-order";
 import { MoveProjectDialog } from "./MoveProjectDialog";
+import { MoveGlobalChatDialog } from "./MoveGlobalChatDialog";
 import { Hint } from "@/components/ui/hint";
 import { WorkflowIdentityIcon } from "@/components/agents/WorkflowIdentityIcon";
 import { WORKFLOW_COLORS } from "@/components/agents/workflow-appearance";
@@ -66,6 +68,8 @@ const sidebarStyle = {
   minHeight: 0,
 } as CSSProperties;
 
+const globalChatDragType = "application/x-jarvis-global-conversation";
+
 export function AppSidebar({
   library,
   runningConversationIds,
@@ -79,6 +83,8 @@ export function AppSidebar({
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
   const [moving, setMoving] = useState<Project | null>(null);
+  const [movingChat, setMovingChat] = useState<Conversation | null>(null);
+  const [dropProject, setDropProject] = useState<string | null>(null);
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
   const { layout, updateLayout } = useDesktopLayout();
   const expanded = layout.expandedProjects;
@@ -94,6 +100,8 @@ export function AppSidebar({
   const saveOrder = (key: string, ids: string[]) => updateLayout(current => ({ itemOrder: { ...current.itemOrder, [key]: ids } }));
   const project = projects.find((item) => item.id === selected?.projectId);
   const busy = loading || pending;
+  const globalChats = (snapshot?.conversations.filter(chat => chat.projectId === null) ?? []).sort((a, b) => (b.lastActivityAt ?? b.createdAt) - (a.lastActivityAt ?? a.createdAt));
+  const globalCount = visibleCounts.global ?? 3;
   const openDialog = (value: NameDialog) => {
     library.clearError();
     setDialog(value);
@@ -146,6 +154,24 @@ export function AppSidebar({
       >
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
           <SidebarHeader className="gap-2 border-b border-border px-3 py-3">
+            <section aria-label="Global" className="mb-1 border-b border-border pb-3">
+              <div className="mb-1 flex h-7 items-center justify-between px-1"><span className="text-xs font-medium text-muted-foreground">Global</span><Hint content="Nova conversa global"><Button variant="ghost" size="icon" aria-label="Nova conversa global" disabled={busy} className="size-6 cursor-pointer text-muted-foreground" onClick={() => void library.createGlobalConversation()}><Plus aria-hidden="true" className="size-3.5" /></Button></Hint></div>
+              <div className="max-h-64 overflow-y-auto"><SidebarMenu aria-label="Conversas globais">
+                {loading && <SidebarMenuItem role="status" aria-label="Carregando conversas globais"><div className="space-y-1">{[0, 1, 2].map(index => <div key={index} className="flex h-[34px] items-center gap-2 px-2"><Skeleton className="size-4 shrink-0" /><Skeleton className="h-3 w-3/4" /></div>)}</div></SidebarMenuItem>}
+                {globalChats.slice(0, globalCount).map(item => <SidebarMenuItem key={item.id}>
+                  <LibraryItemMenu disabled={busy} onEdit={() => openDialog({ kind: "conversation", item })} onDelete={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }} moveLabel="Mover para um projeto" onMove={runningConversationIds?.has(item.id) ? undefined : () => { library.clearError(); setMovingChat(item); }}>
+                    <SidebarMenuButton className="native-navigation-row h-[34px] cursor-pointer pr-8 text-[13px] text-muted-foreground data-active:text-foreground!" disabled={busy} isActive={item.id === selected?.conversationId} aria-current={item.id === selected?.conversationId ? "page" : undefined} draggable={!busy && !runningConversationIds?.has(item.id)} onDragStart={event => { event.dataTransfer.setData(globalChatDragType, item.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDropProject(null)} onClick={() => void library.select({ kind: "conversation", id: item.id })}>
+                      {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare aria-hidden="true" className="text-muted-foreground" />}
+                      <Hint content={item.title} whenTruncated><span className="min-w-0 flex-1 truncate">{item.title}</span></Hint>
+                      {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0" />}
+                    </SidebarMenuButton>
+                  </LibraryItemMenu>
+                  <Hint content="Excluir conversa"><SidebarMenuAction showOnHover aria-label={`Excluir conversa ${item.title}`} disabled={busy} className="cursor-pointer text-muted-foreground hover:text-destructive focus-visible:opacity-100" onClick={() => { library.clearError(); setDeletion({ kind: "conversation", item }); }}><Trash2 aria-hidden="true" /></SidebarMenuAction></Hint>
+                </SidebarMenuItem>)}
+              </SidebarMenu></div>
+              {!busy && !globalChats.length && <p className="px-1 py-2 text-xs text-muted-foreground">Conversas sem projeto ficam aqui.</p>}
+              {globalChats.length > globalCount && <Button variant="ghost" size="sm" className="mt-0.5 h-[30px] w-full cursor-pointer justify-start pl-8 text-xs text-muted-foreground" onClick={() => setVisibleCounts(counts => ({ ...counts, global: globalCount + 10 }))}>Ver mais<span className="ml-auto font-mono text-[11px]">+{Math.min(10, globalChats.length - globalCount)}</span></Button>}
+            </section>
             <span className="flex items-center gap-2 px-1 text-xs font-medium text-muted-foreground"><Layers aria-hidden="true" className="size-3.5" />Espaço</span>
             <div className="flex items-center gap-2">
               <Select
@@ -246,7 +272,7 @@ export function AppSidebar({
                           const accent = WORKFLOW_COLORS[appearance.color].value;
                           return (
                           <SortableItem key={item.id} id={item.id} disabled={busy}>{sort => <SidebarMenuItem ref={sort.setNodeRef} style={sort.style} data-active-project={isCurrentProject ? "true" : undefined} data-project-color={appearance.color} className="rounded-md py-0.5">
-                            <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
+                            <Collapsible role="group" aria-label={`Projeto ${item.name}`} aria-current={isCurrentProject ? "true" : undefined} className={dropProject === item.id ? "rounded-md bg-accent ring-1 ring-primary/50" : undefined} onDragOver={event => { if (!busy && event.dataTransfer.types.includes(globalChatDragType)) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropProject(item.id); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropProject(null); }} onDrop={event => { const id = event.dataTransfer.getData(globalChatDragType); setDropProject(null); if (busy || !globalChats.some(chat => chat.id === id) || runningConversationIds?.has(id)) return; event.preventDefault(); event.stopPropagation(); void library.moveGlobalConversation(id, item.id).then(saved => { if (saved) setExpanded(values => ({ ...values, [item.id]: true })); }); }} open={isOpen} onOpenChange={(open) => setExpanded(values => ({ ...values, [item.id]: open }))}>
                             <LibraryItemMenu
                               disabled={busy}
                               onDelete={() => { library.clearError(); setDeletion({ kind: "project", item }); }}
@@ -345,6 +371,7 @@ export function AppSidebar({
         onClose={() => { setDeletion(null); library.clearError(); }}
         onConfirm={() => library.deleteItem({ kind: deletion.kind, id: deletion.item.id })}
       />}
+      {movingChat && <MoveGlobalChatDialog conversation={movingChat} library={library} onClose={() => setMovingChat(null)} />}
       {moving && <MoveProjectDialog project={moving} workspaces={snapshot?.workspaces ?? []} library={library} onClose={() => { setMoving(null); library.clearError(); }} />}
     </aside>
   );

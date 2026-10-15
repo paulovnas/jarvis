@@ -447,6 +447,7 @@ fn worker_session(
     let weak = Arc::downgrade(hub);
     Ok(Arc::new(Session {
         id: job.id.clone(),
+        project: hub.root.project.clone(),
         journal: path,
         root: hub.root.root.clone(),
         journal_maintenance: hub.root.journal_maintenance.clone(),

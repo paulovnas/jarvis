@@ -33,7 +33,7 @@ function syncActiveDescendant(input: HTMLInputElement | null, list: HTMLDivEleme
   }
 }
 
-export function FlowPicker({ value, onChange, disabled, customFlows = [], customAgents = [], builtinAgents = [] }: { value: FlowSelection; onChange: (flow: FlowSelection) => void; disabled?: boolean; customFlows?: CustomFlow[]; customAgents?: CustomAgent[]; builtinAgents?: BuiltinAgentDefinition[] }) {
+export function FlowPicker({ value, onChange, disabled, projectless = false, customFlows = [], customAgents = [], builtinAgents = [] }: { value: FlowSelection; onChange: (flow: FlowSelection) => void; disabled?: boolean; projectless?: boolean; customFlows?: CustomFlow[]; customAgents?: CustomAgent[]; builtinAgents?: BuiltinAgentDefinition[] }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<PickerFilter>("all");
@@ -54,6 +54,7 @@ export function FlowPicker({ value, onChange, disabled, customFlows = [], custom
     { title: "Agentes personalizados", kind: "agents", options: customIndividualAgents },
   ];
   const options = groups.flatMap(group => group.options);
+  const needsProject = (option: PickerOption) => projectless && (option.value.startsWith("custom:") || ["planned", "complete", "designer", "video", "publication", "agent:builtin:designer", "agent:builtin:video", "agent:builtin:github"].includes(option.value));
   const current = options.find(option => option.value === value);
   const selected = current ?? { ...BUILTIN_FLOWS[0], title: "Opção indisponível" };
   const detailGroup = groups.find(group => group.options.some(option => option.value === highlighted));
@@ -85,9 +86,9 @@ export function FlowPicker({ value, onChange, disabled, customFlows = [], custom
         <CommandList ref={listRef} label="Opções de fluxo e agente" className="min-h-0 max-h-80 flex-1">
           <CommandEmpty className="px-3 py-8 text-xs text-muted-foreground">Nenhum fluxo ou agente encontrado.</CommandEmpty>
           {groups.filter(group => group.options.length > 0 && (filter === "all" || filter === group.kind)).map(group => <CommandGroup key={group.title} heading={group.title} className="**:[[cmdk-group-heading]]:text-[10px] **:[[cmdk-group-heading]]:font-semibold **:[[cmdk-group-heading]]:tracking-widest **:[[cmdk-group-heading]]:uppercase">
-            {group.options.map(option => <CommandItem key={option.value} value={option.value} keywords={[option.title, option.description]} aria-label={option.title} aria-current={option.value === value ? "true" : undefined} data-checked={option.value === value} onSelect={() => { onChange(option.value); setOpen(false); }} className="h-12 cursor-pointer gap-2.5 rounded-md border border-transparent px-2 data-[selected=true]:bg-secondary [&>svg:last-child]:size-3.5" style={{ color: option.color, borderColor: option.value === value ? `color-mix(in srgb, ${option.color} 35%, transparent)` : undefined }}>
+            {group.options.map(option => <CommandItem key={option.value} value={option.value} disabled={needsProject(option)} keywords={[option.title, option.description]} aria-label={option.title} aria-current={option.value === value ? "true" : undefined} data-checked={option.value === value} onSelect={() => { onChange(option.value); setOpen(false); }} className="h-12 cursor-pointer gap-2.5 rounded-md border border-transparent px-2 data-[selected=true]:bg-secondary [&>svg:last-child]:size-3.5" style={{ color: option.color, borderColor: option.value === value ? `color-mix(in srgb, ${option.color} 35%, transparent)` : undefined }}>
               <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-secondary/60"><option.icon className="size-3.5" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{option.title}</span><span className="block truncate text-[11px] leading-4 text-muted-foreground">{option.description}</span></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{option.title}</span><span className="block truncate text-[11px] leading-4 text-muted-foreground">{needsProject(option) ? "Disponível em conversas de projeto" : option.description}</span></span>
             </CommandItem>)}
           </CommandGroup>)}
         </CommandList>

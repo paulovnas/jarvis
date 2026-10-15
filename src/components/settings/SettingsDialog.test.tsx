@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args?: unknown) => command === "get_web_search_config" || command === "get_vision_config" || command === "get_image_generation_config"
     ? Promise.resolve({ accountAlias: null })
     : command === "list_mcp_servers" ? mcpListMock()
+    : command === "get_library_snapshot" ? Promise.resolve({ workspaces: [], projects: [], conversations: [], selection: { workspaceId: null, projectId: null, conversationId: null }, globalDirectory: "/home/paulo/Jarvis" })
     : command === "list_skills" ? Promise.resolve({ includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] })
     : command === "list_hooks" ? Promise.resolve({ revision: 0, hooks: [], nativeHooks: [] })
     : command === "list_plugins" ? Promise.resolve({ revision: 0, marketplaces: [], available: [], installed: [], issues: [], appsAccountId: null })

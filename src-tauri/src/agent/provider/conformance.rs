@@ -237,6 +237,7 @@ async fn interrupted_turn_compacts_reloads_and_continues_through_the_transport()
             .unwrap();
     let session = Arc::new(Session {
         id: "fixture".into(),
+        project: "fixture-project".into(),
         journal: path,
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),

@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn backfill_activity(connection: &Connection, home: &Path) -> Result<(), LibraryError> {
     let rows = connection
         .prepare(
-            "SELECT id, project_id, created_at FROM conversations WHERE last_activity_at IS NULL",
+            "SELECT id, COALESCE(journal_project_id,project_id), created_at FROM conversations WHERE last_activity_at IS NULL",
         )?
         .query_map([], |row| {
             Ok((
@@ -85,7 +85,7 @@ pub(crate) fn sources(
             // Verify identity and header, without requiring the source checkout to
             // be mounted: a Dashboard remains useful for an offline project.
             let journal = read_conversation(connection, home, &item.id).ok()
-                .and_then(|_| session_path(home, project_id, &item.id, false).ok());
+                .and_then(|_| conversation_journal_path(connection, home, &item.id).ok());
             SessionSource { id: item.id, title: item.title, activity: item.last_activity_at, journal }
         }).collect())
     })

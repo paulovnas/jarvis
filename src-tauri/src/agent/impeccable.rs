@@ -475,6 +475,12 @@ pub(super) async fn execute(
     restricted: bool,
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
+    if session.global() {
+        return Err(AgentError::new(
+            "project_required",
+            "O Impeccable precisa de uma conversa vinculada a um projeto.",
+        ));
+    }
     let (verb, arguments) = arguments(&session.root, args)?;
     let mut live_binding = None;
     {

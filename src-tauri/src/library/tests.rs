@@ -216,6 +216,7 @@ fn fresh_library_is_empty_and_workspaces_are_only_named_groups() {
             projects: vec![],
             conversations: vec![],
             selection: Selection::default(),
+            global_directory: None,
         }
     );
     let created = insert_workspace(&mut connection, "  Pessoal  ").unwrap();
@@ -278,7 +279,7 @@ fn version_two_upgrade_preserves_onboarding_and_provider_accounts_without_seeds(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        29
+        30
     );
 }
 

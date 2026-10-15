@@ -574,7 +574,7 @@ impl Execution {
         self.role.id()
     }
     pub(super) fn secondary_model(&self) -> Result<Option<settings::ModelChoice>, AgentError> {
-        if super::companion_chat::is_global_session(&self.hub.root.id) && !self.image_generator() {
+        if self.hub.root.global_companion() && !self.image_generator() {
             return Ok(None);
         }
         let state = self
@@ -858,7 +858,7 @@ impl Execution {
     }
 
     pub(super) fn filter(&self, definitions: &mut Vec<Value>) {
-        if super::companion_chat::is_global_session(&self.hub.root.id) && !self.image_generator() {
+        if self.hub.root.global_companion() && !self.image_generator() {
             definitions.retain(|definition| {
                 definition["name"]
                     .as_str()
@@ -910,7 +910,7 @@ impl Execution {
         }
     }
     pub(super) fn allowed(&self, name: &str) -> bool {
-        if super::companion_chat::is_global_session(&self.hub.root.id) {
+        if self.hub.root.global_companion() {
             if !self.image_generator() {
                 return super::companion_chat::allowed_tool(name);
             }
@@ -1038,7 +1038,7 @@ impl Execution {
             && tool.args["processing"]["output_directory"]
                 .as_str()
                 .is_some_and(|path| {
-                    super::companion_chat::is_global_session(&self.hub.root.id)
+                    self.hub.root.global_companion()
                         || !dispatch::path_allowed(
                             &self.hub.root.root,
                             &json!({"path":path}),
@@ -1587,7 +1587,28 @@ pub(super) fn validate_options(
     conversation_id: &str,
 ) -> Result<(), AgentError> {
     options.executor.require_available()?;
-    if super::companion_chat::is_global_session(conversation_id) {
+    let global = library::conversation_project(state, home, conversation_id)?
+        == library::companion::GLOBAL_PROJECT_ID;
+    if global
+        && (options.manual_validation
+            || options.automatic_publication.is_some()
+            || options.custom_workflow_id.is_some()
+            || matches!(
+                options.workflow,
+                Some(
+                    Flow::Planned
+                        | Flow::Complete
+                        | Flow::Designer
+                        | Flow::Video
+                        | Flow::Publication
+                )
+            ))
+    {
+        return Err(invalid(
+            "Este fluxo precisa de uma conversa vinculada a um projeto.",
+        ));
+    }
+    if global && super::companion_chat::is_global_session(conversation_id) {
         if options.mode != Mode::Build
             || options.workflow != Some(Flow::Standard)
             || options.custom_workflow_id.is_some()
@@ -1648,7 +1669,18 @@ pub(super) fn validate_options(
                 custom::resolve(state, oauth, home, options)?;
             }
             (None, Some(_)) => {
-                custom::resolve_agent(state, oauth, home, options, conversation_id, false)?;
+                let agent =
+                    custom::resolve_agent(state, oauth, home, options, conversation_id, false)?;
+                if global
+                    && matches!(
+                        agent.native_role,
+                        Some(Role::Designer | Role::Video | Role::Github)
+                    )
+                {
+                    return Err(invalid(
+                        "Este agente precisa de uma conversa vinculada a um projeto.",
+                    ));
+                }
             }
             _ => return Err(invalid("Escolha um agente ou fluxo customizado válido.")),
         }
@@ -1734,10 +1766,10 @@ fn apply_root_model(
     options: &mut TurnOptions,
     profiles: &settings::ModelSettings,
     flow: Flow,
-    conversation_id: &str,
+    global_companion: bool,
 ) {
     // Global chat already resolved saved/explicit selection or its initial default.
-    if !super::companion_chat::is_global_session(conversation_id) {
+    if !global_companion {
         settings::apply(options, profiles, flow, flow.root());
     }
 }
@@ -1896,7 +1928,7 @@ pub(super) async fn run(
     session.update(true, |data| {
         data.turns.last_mut().unwrap().turn.options = options.clone();
     })?;
-    let profiles = if super::companion_chat::is_global_session(&session.id) {
+    let profiles = if session.global_companion() {
         BTreeMap::new()
     } else if flow == Flow::Custom {
         settings::chat::defaults(&env.0, &env.3, &session.id)?
@@ -1910,7 +1942,7 @@ pub(super) async fn run(
                 &mut data.turns.last_mut().unwrap().turn.options,
                 &profiles,
                 flow,
-                &session.id,
+                session.global_companion(),
             );
         }
     })?;

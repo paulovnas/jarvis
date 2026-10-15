@@ -15,12 +15,14 @@ export function LibraryItemMenu({
   onEdit,
   onDelete,
   onMove,
+  moveLabel = "Mover para outro espaço",
 }: {
   children: ReactElement;
   disabled: boolean;
   onEdit?: () => void;
   onDelete: () => void;
   onMove?: () => void;
+  moveLabel?: string;
 }) {
   if (disabled) return children;
   return (
@@ -39,7 +41,7 @@ export function LibraryItemMenu({
             </ContextMenuItem>
             <ContextMenuSeparator />
           </>}
-          {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />Mover para outro espaço</ContextMenuItem>}
+          {onMove && <ContextMenuItem className="cursor-pointer" onClick={onMove}><FolderInput />{moveLabel}</ContextMenuItem>}
           <ContextMenuItem variant="destructive" className="cursor-pointer" disabled={disabled} onClick={onDelete}>
             <Trash2 />
             Excluir

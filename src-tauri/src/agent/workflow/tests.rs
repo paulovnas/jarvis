@@ -160,6 +160,8 @@ fn global_image_worker_keeps_attachment_capabilities_without_inheriting_project_
     let hub_mut = Arc::get_mut(&mut hub).unwrap();
     Arc::get_mut(&mut hub_mut.root).unwrap().id =
         crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.into();
+    Arc::get_mut(&mut hub_mut.root).unwrap().project =
+        crate::library::companion::GLOBAL_PROJECT_ID.into();
     let execution = Execution {
         hub,
         id: "child".into(),
@@ -229,6 +231,13 @@ fn global_companion_validates_explicit_model_independently_of_a_retired_project_
     explicit.reasoning = Some("high".into());
     explicit.workflow = Some(Flow::Standard);
     let global_id = super::super::companion_chat::GLOBAL_CONVERSATION_ID;
+    state.with_connection(home.path(), |db| {
+        crate::library::companion::ensure_global(db, home.path())?;
+        db.execute("INSERT INTO workspaces(id,name) VALUES('test-workspace','Test workspace')", [])?;
+        db.execute("INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,'test-workspace','Test project',?2)", rusqlite::params!["b".repeat(32), home.path().to_string_lossy()])?;
+        db.execute("INSERT INTO conversations(id,project_id,title) VALUES(?1,?2,'Test conversation')", rusqlite::params!["a".repeat(32), "b".repeat(32)])?;
+        Ok::<_, crate::library::LibraryError>(())
+    }).unwrap();
     validate_options(&state, &oauth, home.path(), &explicit, global_id).unwrap();
     // An explicit per-chat choice also takes precedence over a retired agent default.
     validate_options(&state, &oauth, home.path(), &explicit, &"a".repeat(32)).unwrap();
@@ -265,18 +274,13 @@ fn global_companion_preserves_explicit_model_while_project_chat_uses_its_profile
     };
     let profiles = BTreeMap::from([(settings::key(Flow::Standard, Role::Builder), profile)]);
     let mut global = explicit.clone();
-    apply_root_model(
-        &mut global,
-        &profiles,
-        Flow::Standard,
-        super::super::companion_chat::GLOBAL_CONVERSATION_ID,
-    );
+    apply_root_model(&mut global, &profiles, Flow::Standard, true);
     assert_eq!(global.executor, explicit.executor);
     assert_eq!(global.account, explicit.account);
     assert_eq!(global.model, explicit.model);
     assert_eq!(global.reasoning, explicit.reasoning);
     let mut project = explicit;
-    apply_root_model(&mut project, &profiles, Flow::Standard, &"a".repeat(32));
+    apply_root_model(&mut project, &profiles, Flow::Standard, false);
     assert_eq!(project.executor, crate::claude::Executor::Jarvis);
     assert_eq!(project.account, "configured-account");
     assert_eq!(project.model, "configured-model");
@@ -288,6 +292,8 @@ fn global_companion_workflow_never_adds_project_tools() {
     let hub_mut = Arc::get_mut(&mut hub).unwrap();
     Arc::get_mut(&mut hub_mut.root).unwrap().id =
         crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.to_owned();
+    Arc::get_mut(&mut hub_mut.root).unwrap().project =
+        crate::library::companion::GLOBAL_PROJECT_ID.into();
     // Old manifests can still contain a project profile after reopening. Its
     // fallback is not an authorization to change the globally selected model.
     let mut retired: settings::ModelChoice = serde_json::from_value(json!({

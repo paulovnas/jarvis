@@ -454,9 +454,15 @@ impl SystemState {
     ) -> Result<(), String> {
         let _edit = self.edit.lock().await;
         {
-            let mut store = self.store.lock().map_err(|_| "Preferências indisponíveis.")?;
-            let store = store.as_mut().ok_or("Preferências ainda não carregadas.")?
-                .as_mut().map_err(|error| error.clone())?;
+            let mut store = self
+                .store
+                .lock()
+                .map_err(|_| "Preferências indisponíveis.")?;
+            let store = store
+                .as_mut()
+                .ok_or("Preferências ainda não carregadas.")?
+                .as_mut()
+                .map_err(|error| error.clone())?;
             let mut preferences = store.preferences.clone();
             preferences.computer_use_mode = mode;
             store.save(preferences)?;
@@ -735,11 +741,6 @@ pub(crate) fn notify(
     event_id: &str,
     notice: Notice,
 ) {
-    // The hidden general conversation is observed and announced by Jarvito.
-    // Main navigation cannot select it to acknowledge an unread cursor.
-    if conversation_id == crate::library::companion::GLOBAL_CONVERSATION_ID {
-        return;
-    }
     let system = app.state::<SystemState>();
     // OS banners and in-app unread marks share the event source, not preferences.
     let event_key = format!("{conversation_id}/{event_id}/{notice:?}");

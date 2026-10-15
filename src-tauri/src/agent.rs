@@ -655,6 +655,7 @@ impl SessionData {
 }
 struct Session {
     id: String,
+    project: String,
     journal: PathBuf,
     root: PathBuf,
     journal_maintenance: Arc<AtomicBool>,
@@ -673,11 +674,13 @@ impl Session {
         ))
     }
     fn project_id(&self) -> Result<&str, AgentError> {
-        self.journal
-            .parent()
-            .and_then(|path| path.file_name())
-            .and_then(|id| id.to_str())
-            .ok_or_else(AgentError::storage)
+        Ok(&self.project)
+    }
+    fn global(&self) -> bool {
+        self.project == library::companion::GLOBAL_PROJECT_ID
+    }
+    fn global_companion(&self) -> bool {
+        self.global() && companion_chat::is_global_session(&self.id)
     }
     fn checkpoint(
         &self,
@@ -1468,7 +1471,7 @@ impl AgentState {
                 sessions
                     .values()
                     .filter_map(|session| {
-                        if companion_chat::is_global_session(&session.id) {
+                        if session.global_companion() {
                             return None;
                         }
                         let data = session.data.lock().ok()?;
@@ -1611,6 +1614,182 @@ impl AgentState {
         })
     }
 
+    pub(crate) fn move_global_conversation(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: &str,
+        project_id: &str,
+    ) -> Result<library::LibrarySnapshot, library::LibraryError> {
+        let internal = || {
+            library::LibraryError::new(
+                "agent_state",
+                "Não foi possível verificar as execuções. Tente novamente.",
+            )
+        };
+        let gate = self.session_gate(id).map_err(|_| internal())?;
+        let _gate = gate.lock().map_err(|_| internal())?;
+        let mut sessions = self.sessions.lock().map_err(|_| internal())?;
+        let session = sessions.get(id).cloned();
+        let mut data = session
+            .as_ref()
+            .map(|session| session.data.lock().map_err(|_| internal()))
+            .transpose()?;
+        if data.as_ref().is_some_and(|data| {
+            data.active.is_some()
+                || data.compacting
+                || data.manual_compaction
+                || !data.extras.queue.is_empty()
+        }) {
+            return Err(library::LibraryError::new(
+                "active_conversation",
+                "Interrompa a conversa e esvazie a fila antes de movê-la para um projeto.",
+            ));
+        }
+        let _lease = self.scope_change_lease(state, home, id, session.is_some())?;
+        if self
+            .terminals
+            .list(library::companion::GLOBAL_PROJECT_ID)
+            .map_err(|_| internal())?
+            .iter()
+            .any(|terminal| {
+                terminal.conversation_id.as_deref() == Some(id) && terminal.ended_at.is_none()
+            })
+        {
+            return Err(library::LibraryError::new(
+                "active_conversation",
+                "Encerre os processos desta conversa antes de movê-la.",
+            ));
+        }
+        let result = state.with_connection(home, |db| {
+            library::global::move_conversation(db, home, id, project_id)
+        })?;
+        if let Some(data) = &mut data {
+            data.storage_failed = true;
+        }
+        sessions.remove(id);
+        self.transports.invalidate(id);
+        Ok(result)
+    }
+
+    pub(crate) fn change_global_directory(
+        &self,
+        state: &AppState,
+        home: &Path,
+        directory: &Path,
+    ) -> Result<library::LibrarySnapshot, library::LibraryError> {
+        let internal = || {
+            library::LibraryError::new(
+                "agent_state",
+                "Não foi possível verificar as execuções. Tente novamente.",
+            )
+        };
+        let ids = state.with_connection(home, |db| {
+            db.prepare("SELECT id FROM conversations WHERE project_id=?1 ORDER BY id")?
+                .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(library::LibraryError::from)
+        })?;
+        let gates = self
+            .session_gates(ids.iter().map(String::as_str))
+            .map_err(|_| internal())?;
+        let _gates = gates
+            .iter()
+            .map(|gate| gate.lock().map_err(|_| internal()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut sessions = self.sessions.lock().map_err(|_| internal())?;
+        let targets: Vec<_> = ids
+            .iter()
+            .filter_map(|id| sessions.get(id).cloned())
+            .collect();
+        let mut data = targets
+            .iter()
+            .map(|session| session.data.lock().map_err(|_| internal()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if data.iter().any(|data| {
+            data.active.is_some()
+                || data.compacting
+                || data.manual_compaction
+                || !data.extras.queue.is_empty()
+        }) {
+            return Err(library::LibraryError::new(
+                "active_conversation",
+                "Interrompa as conversas globais e esvazie as filas antes de alterar a pasta.",
+            ));
+        }
+        let _leases = ids
+            .iter()
+            .map(|id| self.scope_change_lease(state, home, id, sessions.contains_key(id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        if self
+            .terminals
+            .list(library::companion::GLOBAL_PROJECT_ID)
+            .map_err(|_| internal())?
+            .iter()
+            .any(|terminal| terminal.ended_at.is_none())
+        {
+            return Err(library::LibraryError::new(
+                "active_conversation",
+                "Encerre os terminais e processos globais antes de alterar a pasta.",
+            ));
+        }
+        let result = state.with_connection(home, |db| {
+            let current = db
+                .prepare("SELECT id FROM conversations WHERE project_id=?1 ORDER BY id")?
+                .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            if current != ids {
+                return Err(library::LibraryError::new(
+                    "library_changed",
+                    "As conversas globais mudaram. Tente alterar a pasta novamente.",
+                ));
+            }
+            library::global::change_directory(db, directory)
+        })?;
+        for data in &mut data {
+            data.storage_failed = true;
+        }
+        for id in ids {
+            sessions.remove(&id);
+            self.transports.invalidate(&id);
+        }
+        Ok(result)
+    }
+
+    fn scope_change_lease(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: &str,
+        cached: bool,
+    ) -> Result<Option<session_writer::WriterLease>, library::LibraryError> {
+        let journal =
+            state.with_connection(home, |db| library::conversation_journal_path(db, home, id))?;
+        let lease = if cached {
+            None
+        } else {
+            Some(session_writer::WriterLease::acquire(&journal).map_err(|_| {
+                library::LibraryError::new(
+                    "active_conversation",
+                    "A conversa está em uso. Encerre a execução antes de alterar sua pasta.",
+                )
+            })?)
+        };
+        if self.histories.has_scope_work(&journal).map_err(|_| {
+            library::LibraryError::new(
+                "invalid_session",
+                "Não foi possível verificar o histórico da conversa.",
+            )
+        })? {
+            return Err(library::LibraryError::new("active_conversation", "Retome ou interrompa as execuções pendentes e esvazie a fila antes de alterar a pasta da conversa."));
+        }
+        Ok(lease)
+    }
+
     fn activity(&self) -> Result<Vec<AgentActivity>, AgentError> {
         let sessions = self.sessions.lock().map_err(|_| AgentError::internal())?;
         sessions
@@ -1733,6 +1912,7 @@ impl AgentState {
         )?;
         let session = Arc::new(Session {
             id: id.into(),
+            project: library::conversation_project(state, home, id)?,
             journal: path,
             root,
             journal_maintenance: self.journal_maintenance.clone(),
@@ -2143,7 +2323,10 @@ async fn start_agent_turn_admitted(
     let run_app = app.clone();
     let run_state = state.clone();
     let run_home = home.clone();
-    if !companion_chat::is_global_session(&conversation_id) {
+    if !(companion_chat::is_global_session(&conversation_id)
+        && library::conversation_project(&state, &home, &conversation_id)?
+            == library::companion::GLOBAL_PROJECT_ID)
+    {
         app.state::<crate::core::CoreState>().require_ready(&home)?;
     }
     let mcp = app.state::<crate::mcp::McpState>().inner().clone();
@@ -2169,7 +2352,7 @@ async fn start_agent_turn_admitted(
         let mut parts = parts.unwrap_or_default();
         attachments::validate_parts(&home, &conversation_id, &mut parts)?;
         let (content, parts) = skill_input::normalize(&home, &session.root, content, parts)?;
-        if !companion_chat::is_global_session(&conversation_id) {
+        if !session.global_companion() {
             workflow::settings::chat::remember(&state, &home, &conversation_id, &options)?;
             let _ = app.emit(
                 "chat-agent-models:changed",
@@ -2878,10 +3061,25 @@ async fn authorize_declared(
         return Err(AgentError::cancelled());
     }
     let computer_input = computer::mutating(&request.tool.name);
-    let computer_yolo = computer_input && request.computer.as_ref().is_some_and(|state| state.mode() == computer::ComputerMode::Yolo);
+    let computer_yolo = computer_input
+        && request
+            .computer
+            .as_ref()
+            .is_some_and(|state| state.mode() == computer::ComputerMode::Yolo);
     // Missing OS access is explained by the computer preflight, before asking to review an action.
-    if computer_input && request.computer.as_ref().is_some_and(|state| state.preflight(request.tool).is_err()) { return Ok(true); }
-    let user_required = if computer_input { !computer_yolo } else { approval == tool_contract::ApprovalPolicy::UserRequired };
+    if computer_input
+        && request
+            .computer
+            .as_ref()
+            .is_some_and(|state| state.preflight(request.tool).is_err())
+    {
+        return Ok(true);
+    }
+    let user_required = if computer_input {
+        !computer_yolo
+    } else {
+        approval == tool_contract::ApprovalPolicy::UserRequired
+    };
     if user_required {
         request.policy = None;
     }
@@ -2899,13 +3097,14 @@ async fn authorize_declared(
                 | "jarvis_propose_plugin"
                 | "jarvis_propose_project_instructions"
         );
-    let execution_preauthorized = computer_yolo || !user_required
-        && (request.options.approval_mode == ApprovalMode::Yolo
-            || (!request.explicit_video_approval
-                && (approval == tool_contract::ApprovalPolicy::Never
-                    || (approval != tool_contract::ApprovalPolicy::Always
-                        && request.options.mode == Mode::Plan
-                        && !mutating_mcp))));
+    let execution_preauthorized = computer_yolo
+        || !user_required
+            && (request.options.approval_mode == ApprovalMode::Yolo
+                || (!request.explicit_video_approval
+                    && (approval == tool_contract::ApprovalPolicy::Never
+                        || (approval != tool_contract::ApprovalPolicy::Always
+                            && request.options.mode == Mode::Plan
+                            && !mutating_mcp))));
     if let Some(hooks) = request
         .manual_hooks
         .filter(|_| authoring_review || !execution_preauthorized)
@@ -3203,11 +3402,11 @@ fn run_turn<'a>(
     execution: Option<workflow::Execution>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + 'a>> {
     Box::pin(async move {
-        let mut hooks = if companion_chat::is_global_session(
-            execution
-                .as_ref()
-                .map_or(&session.id, |exec| &exec.root().id),
-        ) {
+        let mut hooks = if execution
+            .as_ref()
+            .map_or(session, |exec| exec.root())
+            .global_companion()
+        {
             crate::hooks::runtime::Runtime::inactive()
         } else {
             let turn_id = session
@@ -3335,11 +3534,10 @@ fn run_turn_once<'a>(
         let image_specialist = execution
             .as_ref()
             .is_some_and(workflow::Execution::image_generator);
-        let global_companion = companion_chat::is_global_session(
-            execution
-                .as_ref()
-                .map_or(&session.id, |exec| &exec.root().id),
-        );
+        let global_companion = execution
+            .as_ref()
+            .map_or(session, |exec| exec.root())
+            .global_companion();
         let (turn_id, options, initial_items, initial_bytes) = {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let current = data.turns.last().ok_or_else(AgentError::internal)?;
@@ -3487,11 +3685,18 @@ fn run_turn_once<'a>(
         let owner = execution.as_ref().map_or(session, |exec| exec.root());
         let project_id = owner.project_id()?.to_owned();
         let publication_settings = publication::load(state, home, &project_id)?;
-        let repository_context = crate::library::repositories::prompt(state, home, &project_id)?;
+        let repository_context = if owner.global() {
+            String::new()
+        } else {
+            crate::library::repositories::prompt(state, home, &project_id)?
+        };
         let direct_tasks = !global_companion && options.direct() && owner.id == session.id;
         let mut core_activities = Vec::new();
-        let design_repository_paths =
-            crate::library::repositories::configured_paths(state, home, &project_id)?;
+        let design_repository_paths = if owner.global() {
+            Vec::new()
+        } else {
+            crate::library::repositories::configured_paths(state, home, &project_id)?
+        };
         let design = if execution
             .as_ref()
             .is_some_and(|exec| exec.design_resources())
@@ -3520,8 +3725,7 @@ fn run_turn_once<'a>(
             .map_or(options.mode == Mode::Plan, |exec| {
                 exec.role_mode() == Mode::Plan
             });
-        let beads = if (direct_tasks && !image_specialist) || publication_agent || global_companion
-        {
+        let beads = if (direct_tasks && !image_specialist) || publication_agent || owner.global() {
             None
         } else {
             Some(crate::core::beads::Beads::new(
@@ -3531,7 +3735,7 @@ fn run_turn_once<'a>(
                 image_specialist || options.mode == Mode::Plan,
             )?)
         };
-        let project_beads = if !global_companion && (direct_tasks || image_specialist) {
+        let project_beads = if !owner.global() && (direct_tasks || image_specialist) {
             crate::core::beads::ProjectBeads::open(home, &session.root)?
         } else {
             None
@@ -3707,7 +3911,7 @@ fn run_turn_once<'a>(
                     core_activities.push(activity);
                 }
             }
-            if !global_companion {
+            if !owner.global() {
                 learning::prepare(session, owner, state, home).await;
             }
             let mut instructions =
@@ -3724,7 +3928,7 @@ fn run_turn_once<'a>(
                 if project_beads.is_some() {
                     instructions.push_str(crate::core::beads::PROJECT_INSTRUCTIONS);
                 }
-            } else if !publication_agent {
+            } else if !publication_agent && !owner.global() {
                 instructions.push_str(crate::core::beads::INSTRUCTIONS);
             }
             if !publication_agent {
@@ -3870,6 +4074,9 @@ fn run_turn_once<'a>(
             if let Some(exec) = &execution {
                 exec.filter(&mut definitions);
             }
+            if owner.global() {
+                library::global::filter_tools(&mut definitions);
+            }
             mcp_clients
                 .ensure_scope_visible(&definitions)
                 .map_err(|error| AgentError::new(error.code, &error.message))?;
@@ -3878,7 +4085,10 @@ fn run_turn_once<'a>(
             }
             context.hooks.before_agent(&mut instructions);
             tools::append_response_language(&mut instructions, response_language);
-            if definitions.iter().any(|definition| definition["name"] == "computer_status") {
+            if definitions
+                .iter()
+                .any(|definition| definition["name"] == "computer_status")
+            {
                 if let Some(app) = execution.as_ref().and_then(workflow::Execution::native_app) {
                     instructions.push_str(&computer::context(app)?);
                 }
@@ -4666,7 +4876,12 @@ fn run_turn_once<'a>(
                                     session,
                                     tool: &tool,
                                     options: &options,
-                                    computer: execution.as_ref().and_then(workflow::Execution::native_app).map(|app| app.state::<computer::ComputerState>().inner().clone()),
+                                    computer: execution
+                                        .as_ref()
+                                        .and_then(workflow::Execution::native_app)
+                                        .map(|app| {
+                                            app.state::<computer::ComputerState>().inner().clone()
+                                        }),
                                     policy: tool_policy.clone(),
                                     sandbox: sandbox_plan.as_ref(),
                                     project_id: Some(&project_id),

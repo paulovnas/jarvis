@@ -1,3 +1,4 @@
+import { JARVITO_CHAT_ID } from "@/core/companion";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -332,7 +333,7 @@ export function Companion() {
   const openConversation = useCallback(async (target: { conversationId: string; agentId?: string | null }) => {
     const accessed = items.find(item => item.conversationId === target.conversationId && item.agentId === (target.agentId ?? null));
     try {
-      if (accessed?.global) {
+      if (accessed?.global && accessed.conversationId === JARVITO_CHAT_ID) {
         if (!await chatPane.current?.openGeneral(accessed.conversationId, accessed.revision)) return;
         setTab("chat");
         if (!geometry.expanded) await expand(true);
@@ -440,7 +441,7 @@ export function Companion() {
               {!snapshot && !error && <div role="status" aria-label="Carregando atividades" className="space-y-2 py-3"><Skeleton className="h-3 w-28" /><Skeleton className="h-3 w-40" /><Skeleton className="h-3 w-32" /></div>}
               {snapshot && !attentive.length && <div className="flex h-full flex-col justify-center gap-1"><h2 className="text-xs font-medium">Tudo tranquilo por aqui</h2><p className="text-[11px] leading-4 text-muted-foreground">Posso acompanhar seus projetos e conversar com você.</p><Button variant="ghost" size="sm" className="mt-1 h-6 w-fit cursor-pointer px-0 text-[10px] text-primary" onClick={() => { chatPane.current?.startGeneral(); setTab("chat"); }}>Vamos conversar<MessageCircle className="size-3" /></Button></div>}
               {focused && <>
-                <div className="flex items-center gap-1.5"><span aria-hidden="true" className={`companion-state-dot ${statusColor[focused.status]}`} /><p className="min-w-0 flex-1 truncate text-[11px] font-medium">{focused.projectName}</p><span className="shrink-0 font-mono text-[9px] text-muted-foreground">{activeDuration(focused)}</span><Hint content={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"}><Button size="icon-xs" variant="ghost" aria-label={focused.global ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"} className="companion-jump shrink-0 cursor-pointer" onClick={() => { void openConversation(focused); }}><ArrowUpRight className="size-3" /></Button></Hint></div>
+                <div className="flex items-center gap-1.5"><span aria-hidden="true" className={`companion-state-dot ${statusColor[focused.status]}`} /><p className="min-w-0 flex-1 truncate text-[11px] font-medium">{focused.projectName}</p><span className="shrink-0 font-mono text-[9px] text-muted-foreground">{activeDuration(focused)}</span><Hint content={focused.global && focused.conversationId === JARVITO_CHAT_ID ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"}><Button size="icon-xs" variant="ghost" aria-label={focused.global && focused.conversationId === JARVITO_CHAT_ID ? "Ver conversa com Jarvito" : "Abrir conversa no Jarvis"} className="companion-jump shrink-0 cursor-pointer" onClick={() => { void openConversation(focused); }}><ArrowUpRight className="size-3" /></Button></Hint></div>
                 <div className="flex min-w-0 items-center gap-1">
                   <h2 className="min-w-0 flex-1 truncate text-[12px] font-semibold">{focused.title}</h2>
                   {attentive.length > 1 && <Select open={activityPicker && geometry.expanded && !closing} value={companionItemKey(focused)} onOpenChange={setActivityPicker} onValueChange={value => { if (typeof value === "string") setSelectedKey(value); }}><SelectTrigger aria-label="Conversa ou agente" size="sm" className="companion-activity-select cursor-pointer"><SelectValue><span className="sr-only">{focused.title}</span></SelectValue></SelectTrigger><SelectContent className="max-h-[calc(100vh-100px)] max-w-[calc(100vw-24px)]">{attentive.map(item => <SelectItem key={companionItemKey(item)} value={companionItemKey(item)} className="cursor-pointer py-2 text-[11px]"><span className="flex min-w-0 flex-col gap-1"><span className="truncate font-medium">{item.title}</span><span className="truncate font-mono text-[9px] text-muted-foreground">{item.projectName} · {roleLabel(item.role)}{item.agentId ? " · subagente" : ""} · {companionStatusLabels[item.status]}</span></span></SelectItem>)}</SelectContent></Select>}

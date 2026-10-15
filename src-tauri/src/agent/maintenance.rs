@@ -160,7 +160,7 @@ pub async fn compact_agent_context(
             .unwrap_or_else(|| "manual_compaction".into());
         (super::telemetry::trace(&session.id, &turn_id), turn_id)
     };
-    let manual_hooks = if companion_chat::is_global_session(&session.id) {
+    let manual_hooks = if session.global_companion() {
         crate::hooks::runtime::Runtime::inactive()
     } else {
         crate::hooks::runtime::Runtime::load(&skill_home, &session.root, &session.id, &turn_id)

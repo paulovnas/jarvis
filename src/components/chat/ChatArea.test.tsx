@@ -66,6 +66,19 @@ describe("Persistent live conversation", () => {
       return () => { set.delete(callback); };
     });
   });
+  it("opens the shared Jarvito history without a project and keeps project launchers unavailable", async () => {
+    const id = "00000000000000000000000000000003";
+    const library: LibrarySnapshot = { ...populatedLibrary(), projects: [], globalDirectory: "C:/Users/Paulo/Jarvis", conversations: [{ id, projectId: null, title: "Jarvito", createdAt: 1 }], selection: { workspaceId: "w1", projectId: null, conversationId: id } };
+    const snapshot = { ...emptyChat(), conversationId: id, turns: [{ ...savedTurn(), steps: [{ ...savedTurn().steps[0], text: "Resposta compartilhada do Jarvito" }] }] };
+    call.mockResolvedValue(snapshot);
+    render(<TestChat library={library} />);
+    expect(await screen.findByText("Resposta compartilhada do Jarvito")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Jarvito" })).toBeVisible();
+    expect(screen.getByText("Global")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Ativar Impeccable Live" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nova requisição HTTP" })).not.toBeInTheDocument();
+    expect(call.mock.calls.some(([command]) => command === "get_impeccable_live" || command === "get_http_snapshot")).toBe(false);
+  });
   it("keeps native computer control in the composer popover and stops the active agent with it", async () => {
     const user = userEvent.setup();
     const running = { ...emptyChat(), activeTurnId: "native-turn", turns: [{ ...savedTurn(), id: "native-turn", status: "running" as const }] };

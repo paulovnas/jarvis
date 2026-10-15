@@ -345,15 +345,17 @@ fn read_chat(
     id: &str,
 ) -> Result<Chat, AgentError> {
     validate_id(id)?;
-    let global = is_global_session(id);
     let scope = state.with_connection(home, |db| {
-        if global {
+        if is_global_session(id) {
             library::companion::ensure_global(db, home)?;
+        }
+        if library::global::is_global(db, id)? {
             Ok::<_, AgentError>(None)
         } else {
             Ok(Some(library::companion::conversation_scope(db, id)?))
         }
     })?;
+    let global = scope.is_none();
     let chat = runtime.read_chat(state, home, id)?;
     let mut options = match saved_options(&chat) {
         Some(options) => Some(options),
@@ -838,7 +840,7 @@ fn clear_global_session(
     runtime: &AgentState,
     session: &Session,
 ) -> Result<ChatSnapshot, AgentError> {
-    if !is_global_session(&session.id) {
+    if !session.global_companion() {
         return Err(invalid(
             "Apenas a conversa geral do Jarvito pode ser limpa.",
         ));
@@ -1147,7 +1149,7 @@ pub(super) async fn execute(
     tool: &ToolCall,
     signal: watch::Receiver<bool>,
 ) -> Result<Value, AgentError> {
-    if !is_global_session(&session.id) || !allowed_tool(&tool.name) || tool.name == "ask_user" {
+    if !session.global_companion() || !allowed_tool(&tool.name) || tool.name == "ask_user" {
         return Err(invalid(
             "Esta ferramenta só está disponível na conversa global do Jarvito.",
         ));
@@ -1693,6 +1695,25 @@ mod tests {
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.turns[0].user, "Histórico preservado");
         assert_eq!(std::fs::read(backup).unwrap(), original);
+    }
+
+    #[test]
+    fn clearing_migrated_jarvito_chat_preserves_its_history() {
+        let fixture = super::super::tests::Fixture::new();
+        let mut session = super::super::tests::session_with_id(&fixture, GLOBAL_CONVERSATION_ID);
+        Arc::get_mut(&mut session).unwrap().project = "migrated-project".into();
+        session
+            .reserve("Histórico migrado".into(), base_options())
+            .unwrap();
+        finish(&session, Ok(()));
+        session.writer.flush().unwrap();
+        let original = std::fs::read(&session.journal).unwrap();
+        assert!(clear_global_session(&AgentState::default(), &session).is_err());
+        assert_eq!(std::fs::read(&session.journal).unwrap(), original);
+        assert_eq!(
+            session.snapshot().unwrap().turns[0].user,
+            "Histórico migrado"
+        );
     }
 
     #[test]

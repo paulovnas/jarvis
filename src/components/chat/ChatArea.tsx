@@ -1,3 +1,4 @@
+import { JARVITO_CHAT_ID } from "@/core/companion";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FolderGit2, Globe, MessageSquare, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -39,19 +40,23 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const snapshot = chat.snapshot;
   const chatModels = useChatAgentModels(context.conversation.id);
   const [retryChoice, setRetryChoice] = useState<ExecutionChoice | null>(null);
-  useVideoReady(context.project.id, context.conversation.id, files, snapshot);
-  const http = useHttpClient(context.conversation.id, context.project.id, !!snapshot, httpDrafts);
+  const projectId = context.project?.id ?? "";
+  const directory = context.project?.path ?? context.directory;
+  const global = context.conversation.projectId === null;
+  useVideoReady(projectId, context.conversation.id, files, snapshot);
+  const http = useHttpClient(context.conversation.id, projectId, !!snapshot && !global, httpDrafts);
   const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
   const browser = useBrowser(context.conversation.id, () => { files?.select(null); http.select(null); }, !!snapshot);
   const activeBrowser = browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId);
   const liveOptions: TurnOptions | undefined = retryChoice ? { ...retryChoice, mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } : undefined;
   const attention = [snapshot?.pendingApproval?.tool.id, snapshot?.pendingQuestion?.toolId, snapshot?.pendingAuthoring?.toolId, ...(workflow?.data?.agents ?? []).flatMap(agent => [agent.pendingApproval?.tool.id, agent.pendingQuestion?.toolId, agent.pendingAuthoring?.toolId])].filter(Boolean).join("|");
-  const designLive = useImpeccableLive(context.conversation.id, !!snapshot, { options: liveOptions, url: activeBrowser?.url, tabId: activeBrowser?.id, canResume: !!liveOptions && !chat.compacting && !attention, blockedReason: attention ? "Responda à solicitação no chat para continuar a alteração Live." : undefined });
+  const designLive = useImpeccableLive(context.conversation.id, !!snapshot && !global, { options: liveOptions, url: activeBrowser?.url, tabId: activeBrowser?.id, canResume: !!liveOptions && !chat.compacting && !attention && !global, blockedReason: attention ? "Responda à solicitação no chat para continuar a alteração Live." : undefined });
   const currentDesigner = useRef({ designLive, liveOptions, browser, files, http });
   useEffect(() => { currentDesigner.current = { designLive, liveOptions, browser, files, http }; });
   const { status: liveStatus, active: liveActive, loaded: liveLoaded, busy: liveBusy } = designLive;
   const canResumeLive = !!liveOptions && !chat.compacting && !attention;
   useEffect(() => {
+    if (global) { onDesignerChange?.(null); return; }
     onDesignerChange?.({
       conversationId: context.conversation.id,
       live: {
@@ -72,7 +77,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
       },
       onShowChat: () => { const current = currentDesigner.current; current.browser.select(null); current.files?.select(null); current.http.select(null); },
     });
-  }, [onDesignerChange, context.conversation.id, liveStatus, liveActive, liveLoaded, liveBusy, canResumeLive, attention]);
+  }, [onDesignerChange, context.conversation.id, liveStatus, liveActive, liveLoaded, liveBusy, canResumeLive, attention, global]);
   useEffect(() => () => { onDesignerChange?.(null); }, [onDesignerChange, context.conversation.id]);
   const liveBrowser = !!activeBrowser && (activeBrowser.id === designLive.status.tabId || (!designLive.status.tabId && !!designLive.status.url && activeBrowser.url === designLive.status.url));
   const previousAttention = useRef("");
@@ -107,7 +112,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const liveBanner = liveBrowser && attention && <Alert role="status" aria-label="Solicitação pendente no Live" className="mx-3 mb-2 flex w-auto items-center justify-between gap-3 py-2"><AlertDescription className="text-xs">Uma solicitação precisa da sua resposta para continuar.</AlertDescription><Button size="sm" variant="outline" className="h-7 shrink-0 cursor-pointer text-xs" onClick={() => browser.select(null)}>Responder no chat</Button></Alert>;
   const openHttp = () => { files?.select(null); browser.select(null); void http.open(); };
   const browserLauncher = embeddedBrowser && <Hint content="Abrir navegador"><Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button></Hint>;
-  const httpLauncher = <Hint content="Nova requisição HTTP"><Button type="button" variant="ghost" size="icon" aria-label="Nova requisição HTTP" disabled={!!http.busy} onClick={openHttp} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-green"><Send className="size-3.5" /></Button></Hint>;
+  const httpLauncher = !global && <Hint content="Nova requisição HTTP"><Button type="button" variant="ghost" size="icon" aria-label="Nova requisição HTTP" disabled={!!http.busy} onClick={openHttp} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-green"><Send className="size-3.5" /></Button></Hint>;
   const activeTurn = snapshot.activeTurnId
     ? chat.pendingTurn?.id === snapshot.activeTurnId
       ? chat.pendingTurn
@@ -119,17 +124,17 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     {chat.error && <Alert className="mb-3"><AlertTitle>Atualizações da conversa indisponíveis</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><p>{chat.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={chat.retry}>Tentar novamente</Button></AlertDescription></Alert>}
     {activeTurn && <ActiveExecutionStatus turn={activeTurn} waitingForUser={!!attention} />}
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
-    {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.tool.id} request={snapshot.pendingApproval} projectPath={context.project.path} conversationId={context.conversation.id} onAnswer={chat.approve} />}
+    {snapshot.pendingApproval && <ToolApproval key={snapshot.pendingApproval.tool.id} request={snapshot.pendingApproval} projectPath={directory ?? ""} conversationId={context.conversation.id} onAnswer={chat.approve} />}
     {snapshot.pendingQuestion && <QuestionCard key={questionKey(context.conversation.id, snapshot.pendingQuestion)} request={snapshot.pendingQuestion} drafts={questionDrafts} draftKey={questionKey(context.conversation.id, snapshot.pendingQuestion)} onAnswer={chat.answerQuestion} onInteract={chat.pauseQuestion} />}
     {snapshot.pendingAuthoring && <AuthoringApprovalDrawer key={`${snapshot.pendingAuthoring.turnId}:${snapshot.pendingAuthoring.toolId}`} request={snapshot.pendingAuthoring} onAnswer={(approved, note, values) => chat.answerAuthoring(snapshot.pendingAuthoring!, approved, note, values)} />}
-    <WorkerRequests conversationId={context.conversation.id} projectPath={context.project.path} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
-    <ChatComposer computerControl={<ComputerUseSession key={context.conversation.id} conversationId={context.conversation.id} onStop={chat.stop} />} designLive={designLive} liveUrl={browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId)?.url} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} historySnapshot={snapshot} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
+    <WorkerRequests conversationId={context.conversation.id} projectPath={directory ?? ""} agents={workflow?.data?.agents ?? []} drafts={questionDrafts} />
+    <ChatComposer computerControl={<ComputerUseSession key={context.conversation.id} conversationId={context.conversation.id} onStop={chat.stop} />} projectless={global} companion={global && context.conversation.id === JARVITO_CHAT_ID} designLive={global ? undefined : designLive} liveUrl={browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId)?.url} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={global ? undefined : openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} historySnapshot={snapshot} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
   return <FileWorkspace files={files} browser={browser} http={http} liveTabId={designLive.active ? designLive.status.tabId : null} browserBanner={liveBanner} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
-        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} retryChoice={retryChoice} projectId={context.project.id} onLatestVisibility={onLatestVisibility} />}
+        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} retryChoice={retryChoice} projectId={context.project?.id} onLatestVisibility={onLatestVisibility} />}
       </div>
       <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
         <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">
@@ -155,16 +160,17 @@ export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefre
   const project = library?.projects.find(item => item.id === library.selection.projectId);
   const workspace = library?.workspaces.find(item => item.id === project?.workspaceId);
   const conversation = library?.conversations.find(item => item.id === id);
+  const global = conversation?.projectId === null;
   return <main aria-label="Conversa" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
       {leftToggle}
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"><FolderGit2 aria-hidden="true" className="size-4" /></div>
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">{global ? <MessageSquare aria-hidden="true" className="size-4" /> : <FolderGit2 aria-hidden="true" className="size-4" />}</div>
       <div className="min-w-0 flex-1">
-        <Hint content={project?.path}><p className="mb-1 truncate font-mono text-[10px] text-muted-foreground">{workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p></Hint>
+        <Hint content={project?.path ?? library?.globalDirectory}><p className="mb-1 truncate font-mono text-[10px] text-muted-foreground">{global ? "Global" : workspace?.name ?? "Jarvis"}{project && <> <span className="px-1 text-muted-foreground/50">/</span> {project.name}</>}</p></Hint>
         {conversation && <h1 className="truncate text-sm font-medium">{conversation.title}</h1>}
       </div>
       {rightToggle}
     </header>
-    {!library ? <ConversationSkeleton /> : id && project && workspace && conversation ? <ConversationView key={id} httpDrafts={httpDrafts} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace, project, conversation }} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} files={files} onDesignerChange={onDesignerChange} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um espaço para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
+    {!library ? <ConversationSkeleton /> : id && conversation && (global || project && workspace) ? <ConversationView key={`${id}:${conversation.projectId ?? "global"}:${global ? library.globalDirectory : ""}`} httpDrafts={httpDrafts} drafts={drafts} questionDrafts={questionDrafts} context={{ workspace: workspace ?? null, project: project ?? null, conversation, directory: library.globalDirectory }} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} chat={chat} workflow={workflow} agentModels={agentModels} onLatestVisibility={onLatestVisibility} files={files} onDesignerChange={onDesignerChange} /> : <Empty className="flex-1"><EmptyHeader><EmptyMedia variant="icon"><MessageSquare /></EmptyMedia><EmptyTitle>{project ? "Inicie uma conversa" : "Seu próximo projeto começa aqui"}</EmptyTitle><EmptyDescription>{project ? `Crie ou selecione uma conversa em ${project.name} pela barra lateral.` : "Selecione um projeto na barra lateral ou crie um espaço para organizar seu trabalho."}</EmptyDescription></EmptyHeader></Empty>}
   </main>;
 }

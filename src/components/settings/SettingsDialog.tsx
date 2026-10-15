@@ -1,3 +1,4 @@
+import { GlobalDirectorySettings } from "./GlobalDirectorySettings";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
 import type { ProviderRemovalResult } from "@/core/provider-references";
@@ -834,7 +835,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
                   <h2 className="text-lg font-semibold">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.label}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">{SETTINGS_SECTIONS.find(section => section.value === activeTab)?.description}</p>
               </div>
-                <SettingsPage value="general">{activeTab === "general" && <div className="w-full"><SystemSettings accounts={accounts} /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</SettingsPage>
+                <SettingsPage value="general">{activeTab === "general" && <div className="w-full"><GlobalDirectorySettings /><SystemSettings accounts={accounts} /><ChatCleanupSettings /><BackupSettings accounts={accounts} onRestored={summary => { updateSkillCount(summary.skills); updateMcpCount(summary.mcps); }} /></div>}</SettingsPage>
                 <SettingsPage value="terminal">{activeTab === "terminal" && <TerminalSettings />}</SettingsPage>
                 <SettingsPage value="browser">{activeTab === "browser" && <BrowserSettings />}</SettingsPage>
                 <SettingsPage value="voice">{activeTab === "voice" && <VoiceSettings />}</SettingsPage>

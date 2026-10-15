@@ -33,6 +33,42 @@ async function openProjectDetails(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Home shell", () => {
+  it("reloads the same global chat and its files after changing the global folder", async () => {
+    const user = userEvent.setup();
+    const snapshot = populatedLibrary();
+    snapshot.conversations[0].projectId = null;
+    snapshot.selection.projectId = null;
+    snapshot.globalDirectory = "C:/Global A";
+    const libraryChanged = new Set<EventCallback<unknown>>();
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => command === "get_library_snapshot" ? structuredClone(snapshot) : command === "get_agent_file_changes" ? [{ path: snapshot.globalDirectory === "C:/Global A" ? "before.txt" : "after.txt", base: "conversation", additions: 1, deletions: 0 }] : original(command, args, options));
+    vi.spyOn(tauriEvents, "listen").mockImplementation(async (event, handler) => {
+      const callback = handler as EventCallback<unknown>;
+      if (event === "library:changed") libraryChanged.add(callback);
+      return () => { libraryChanged.delete(callback); };
+    });
+    render(<Home />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    field.focus(); await user.paste("Rascunho global preservado");
+    expect(await screen.findByRole("button", { name: "Alterações em before.txt" })).toBeVisible();
+    snapshot.globalDirectory = "C:/Global B";
+    await act(async () => [...libraryChanged].forEach(callback => callback({ event: "library:changed", id: 1, payload: null })));
+    expect(await screen.findByRole("button", { name: "Alterações em after.txt" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Alterações em before.txt" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho global preservado");
+  });
+  it("opens a global chat even when the selected space has no projects", async () => {
+    const snapshot = populatedLibrary();
+    snapshot.projects = [];
+    snapshot.conversations = [{ id: "c1", projectId: null, title: "Global sem projeto", createdAt: 1 }];
+    snapshot.selection.projectId = null;
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (command, args, options) => command === "get_library_snapshot" ? snapshot : original(command, args, options));
+    render(<Home />);
+    expect(await screen.findByRole("heading", { name: "Global sem projeto" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Nenhum projeto" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Mensagem" })).toBeVisible();
+  });
   it("shares one Live controller with the Designer sidebar and removes a pending task without changing the composer draft", async () => {
     const user = userEvent.setup();
     const task = { requestId: "session:12", actionId: "session", revision: 3, content: "Alinhe a versão", status: "pending", beadId: "jarvis-123", turnId: null, createdAt: 1791568800000 };

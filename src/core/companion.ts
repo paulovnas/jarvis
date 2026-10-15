@@ -1,4 +1,5 @@
 import { z } from "zod";
+export const JARVITO_CHAT_ID = "00000000000000000000000000000003";
 import { pendingQuestionSchema } from "./questions";
 import { directTaskSchema, readChat, turnOptionsSchema } from "./chat";
 

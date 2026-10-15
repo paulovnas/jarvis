@@ -724,11 +724,22 @@ describe("Desktop companion", () => {
     else expect(screen.getByRole("status", { name: "Aviso do Jarvito" })).toHaveTextContent(base.title);
   });
 
+  it("opens other global chats in Jarvis without replacing Jarvito's own conversation", async () => {
+    snapshot.items = [{ ...base, global: true, conversationId: "another-global-chat", title: "Planejar a viagem", projectName: "Global", status: "completed", activeSince: null }];
+    const user = userEvent.setup();
+    render(<Companion />);
+    await user.click(await screen.findByRole("button", { name: /Abrir assistente Jarvis/ }));
+    await user.click(await screen.findByRole("button", { name: "Ver atividade" }));
+    expect(call).toHaveBeenCalledWith("companion_open_conversation", { conversationId: "another-global-chat" });
+    expect(screen.getByRole("tab", { name: "Atividade" })).toHaveAttribute("aria-selected", "true");
+    expect(call.mock.calls.some(([command]) => command === "get_companion_chat")).toBe(false);
+  });
+
   it("opens a general result inside the island and only acknowledges after its transcript loads", async () => {
-    snapshot.items = [{ ...base, global: true, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral", status: "completed", activeSince: null }];
+    snapshot.items = [{ ...base, global: true, conversationId: "00000000000000000000000000000003", title: "Jarvito", projectName: "Chat geral", status: "completed", activeSince: null }];
     const chat = {
-      conversationId: "global-chat", projectId: null, projectName: null, global: true,
-      chat: { conversationId: "global-chat", revision: 1, activeTurnId: null, pendingApproval: null, turns: [{
+      conversationId: "00000000000000000000000000000003", projectId: null, projectName: null, global: true,
+      chat: { conversationId: "00000000000000000000000000000003", revision: 1, activeTurnId: null, pendingApproval: null, turns: [{
         id: "general-turn", createdAt: 1, durationMs: 10, user: "Qual o próximo feriado?", status: "completed", error: null,
         options: { account: "codex", model: "gpt-6", reasoning: null, mode: "build", approvalMode: "yolo" },
         steps: [{ durationMs: 10, text: "O próximo feriado será em 12 de outubro.", summary: "", tools: [], usage: null }],
@@ -763,17 +774,17 @@ describe("Desktop companion", () => {
     await act(async () => pending?.(chat));
     expect(await screen.findByText("O próximo feriado será em 12 de outubro.")).toBeVisible();
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
-    expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: base.attentionId, revision: 1 });
+    expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "00000000000000000000000000000003", agentId: null, attentionId: base.attentionId, revision: 1 });
     expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
     await user.click(screen.getByRole("tab", { name: "Atividade" }));
     expect(screen.getByRole("heading", { name: "Tudo tranquilo por aqui" })).toBeVisible();
   });
 
   it.each([true, false])("reviews a global MCP in the real island and submits only explicit decision %s", async approved => {
-    snapshot.items = [{ ...base, global: true, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral", status: "waiting", requiresConversation: true }];
+    snapshot.items = [{ ...base, global: true, conversationId: "00000000000000000000000000000003", title: "Jarvito", projectName: "Chat geral", status: "waiting", requiresConversation: true }];
     let chat = companionChatSchema.parse({
-      conversationId: "global-chat", projectId: null, projectName: null, global: true, proposal: null,
-      chat: { conversationId: "global-chat", revision: 1, activeTurnId: "mcp-turn", pendingApproval: null, turns: [], pendingAuthoring: {
+      conversationId: "00000000000000000000000000000003", projectId: null, projectName: null, global: true, proposal: null,
+      chat: { conversationId: "00000000000000000000000000000003", revision: 1, activeTurnId: "mcp-turn", pendingApproval: null, turns: [], pendingAuthoring: {
         turnId: "mcp-turn", toolId: "mcp-add", action: "create", summary: "Adicionar MCP Monday", catalogRevision: null, agentReferences: [],
         target: { kind: "mcp", server: { name: "Monday", transport: "http", command: null, args: [], url: "https://mcp.example.com/monday", enabled: true, cwd: null, envKeys: [], headerKeys: ["Authorization"] } },
       } },
@@ -806,7 +817,7 @@ describe("Desktop companion", () => {
     expect(screen.getByRole("dialog", { name: "Revisar servidor MCP" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: approved ? "Aprovar e adicionar" : "Recusar" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Revisar servidor MCP" })).not.toBeInTheDocument());
-    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: {
+    expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "00000000000000000000000000000003", decision: {
       turnId: "mcp-turn", toolId: "mcp-add", approved, note: null,
       ...(approved ? { mcpValues: { environment: {}, headers: { Authorization: "private-island-token" } } } : {}),
     } });
@@ -858,10 +869,10 @@ describe("Desktop companion", () => {
   });
 
   it.each([true, false])("only announces a general chat response when it was not viewed in the island: viewed=%s", async viewed => {
-    snapshot.items = [{ ...base, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral" }];
+    snapshot.items = [{ ...base, conversationId: "00000000000000000000000000000003", title: "Jarvito", projectName: "Chat geral" }];
     const chat = {
-      conversationId: "global-chat", projectId: null, projectName: null, global: true, proposal: null,
-      chat: { conversationId: "global-chat", revision: 1, turns: [], activeTurnId: "turn-1" as string | null, pendingApproval: null },
+      conversationId: "00000000000000000000000000000003", projectId: null, projectName: null, global: true, proposal: null,
+      chat: { conversationId: "00000000000000000000000000000003", revision: 1, turns: [], activeTurnId: "turn-1" as string | null, pendingApproval: null },
     };
     const original = call.getMockImplementation();
     call.mockImplementation(async (command, args) => {
@@ -884,10 +895,10 @@ describe("Desktop companion", () => {
     chat.chat.revision++; chat.chat.activeTurnId = null;
     act(() => {
       events.get("companion:changed")?.({});
-      events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
+      events.get("companion:chat_changed")?.({ conversationId: "00000000000000000000000000000003" });
     });
     if (viewed) {
-      await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "general/completed", revision: 2 }));
+      await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "00000000000000000000000000000003", agentId: null, attentionId: "general/completed", revision: 2 }));
       await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=idle]")).toBeInTheDocument());
       fireEvent.keyDown(screen.getByRole("region", { name: "Assistente Jarvis" }), { key: "Escape" });
       await waitFor(() => expect(screen.queryByRole("region", { name: "Assistente Jarvis" })).not.toBeInTheDocument());
@@ -899,10 +910,10 @@ describe("Desktop companion", () => {
   });
 
   it("does not mark a new response as viewed until the corresponding transcript is displayed", async () => {
-    snapshot.items = [{ ...base, conversationId: "global-chat", title: "Jarvito", projectName: "Chat geral" }];
+    snapshot.items = [{ ...base, conversationId: "00000000000000000000000000000003", title: "Jarvito", projectName: "Chat geral" }];
     const makeChat = (revision: number, text: string) => ({
-      conversationId: "global-chat", projectId: null, projectName: null, global: true,
-      chat: { conversationId: "global-chat", revision, activeTurnId: null, pendingApproval: null, turns: [{
+      conversationId: "00000000000000000000000000000003", projectId: null, projectName: null, global: true,
+      chat: { conversationId: "00000000000000000000000000000003", revision, activeTurnId: null, pendingApproval: null, turns: [{
         id: `turn-${revision}`, createdAt: 1, durationMs: 10, user: "Minha pergunta", status: "completed", error: null,
         options: { account: "codex", model: "gpt-6", reasoning: null, mode: "build", approvalMode: "yolo" },
         steps: [{ durationMs: 10, text, summary: "", tools: [], usage: null }],
@@ -925,7 +936,7 @@ describe("Desktop companion", () => {
     snapshot.items = [{ ...snapshot.items[0], status: "completed", revision: 2, activeSince: null, attentionId: "new-response/completed" }];
     act(() => {
       events.get("companion:changed")?.({});
-      events.get("companion:chat_changed")?.({ conversationId: "global-chat" });
+      events.get("companion:chat_changed")?.({ conversationId: "00000000000000000000000000000003" });
     });
     await waitFor(() => expect(completeRefresh).toBeDefined());
     await waitFor(() => expect(screen.getByRole("button", { name: "Interagir com Jarvito" }).querySelector("svg[data-state=completed]")).toBeInTheDocument());
@@ -934,7 +945,7 @@ describe("Desktop companion", () => {
     chat = makeChat(2, "Nova resposta pronta");
     await act(async () => completeRefresh?.(chat));
     expect(await screen.findByText("Nova resposta pronta")).toBeVisible();
-    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "global-chat", agentId: null, attentionId: "new-response/completed", revision: 2 }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("ack_companion_item", { conversationId: "00000000000000000000000000000003", agentId: null, attentionId: "new-response/completed", revision: 2 }));
   });
 
   it.each(["waiting", "completed", "failed"] as const)("preserves a %s notice while dragging the black header horizontally", async status => {

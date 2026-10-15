@@ -43,6 +43,8 @@ import type { ImpeccableLiveController } from "@/hooks/use-impeccable-live";
 const SkillInput = lazy(() => import("./SkillInput").then(module => ({ default: module.SkillInput })));
 
 interface ChatComposerProps {
+  projectless?: boolean;
+  companion?: boolean;
   computerControl?: ReactNode;
   draftInsertion?: { id: string; text: string };
   onOpenBrowser?: () => void;
@@ -78,6 +80,8 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
+  projectless = false,
+  companion = false,
   computerControl,
   draftInsertion,
   onOpenBrowser,
@@ -416,8 +420,8 @@ export function ChatComposer({
             if (liveOptions || designLive.active) void designLive.toggle(liveOptions, liveUrl);
           }}>{designLive.busy ? <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" /> : <MousePointer2 className="size-3.5" />}</Button></Hint>}
           <div className="composer-options flex flex-1 items-center gap-0.5">
-            <ChatBehaviorSettings manualAvailable={manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
-            <FlowPicker customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting} />
+            <ChatBehaviorSettings projectless={projectless} manualAvailable={!projectless && manualValidationAvailable} manualValidation={manualValidation} onManualChange={setManualValidation} publication={githubSelected || projectless ? null : automaticPublication} onPublicationChange={setAutomaticPublication} disabled={running || sending || compacting} githubSelected={githubSelected} />
+            <FlowPicker projectless={projectless} customFlows={catalog.data?.flows} customAgents={catalog.data?.agents} builtinAgents={catalog.data?.builtinAgents} value={workflow} onChange={chooseWorkflow} disabled={running || sending || compacting || companion} />
 
             <ExecutorModelPicker modelGroups={modelGroups} selection={currentModelDef && !modelError ? { executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" as const } : {}) } : effectiveSelection} onSelect={chooseModel} disabled={running || sending || compacting || choosingModel || chatModels?.saving} invalid={Boolean(modelError)} showProviderIdentity allowFastMode onRefresh={onRefreshModels ? () => setRefreshDialogOpen(true) : undefined} refreshing={refreshingModels} />
 

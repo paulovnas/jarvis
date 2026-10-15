@@ -178,6 +178,8 @@ fn image_exports_cannot_escape_requesting_worker_scope_or_global_conversation() 
     let hub_mut = Arc::get_mut(&mut hub).unwrap();
     Arc::get_mut(&mut hub_mut.root).unwrap().id =
         crate::agent::companion_chat::GLOBAL_CONVERSATION_ID.into();
+    Arc::get_mut(&mut hub_mut.root).unwrap().project =
+        crate::library::companion::GLOBAL_PROJECT_ID.into();
     let execution = Execution {
         hub: hub.clone(),
         id: "main".into(),

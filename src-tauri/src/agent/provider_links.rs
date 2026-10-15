@@ -200,9 +200,9 @@ struct Conversation {
 }
 
 fn conversations(db: &Connection) -> Result<Vec<Conversation>, ProviderError> {
-    let mut statement = db.prepare("SELECT c.id,c.project_id,COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id WHERE c.project_id<>?1 ORDER BY c.id").map_err(storage)?;
+    let mut statement = db.prepare("SELECT c.id,COALESCE(c.journal_project_id,c.project_id),COALESCE(c.display_title,c.title),p.name FROM conversations c JOIN projects p ON p.id=c.project_id ORDER BY c.id").map_err(storage)?;
     let rows = statement
-        .query_map([library::companion::GLOBAL_PROJECT_ID], |row| {
+        .query_map([], |row| {
             Ok(Conversation {
                 id: row.get(0)?,
                 project: row.get(1)?,

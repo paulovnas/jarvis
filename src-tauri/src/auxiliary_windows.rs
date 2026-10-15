@@ -84,6 +84,7 @@ pub(crate) fn command_allowed(label: &str, command: &str) -> bool {
                 | "get_workflow_catalog"
                 | "mutate_workflow_catalog"
                 | "get_library_snapshot"
+                | "change_global_directory"
                 | "get_workspace_storage"
                 | "delete_library_item"
                 | "get_core_status"
@@ -201,11 +202,17 @@ fn fitted_size(spec: WindowSpec, work_width: f64, work_height: f64) -> (f64, f64
     )
 }
 
-fn create_or_focus(app: &tauri::AppHandle, kind: AuxiliaryWindowKind, section: Option<&str>) -> Result<(), String> {
+fn create_or_focus(
+    app: &tauri::AppHandle,
+    kind: AuxiliaryWindowKind,
+    section: Option<&str>,
+) -> Result<(), String> {
     let spec = kind.spec();
     if let Some(window) = app.get_webview_window(spec.label) {
         if let Some(section) = section {
-            window.emit("settings:navigate", section).map_err(|error| error.to_string())?;
+            window
+                .emit("settings:navigate", section)
+                .map_err(|error| error.to_string())?;
         }
         window.unminimize().map_err(|error| error.to_string())?;
         window.show().map_err(|error| error.to_string())?;
@@ -274,7 +281,10 @@ pub(crate) async fn open_auxiliary_window(
     kind: AuxiliaryWindowKind,
     section: Option<String>,
 ) -> Result<(), String> {
-    if section.as_deref().is_some_and(|section| kind != AuxiliaryWindowKind::Settings || section != "computer") {
+    if section
+        .as_deref()
+        .is_some_and(|section| kind != AuxiliaryWindowKind::Settings || section != "computer")
+    {
         return Err("Seção de configurações inválida.".into());
     }
     let (sender, receiver) = tokio::sync::oneshot::channel();

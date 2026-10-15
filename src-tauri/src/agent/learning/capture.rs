@@ -122,7 +122,7 @@ fn user_feedback(text: &str) -> Option<String> {
 }
 
 pub(super) fn feedback(session: &Session) -> Result<Vec<Feedback>, AgentError> {
-    if super::super::companion_chat::is_global_session(&session.id) {
+    if session.global() {
         return Ok(vec![]);
     }
     let data = session.data.lock().map_err(|_| AgentError::internal())?;
@@ -224,7 +224,7 @@ pub(in crate::agent) fn schedule(
     oauth: &OpenAiCodexState,
     home: &Path,
 ) {
-    if super::super::companion_chat::is_global_session(&session.id) {
+    if session.global() {
         return;
     }
     let Ok(project) = session.project_id().map(str::to_owned) else {

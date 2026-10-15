@@ -365,11 +365,12 @@ export function RemoteApp({ pairingToken = null, client: providedClient }: { pai
     const conversation = library?.library.conversations.find(item => item.id === conversationId);
     const project = library?.library.projects.find(item => item.id === conversation?.projectId);
     if (conversation && project) setSelection({ workspaceId: project.workspaceId, projectId: project.id, conversationId });
+    else if (conversation?.projectId === null) setSelection({ workspaceId: null, projectId: null, conversationId });
   };
   const back = () => setSelection(current => current.conversationId ? { ...current, conversationId: null } : current.projectId ? { ...current, projectId: null } : emptySelection);
   const needsYou = library?.runtime.filter(runtime => runtime.attention.length > 0) ?? [];
   const runtimeFor = (conversationId: string) => library?.runtime.find(runtime => runtime.conversationId === conversationId);
-  const conversationIds = (projectIds: string[]) => library?.library.conversations.filter(item => projectIds.includes(item.projectId)).map(item => item.id) ?? [];
+  const conversationIds = (projectIds: string[]) => library?.library.conversations.filter(item => item.projectId !== null && projectIds.includes(item.projectId)).map(item => item.id) ?? [];
   const scopedIds = selection.projectId ? conversationIds([selection.projectId]) : selection.workspaceId ? conversationIds(library?.library.projects.filter(project => project.workspaceId === selection.workspaceId).map(project => project.id) ?? []) : library?.library.conversations.map(item => item.id) ?? [];
   const scopeActivity = library ? aggregateActivity(library, scopedIds) : null;
   const pendingRows = needsYou.map(runtime => {

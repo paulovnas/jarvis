@@ -24,11 +24,11 @@ pub(crate) fn candidates(
     }
     let cutoff = now - i64::from(days) * 86_400;
     let sql = "WITH ranked AS (
-        SELECT c.id, c.project_id, COALESCE(c.display_title, c.title) AS title,
+        SELECT c.id, c.project_id, COALESCE(c.journal_project_id,c.project_id) AS storage_project_id, COALESCE(c.display_title, c.title) AS title,
         COALESCE(c.last_activity_at, c.created_at) AS activity,
         ROW_NUMBER() OVER (PARTITION BY c.project_id ORDER BY COALESCE(c.last_activity_at, c.created_at) DESC, c.rowid DESC) AS position
         FROM conversations c)
-        SELECT r.id, r.project_id, r.title, p.name, r.activity FROM ranked r JOIN projects p ON p.id = r.project_id
+        SELECT r.id, r.storage_project_id, r.title, p.name, r.activity FROM ranked r JOIN projects p ON p.id = r.project_id
         WHERE r.position > 1 AND r.activity < ?1 ORDER BY r.activity, r.id LIMIT 500";
     Ok(connection
         .prepare(sql)?

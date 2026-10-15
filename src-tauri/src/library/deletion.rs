@@ -137,7 +137,7 @@ pub(super) fn recover(connection: &Connection, home: &Path) -> Result<(), Librar
                 )?
             } else {
                 connection.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1 AND project_id = ?2)",
+                    "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1 AND COALESCE(journal_project_id,project_id) = ?2)",
                     params![id, project_id],
                     |row| row.get::<_, bool>(0),
                 )?
@@ -335,7 +335,9 @@ pub(crate) fn delete(
     let sql = match target {
         DeleteTarget::Workspace(_) => "SELECT id FROM projects WHERE workspace_id = ?1",
         DeleteTarget::Project(_) => "SELECT id FROM projects WHERE id = ?1",
-        DeleteTarget::Conversation(_) => "SELECT project_id FROM conversations WHERE id = ?1",
+        DeleteTarget::Conversation(_) => {
+            "SELECT COALESCE(journal_project_id,project_id) FROM conversations WHERE id = ?1"
+        }
     };
     let project_ids = connection
         .prepare(sql)?
@@ -349,11 +351,26 @@ pub(crate) fn delete(
     for project_id in &project_ids {
         files.extend(files_to_delete(home, project_id, selected_conversation)?);
     }
+    for id in conversation_ids(connection, target)? {
+        let storage: String = connection.query_row(
+            "SELECT COALESCE(journal_project_id,project_id) FROM conversations WHERE id=?1",
+            [&id],
+            |row| row.get(0),
+        )?;
+        if !project_ids.contains(&storage) {
+            files.extend(files_to_delete(home, &storage, Some(&id))?);
+        }
+    }
     let mut staged = vec![];
     let result = (|| {
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for original in files {
-            let suffix = if !matches!(target, DeleteTarget::Conversation(_)) {
+            let own_directory = original
+                .parent()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .is_some_and(|id| project_ids.iter().any(|project| project == id));
+            let suffix = if !matches!(target, DeleteTarget::Conversation(_)) && own_directory {
                 "project-deleting"
             } else {
                 "deleting"

@@ -160,6 +160,7 @@ export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id),
   title: text("title").notNull(),
+  journalProjectId: text("journal_project_id"),
   displayTitle: text("display_title"),
   titleSource: text("title_source").notNull().default("manual"),
   lastActivityAt: integer("last_activity_at"),
@@ -168,6 +169,11 @@ export const conversations = sqliteTable("conversations", {
   index("conversations_project_idx").on(table.projectId),
   check("conversations_title_source", sql`${table.titleSource} IN ('default', 'manual', 'generated')`),
 ]);
+
+export const globalPreferences = sqliteTable("global_preferences", {
+  id: integer("id").primaryKey(),
+  directory: text("directory").notNull(),
+}, (table) => [check("global_preferences_singleton", sql`${table.id} = 1`)]);
 
 export const conversationUnread = sqliteTable("conversation_unread", {
   conversationId: text("conversation_id").primaryKey().references(() => conversations.id, { onDelete: "cascade" }),
@@ -182,7 +188,7 @@ export const navigationSelection = sqliteTable("navigation_selection", {
   conversationId: text("conversation_id").references(() => conversations.id),
 }, (table) => [
   check("navigation_selection_singleton", sql`${table.id} = 1`),
-  check("navigation_selection_hierarchy", sql`(${table.workspaceId} IS NOT NULL OR (${table.projectId} IS NULL AND ${table.conversationId} IS NULL)) AND (${table.projectId} IS NOT NULL OR ${table.conversationId} IS NULL)`),
+  check("navigation_selection_hierarchy", sql`${table.projectId} IS NULL OR ${table.workspaceId} IS NOT NULL`),
 ]);
 
 export const httpSettings = sqliteTable("http_settings", {

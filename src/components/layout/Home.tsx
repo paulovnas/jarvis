@@ -65,6 +65,8 @@ export function Home() {
     void library.select({ kind: "project", id: projectId }).then(selected => { if (!selected) setKanbanProjectId(null); });
   };
   const chat = useChat(library.snapshot?.selection.conversationId ?? null);
+  const conversationId = library.snapshot?.selection.conversationId ?? null;
+  const conversationScope = library.snapshot?.selection.projectId ?? `global:${library.snapshot?.globalDirectory ?? ""}`;
   const [designer, setDesigner] = useState<DesignerSession | null>(null);
   const onDesignerChange = useCallback((session: DesignerSession | null) => setDesigner(session), []);
   const workflow = useWorkflow(library.snapshot?.selection.conversationId ?? null);
@@ -168,7 +170,7 @@ export function Home() {
   const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity" || account.providerKind === "opencode-go"));
 
   const workspace = library.snapshot?.workspaces.find(item => item.id === library.snapshot?.selection.workspaceId);
-  if (workspace && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
+  if (workspace && !library.snapshot?.selection.conversationId && !library.snapshot?.projects.some(project => project.workspaceId === workspace.id)) {
     return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground"><div className="flex min-h-0 flex-1"><div className="w-64 shrink-0"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div><EmptyWorkspace workspace={workspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
@@ -230,7 +232,7 @@ export function Home() {
           maxSize="550px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector designer={designer?.conversationId === library.snapshot?.selection.conversationId ? designer ?? undefined : undefined} library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
+          <div id="inspector-panel-content" inert={layout.inspectorCollapsed} aria-hidden={layout.inspectorCollapsed} className={`h-full min-w-[280px] transition-transform duration-200 motion-reduce:transition-none ${layout.inspectorCollapsed ? "translate-x-full" : ""}`}><Inspector key={`${conversationId ?? ""}:${conversationScope}`} designer={designer?.conversationId === library.snapshot?.selection.conversationId ? designer ?? undefined : undefined} library={library.snapshot} chat={chat.snapshot} workflow={workflow} accounts={accounts} onOpenKanban={openKanban} onCompact={chat.compact} compacting={chat.compacting} pending={chat.pending} files={files} /></div>
         </ResizablePanel></>}
       </ResizablePanelGroup>
       <StatusBar accounts={accounts} onOpenSettings={openSettings} />

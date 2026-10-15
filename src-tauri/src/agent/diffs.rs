@@ -13,6 +13,8 @@ pub(super) struct FileRevision {
     pub deletions: Option<u64>,
     #[serde(default)]
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -65,6 +67,7 @@ impl FileRevision {
             }
         }
         Self {
+            root: None,
             path,
             before,
             after,
@@ -188,6 +191,7 @@ pub(super) async fn record(session: &Session, revision: FileRevision) -> Result<
         .get(&revision.path)
         .map_or(1, |file| file.revision + 1);
     let mut revision = FileRevision::new(revision.path, baseline, revision.after, "conversation");
+    revision.root = Some(session.root.clone());
     revision.revision = version;
     session.checkpoint(&mut data, "file_checkpoint", &revision)?;
     data.extras.files.insert(revision.path.clone(), revision);

@@ -686,6 +686,8 @@ async fn location(app: &tauri::AppHandle, id: &str) -> Result<(PathBuf, PathBuf)
     let state = app.state::<AppState>().inner().clone();
     let conversation = id.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
+        library::require_project_conversation(&state, &home, &conversation)
+            .map_err(|_| error("O modo Live precisa de uma conversa vinculada a um projeto."))?;
         let (_, root) = library::agent_location(&state, &home, &conversation)
             .map_err(|_| error("A conversa ou a pasta do projeto está indisponível."))?;
         Ok((home, root.canonicalize()?))

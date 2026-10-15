@@ -492,9 +492,7 @@ pub(super) fn image_job(exec: &Execution, args: &Value) -> Result<(Job, bool), A
     {
         return Err(invalid("Revise os parâmetros da geração de imagens."));
     }
-    if super::super::companion_chat::is_global_session(&exec.hub.root.id)
-        && args["processing"]["output_directory"].is_string()
-    {
+    if exec.hub.root.global_companion() && args["processing"]["output_directory"].is_string() {
         return Err(invalid("Na conversa geral, as imagens são entregues como anexos. Confirme um projeto antes de exportar para uma pasta."));
     }
     let scope = args["processing"]["output_directory"]

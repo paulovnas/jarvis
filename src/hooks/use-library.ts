@@ -87,7 +87,7 @@ export function useLibrary() {
     try {
       const result = await invoke<unknown>(command, args);
       if (generation.current !== request) return false;
-      if (command === "add_project" && result === null) return false;
+      if ((command === "add_project" || command === "change_global_directory") && result === null) return false;
       accept(readLibrarySnapshot(result));
       if (success) toast.success(success);
       return true;
@@ -126,6 +126,12 @@ export function useLibrary() {
       perform("add_project", { workspaceId }, "Projeto adicionado"),
     createConversation: (projectId: string) =>
       perform("create_conversation", { projectId }, "Conversa criada"),
+    createGlobalConversation: () =>
+      perform("create_global_conversation", {}, "Conversa global criada"),
+    moveGlobalConversation: (id: string, projectId: string) =>
+      perform("move_global_conversation", { id, projectId }, "Conversa movida para o projeto"),
+    changeGlobalDirectory: () =>
+      perform("change_global_directory", {}, "Pasta de trabalho global atualizada"),
     updateProject: (id: string, update: ProjectUpdate) =>
       perform("update_project", { id, ...update }, "Projeto atualizado"),
     moveProject: (id: string, workspaceId: string) =>

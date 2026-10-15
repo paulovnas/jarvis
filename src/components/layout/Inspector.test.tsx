@@ -13,6 +13,19 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("disables project panels for global chats and restores them in a project", async () => {
+    const stored = populatedLibrary();
+    const global = { ...stored, conversations: [...stored.conversations, { id: "global", projectId: null, title: "Global", createdAt: 1 }], selection: { workspaceId: "w1", projectId: null, conversationId: "global" } };
+    vi.mocked(invoke).mockImplementation(async command => command === "get_desktop_layout" ? { ...DEFAULT_DESKTOP_LAYOUT, inspectorTab: "designer" } : []);
+    const view = render(<DesktopLayoutProvider><Inspector library={global} /></DesktopLayoutProvider>);
+    await screen.findByRole("tab", { name: "Inspector" });
+    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("tab", { name })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("tab", { name: "Inspector" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("region", { name: "Designer e Impeccable Live" })).not.toBeInTheDocument();
+    view.rerender(<DesktopLayoutProvider><Inspector library={stored} /></DesktopLayoutProvider>);
+    for (const name of ["GitHub", "Explorer", "Designer"]) expect(screen.getByRole("tab", { name })).not.toHaveAttribute("aria-disabled", "true");
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Designer" })).toHaveAttribute("aria-selected", "true"));
+  });
   it("keeps a collapsed activity section across tab changes and a restored layout", async () => {
     const user = userEvent.setup();
     let layout: DesktopLayout = DEFAULT_DESKTOP_LAYOUT;

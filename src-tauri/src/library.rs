@@ -20,6 +20,7 @@ pub(crate) mod companion;
 pub(crate) mod dashboard;
 pub(crate) mod deletion;
 pub(crate) mod files;
+pub(crate) mod global;
 pub(crate) mod repositories;
 pub(crate) mod workspaces;
 
@@ -48,6 +49,7 @@ pub struct Project {
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
     id: String,
+    #[serde(serialize_with = "serialize_conversation_project")]
     project_id: String,
     title: String,
     created_at: i64,
@@ -71,6 +73,8 @@ pub struct LibrarySnapshot {
     projects: Vec<Project>,
     conversations: Vec<Conversation>,
     selection: Selection,
+    #[serde(rename = "globalDirectory", skip_serializing_if = "Option::is_none")]
+    global_directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,8 +89,38 @@ pub enum LibraryTarget {
 #[serde(rename_all = "camelCase")]
 pub struct ConversationDetails {
     conversation: Conversation,
+    #[serde(serialize_with = "serialize_visible_project")]
     project: Project,
+    #[serde(serialize_with = "serialize_visible_workspace")]
     workspace: Workspace,
+    directory: String,
+}
+
+fn serialize_conversation_project<S: serde::Serializer>(
+    id: &str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    (id != companion::GLOBAL_PROJECT_ID)
+        .then_some(id)
+        .serialize(serializer)
+}
+
+fn serialize_visible_project<S: serde::Serializer>(
+    project: &Project,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    (project.id != companion::GLOBAL_PROJECT_ID)
+        .then_some(project)
+        .serialize(serializer)
+}
+
+fn serialize_visible_workspace<S: serde::Serializer>(
+    workspace: &Workspace,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    (workspace.id != companion::GLOBAL_WORKSPACE_ID)
+        .then_some(workspace)
+        .serialize(serializer)
 }
 
 #[derive(Debug, Serialize)]
@@ -283,28 +317,33 @@ fn snapshot(connection: &Connection) -> Result<LibrarySnapshot, LibraryError> {
         .collect::<Result<Vec<_>, _>>()?;
     let projects = connection.prepare("SELECT id, workspace_id, name, path, icon, color, created_at FROM projects WHERE workspace_id <> ?1 ORDER BY created_at, rowid")?
         .query_map([companion::GLOBAL_WORKSPACE_ID], project_row)?.collect::<Result<Vec<_>, _>>()?;
-    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations WHERE project_id <> ?1 ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
-        .query_map([companion::GLOBAL_PROJECT_ID], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
+    let conversations = connection.prepare("SELECT id, project_id, COALESCE(display_title, title), created_at, title, COALESCE(last_activity_at, created_at) FROM conversations ORDER BY COALESCE(last_activity_at, created_at) DESC, rowid DESC")?
+        .query_map([], conversation_row)?.collect::<Result<Vec<_>, _>>()?;
     let mut selection = connection.query_row(
         "SELECT workspace_id, project_id, conversation_id FROM navigation_selection WHERE id = 1", [],
         |row| Ok(Selection { workspace_id: row.get(0)?, project_id: row.get(1)?, conversation_id: row.get(2)? }),
     ).optional()?.unwrap_or_default();
     if selection.workspace_id.as_deref() == Some(companion::GLOBAL_WORKSPACE_ID)
         || selection.project_id.as_deref() == Some(companion::GLOBAL_PROJECT_ID)
-        || selection.conversation_id.as_deref() == Some(companion::GLOBAL_CONVERSATION_ID)
     {
-        // Older Jarvito links could select its hidden scope in the main window.
-        selection = Selection {
-            workspace_id: workspaces.first().map(|workspace| workspace.id.clone()),
-            ..Selection::default()
-        };
+        selection.workspace_id = workspaces.first().map(|workspace| workspace.id.clone());
+        selection.project_id = None;
         save_selection(connection, &selection)?;
     }
+    let global_directory = connection
+        .query_row(
+            "SELECT path FROM projects WHERE id=?1",
+            [companion::GLOBAL_PROJECT_ID],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|path| strip_verbatim(&path).into_owned());
     Ok(LibrarySnapshot {
         workspaces,
         projects,
         conversations,
         selection,
+        global_directory,
     })
 }
 
@@ -475,8 +514,8 @@ pub(crate) fn insert_project(
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     workspace(&tx, workspace_id)?;
     if tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM projects WHERE path = ?1)",
-        [path],
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE path = ?1 AND id <> ?2)",
+        params![path, companion::GLOBAL_PROJECT_ID],
         |row| row.get::<_, bool>(0),
     )? {
         return Err(LibraryError::new(
@@ -598,8 +637,12 @@ fn persist_header(path: &Path, header: &SessionHeader) -> Result<(), LibraryErro
     Ok(())
 }
 
-fn is_empty_conversation(home: &Path, conversation: &Conversation) -> Result<bool, LibraryError> {
-    let path = session_path(home, &conversation.project_id, &conversation.id, false)?;
+fn is_empty_conversation(
+    connection: &Connection,
+    home: &Path,
+    conversation: &Conversation,
+) -> Result<bool, LibraryError> {
+    let path = conversation_journal_path(connection, home, &conversation.id)?;
     let metadata = fs::symlink_metadata(&path).map_err(|_| LibraryError::invalid_session())?;
     if metadata.is_symlink() || !metadata.is_file() {
         return Err(LibraryError::invalid_session());
@@ -640,11 +683,51 @@ fn latest_empty_conversation(
         return Ok(None);
     }
     read_conversation(connection, home, &latest.id)?;
-    if is_empty_conversation(home, &latest)? {
+    if is_empty_conversation(connection, home, &latest)? {
         Ok(Some(latest))
     } else {
         Ok(None)
     }
+}
+
+pub(crate) fn conversation_journal_path(
+    connection: &Connection,
+    home: &Path,
+    id: &str,
+) -> Result<PathBuf, LibraryError> {
+    let project: String = connection
+        .query_row(
+            "SELECT COALESCE(journal_project_id, project_id) FROM conversations WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(LibraryError::missing)?;
+    session_path(home, &project, id, false)
+}
+
+pub(crate) fn conversation_project(
+    state: &AppState,
+    home: &Path,
+    id: &str,
+) -> Result<String, LibraryError> {
+    state.with_connection(home, |connection| {
+        Ok(conversation(connection, id)?.project_id)
+    })
+}
+
+pub(crate) fn require_project_conversation(
+    state: &AppState,
+    home: &Path,
+    id: &str,
+) -> Result<(), LibraryError> {
+    if conversation_project(state, home, id)? == companion::GLOBAL_PROJECT_ID {
+        return Err(LibraryError::new(
+            "project_required",
+            "Este recurso precisa de uma conversa vinculada a um projeto.",
+        ));
+    }
+    Ok(())
 }
 
 fn insert_conversation(
@@ -664,14 +747,7 @@ fn insert_conversation(
     }
     if let Some(existing) = latest_empty_conversation(&tx, home, project_id, title)? {
         let result = (|| {
-            save_selection(
-                &tx,
-                &Selection {
-                    workspace_id: Some(project.workspace_id),
-                    project_id: Some(project_id.to_owned()),
-                    conversation_id: Some(existing.id),
-                },
-            )?;
+            save_selection(&tx, &global::selection(&tx, &project, existing.id)?)?;
             let snapshot = snapshot(&tx)?;
             tx.commit()?;
             Ok(snapshot)
@@ -692,20 +768,13 @@ fn insert_conversation(
             version: 1,
             id: id.clone(),
             project_id: project_id.to_owned(),
-            cwd: project.path,
+            cwd: project.path.clone(),
             title: title.to_owned(),
             created_at: record.created_at,
         },
     )?;
     let result = (|| {
-        save_selection(
-            &tx,
-            &Selection {
-                workspace_id: Some(project.workspace_id),
-                project_id: Some(project_id.to_owned()),
-                conversation_id: Some(id),
-            },
-        )?;
+        save_selection(&tx, &global::selection(&tx, &project, id)?)?;
         let snapshot = snapshot(&tx)?;
         tx.commit()?;
         Ok(snapshot)
@@ -724,12 +793,17 @@ fn read_conversation(
     let conversation = conversation(connection, id)?;
     let project = project(connection, &conversation.project_id)?;
     let workspace = workspace(connection, &project.workspace_id)?;
-    let path = session_path(home, &project.id, id, false)?;
+    let path = conversation_journal_path(connection, home, id)?;
+    let journal_project = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .ok_or_else(LibraryError::invalid_session)?;
     let metadata = fs::symlink_metadata(&path).map_err(|_| LibraryError::invalid_session())?;
     if metadata.is_symlink() || !metadata.is_file() {
         return Err(LibraryError::invalid_session());
     }
-    let file = File::open(path).map_err(|_| LibraryError::storage())?;
+    let file = File::open(&path).map_err(|_| LibraryError::storage())?;
     let mut first_line = String::new();
     BufReader::new(file.take(65_537))
         .read_line(&mut first_line)
@@ -742,13 +816,14 @@ fn read_conversation(
     if header.kind != "session"
         || header.version != 1
         || header.id != id
-        || header.project_id != project.id
+        || header.project_id != journal_project
         || header.title != conversation.initial_title
         || header.created_at != conversation.created_at
     {
         return Err(LibraryError::invalid_session());
     }
     Ok(ConversationDetails {
+        directory: strip_verbatim(&project.path).into_owned(),
         conversation,
         project,
         workspace,
@@ -759,6 +834,12 @@ pub(crate) fn project_location(
     connection: &Connection,
     project_id: &str,
 ) -> Result<PathBuf, LibraryError> {
+    if project_id == companion::GLOBAL_PROJECT_ID {
+        return Err(LibraryError::new(
+            "project_required",
+            "Este recurso precisa de um projeto.",
+        ));
+    }
     let root = PathBuf::from(project(connection, project_id)?.path);
     if !root.is_dir() || fs::canonicalize(&root).ok().as_ref() != Some(&root) {
         return Err(LibraryError::new(
@@ -796,8 +877,16 @@ pub(crate) fn agent_location(
 ) -> Result<(PathBuf, PathBuf), LibraryError> {
     state.with_connection(home, |connection| {
         let details = read_conversation(connection, home, id)?;
-        let journal = session_path(home, &details.project.id, id, false)?;
-        let root = project_location(connection, &details.project.id)?;
+        let journal = conversation_journal_path(connection, home, id)?;
+        let root = if details.project.id == companion::GLOBAL_PROJECT_ID {
+            let root = canonical_directory(Path::new(&details.project.path))?;
+            if root != Path::new(&details.project.path) {
+                return Err(LibraryError::invalid_session());
+            }
+            root
+        } else {
+            project_location(connection, &details.project.id)?
+        };
         Ok((journal, root))
     })
 }
@@ -872,8 +961,8 @@ pub(crate) fn update_project_record(
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     project(&tx, id)?;
     if tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM projects WHERE path = ?1 AND id <> ?2)",
-        params![path, id],
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE path = ?1 AND id <> ?2 AND id <> ?3)",
+        params![path, id, companion::GLOBAL_PROJECT_ID],
         |row| row.get::<_, bool>(0),
     )? {
         return Err(LibraryError::new(
@@ -933,11 +1022,7 @@ fn select_item(
         }
         LibraryTarget::Conversation(id) => {
             let details = read_conversation(&tx, home, &id)?;
-            Selection {
-                workspace_id: Some(details.workspace.id),
-                project_id: Some(details.project.id),
-                conversation_id: Some(id),
-            }
+            global::selection(&tx, &details.project, id)?
         }
     };
     if selection.workspace_id.as_deref() == Some(companion::GLOBAL_WORKSPACE_ID) {
@@ -974,6 +1059,7 @@ pub async fn get_library_snapshot(
 ) -> Result<LibrarySnapshot, LibraryError> {
     run(app, state.inner().clone(), |connection, home| {
         deletion::recover(connection, home)?;
+        companion::ensure_global(connection, home)?;
         dashboard::backfill_activity(connection, home)?;
         let tx = connection.transaction()?;
         let result = snapshot(&tx)?;

@@ -405,6 +405,66 @@ pub(super) fn options(approval_mode: ApprovalMode) -> TurnOptions {
 }
 
 #[test]
+fn global_scope_changes_reject_unloaded_durable_queues_and_preserve_their_messages() {
+    let home = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let id = library::companion::GLOBAL_CONVERSATION_ID;
+    let project = "b".repeat(32);
+    state.with_connection(home.path(), |db| {
+        library::companion::ensure_global(db, home.path())?;
+        db.execute("INSERT INTO workspaces(id,name) VALUES('workspace','Workspace')", [])?;
+        db.execute("INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,'workspace','Target',?2)", rusqlite::params![project, std::fs::canonicalize(target.path()).unwrap().to_string_lossy()])?;
+        Ok::<_, library::LibraryError>(())
+    }).unwrap();
+    let (journal, previous_root) = library::agent_location(&state, home.path(), id).unwrap();
+    let queued = queue::QueuedMessage {
+        id: "pending".into(),
+        content: "Preserve this request".into(),
+        options: options(ApprovalMode::Yolo),
+        parts: vec![],
+        auxiliary_for: None,
+        sent_at: None,
+        after_step: None,
+    };
+    journal::append_event(&journal, "queue_checkpoint", &vec![queued]).unwrap();
+    let before = fs::read(&journal).unwrap();
+    let runtime = AgentState::default();
+    assert_eq!(
+        runtime
+            .move_global_conversation(&state, home.path(), id, &project)
+            .unwrap_err()
+            .code(),
+        "active_conversation"
+    );
+    assert_eq!(
+        runtime
+            .change_global_directory(&state, home.path(), target.path())
+            .unwrap_err()
+            .code(),
+        "active_conversation"
+    );
+    assert_eq!(fs::read(&journal).unwrap(), before);
+    assert_eq!(
+        library::agent_location(&state, home.path(), id).unwrap().1,
+        previous_root
+    );
+    journal::append_event(
+        &journal,
+        "queue_checkpoint",
+        &Vec::<queue::QueuedMessage>::new(),
+    )
+    .unwrap();
+    runtime
+        .move_global_conversation(&state, home.path(), id, &project)
+        .unwrap();
+    assert_eq!(
+        library::conversation_project(&state, home.path(), id).unwrap(),
+        project
+    );
+}
+
+#[test]
 fn publication_authoring_catalog_exposes_only_metadata_and_build_mcp_registration() {
     for (mode, expected) in [
         (Mode::Build, vec!["jarvis_catalog", "jarvis_propose_mcp"]),
@@ -784,6 +844,11 @@ pub(super) fn session_with_id(fixture: &Fixture, id: &str) -> Arc<Session> {
     let writer = session_writer::SessionWriter::start(journal.clone(), id.into(), None).unwrap();
     Arc::new(Session {
         id: id.into(),
+        project: if companion_chat::is_global_session(id) {
+            library::companion::GLOBAL_PROJECT_ID.into()
+        } else {
+            "fixture-project".into()
+        },
         journal,
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),
@@ -2774,6 +2839,7 @@ fn ipc_snapshot_never_contains_provider_replay_or_credentials() {
     fs::write(&journal, "").unwrap();
     let session = Session {
         id: "conversation".into(),
+        project: "fixture-project".into(),
         journal: journal.clone(),
         root: fixture.root.clone(),
         journal_maintenance: Default::default(),

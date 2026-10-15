@@ -7,6 +7,21 @@ import {
 import { readConversationDetails, readLibrarySnapshot } from "./library";
 
 describe("Library command boundary", () => {
+  it("accepts global conversations without a project and preserves the selected space", () => {
+    const stored = populatedLibrary();
+    const value = {
+      ...stored,
+      globalDirectory: "C:/Users/Paulo/Jarvis/global",
+      conversations: [...stored.conversations, { id: "global", projectId: null, title: "Jarvito", createdAt: 1 }],
+      selection: { workspaceId: "w1", projectId: null, conversationId: "global" },
+    };
+    expect(readLibrarySnapshot(value)).toMatchObject({
+      globalDirectory: value.globalDirectory,
+      conversations: expect.arrayContaining([expect.objectContaining({ id: "global", projectId: null })]),
+      selection: value.selection,
+    });
+    expect(() => readLibrarySnapshot({ ...value, selection: { ...value.selection, projectId: "p1" } })).toThrow("inválidos");
+  });
   it("accepts empty and persisted hierarchies", () => {
     expect(readLibrarySnapshot(emptyLibrary())).toEqual(emptyLibrary());
     expect(readLibrarySnapshot(populatedLibrary())).toEqual(populatedLibrary());
