@@ -62,7 +62,7 @@ export function FileWorkspace({ files, browser, http, liveTabId, onAnalyzeHttp, 
   const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files?.close(path); };
   return <Tabs value={activeHttp ? `http:${activeHttp.draft.id}` : activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
     {liveTabId && <span id={liveDescriptionId} className="sr-only">Impeccable Live ativo. Desligue o Live antes de fechar esta aba.</span>}
-    <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
+    <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 bg-transparent px-2">
       <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos, navegador e HTTP" onKeyDown={event => {
         // Let the drag sensor receive arrows without the tab list moving focus
         // or stopping propagation before the event reaches the document.

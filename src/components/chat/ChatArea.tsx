@@ -120,7 +120,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     : chat.pendingTurn?.status === "running" && !snapshot.turns.some(turn => turn.id === chat.pendingTurn?.id)
       ? chat.pendingTurn
       : undefined;
-  const composer = <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pb-4 pt-3">
+  const composer = <footer ref={footer} aria-label="Área de composição" className="chat-footer mx-auto max-h-[65dvh] w-full max-w-4xl min-w-0 shrink-0 overflow-y-auto overscroll-none px-5 pt-3">
     {chat.error && <Alert className="mb-3"><AlertTitle>Atualizações da conversa indisponíveis</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><p>{chat.error}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={chat.retry}>Tentar novamente</Button></AlertDescription></Alert>}
     {activeTurn && <ActiveExecutionStatus turn={activeTurn} waitingForUser={!!attention} />}
     {workflow?.data?.recovery && <WorkflowRecoveryAlert recovery={workflow.data.recovery} onResume={chat.resumeWorkflow} />}
