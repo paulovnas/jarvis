@@ -131,7 +131,14 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun run tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json -- --locked
+          # Keep Whisper's C++ runtime aligned with the static CEF wrapper.
+          CMAKE_POLICY_DEFAULT_CMP0091: NEW
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+        run: |
+          # whisper-rs-sys does not track CMAKE_* environment changes in Cargo's cache.
+          cargo clean --manifest-path src-tauri/Cargo.toml --package whisper-rs-sys --release --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.release.conf.json -- --locked
       - name: Compilar DEB e AppImage e assinar atualização
         if: runner.os == 'Linux'
         env:
