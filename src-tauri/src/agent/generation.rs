@@ -55,6 +55,13 @@ impl Clock {
             .saturating_add(bytes.try_into().unwrap_or(u64::MAX));
     }
 
+    pub(super) fn reconcile(&mut self, previous_bytes: u64, bytes: u64) {
+        self.bytes = self
+            .bytes
+            .saturating_sub(previous_bytes)
+            .saturating_add(bytes);
+    }
+
     pub(super) fn reported(&mut self, output_tokens: Option<u64>) {
         if let Some(tokens) = output_tokens.filter(|tokens| *tokens > 0) {
             self.output_tokens = Some(tokens);
@@ -120,6 +127,29 @@ impl Clock {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn final_text_reconciles_unstreamed_output_and_shortened_previews() {
+        let start = Instant::now();
+        let mut clock = Clock::new(start);
+        clock.reconcile(0, 8);
+        assert_eq!(
+            clock.snapshot(start + Duration::from_secs(2)),
+            Some(Metrics {
+                output_tokens: 2,
+                duration_ms: 2_000,
+                estimated: true,
+            })
+        );
+        clock.reconcile(8, 4);
+        assert_eq!(
+            clock
+                .snapshot(start + Duration::from_secs(2))
+                .unwrap()
+                .output_tokens,
+            1
+        );
+    }
 
     #[test]
     fn estimate_is_reconciled_with_usage_and_frozen_during_tools() {

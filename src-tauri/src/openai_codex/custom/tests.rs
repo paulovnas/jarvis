@@ -115,7 +115,15 @@ fn save_and_edit_preserve_secure_key_and_offline_catalog_without_testing_endpoin
     let initial = config(Protocol::OpenaiResponses);
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, &initial, Some("secret-key"), false)
+            save(
+                db,
+                &store,
+                alias,
+                &initial,
+                Some("secret-key"),
+                false,
+                Some("Meu endpoint"),
+            )
         })
         .unwrap();
     assert!(state
@@ -125,26 +133,30 @@ fn save_and_edit_preserve_secure_key_and_offline_catalog_without_testing_endpoin
             alias,
             &initial,
             Some("another"),
-            false
+            false,
+            None
         ))
         .is_err());
     let mut updated = initial.clone();
     updated.models[0].name = "Updated".into();
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, &updated, None, true)
+            save(db, &store, alias, &updated, None, true, None)
         })
         .unwrap();
     assert_eq!(store.load(alias).unwrap().access, "secret-key");
     assert_eq!(load(&state, home.path(), alias).unwrap(), updated);
     let record = state.list_provider_accounts(home.path()).unwrap().remove(0);
+    assert_eq!(record.alias, alias);
+    assert_eq!(record.display_name.as_deref(), Some("Meu endpoint"));
     let visible = serde_json::to_string(&account(&state, home.path(), record).unwrap()).unwrap();
     assert!(!visible.contains("secret-key"));
     assert!(!visible.contains("accountId"));
     assert!(visible.contains("Updated"));
+    assert!(visible.contains("Meu endpoint"));
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, &updated, Some("rotated-key"), true)
+            save(db, &store, alias, &updated, Some("rotated-key"), true, None)
         })
         .unwrap();
     assert_eq!(store.load(alias).unwrap().access, "rotated-key");
@@ -163,7 +175,7 @@ fn secure_store_failure_leaves_previous_configuration_intact() {
     let store = InMemorySecretStore::default();
     let initial = config(Protocol::OpenaiCompletions);
     store.fail_store(true);
-    assert!(save(&mut db, &store, "new", &initial, Some("key"), false).is_err());
+    assert!(save(&mut db, &store, "new", &initial, Some("key"), false, None).is_err());
     assert_eq!(
         db.query_row("SELECT count(*) FROM provider_accounts", [], |r| r
             .get::<_, i64>(0))
@@ -171,11 +183,20 @@ fn secure_store_failure_leaves_previous_configuration_intact() {
         0
     );
     store.fail_store(false);
-    save(&mut db, &store, "new", &initial, Some("key"), false).unwrap();
+    save(&mut db, &store, "new", &initial, Some("key"), false, None).unwrap();
     let mut updated = initial.clone();
     updated.models[0].name = "Modified".into();
     store.fail_store(true);
-    assert!(save(&mut db, &store, "new", &updated, Some("rotated"), true).is_err());
+    assert!(save(
+        &mut db,
+        &store,
+        "new",
+        &updated,
+        Some("rotated"),
+        true,
+        None
+    )
+    .is_err());
     let raw: String = db
         .query_row("SELECT config FROM custom_provider_configs", [], |r| {
             r.get(0)
@@ -197,13 +218,14 @@ fn inaccessible_wallet_preserves_custom_config_and_key_until_recovery() {
         &initial,
         Some("original"),
         false,
+        None,
     )
     .unwrap();
     let mut updated = initial.clone();
     updated.models[0].name = "Updated".into();
     store.fail_load(true);
     for key in [None, Some("replacement")] {
-        let error = save(&mut db, &store, "gateway", &updated, key, true).unwrap_err();
+        let error = save(&mut db, &store, "gateway", &updated, key, true, None).unwrap_err();
         assert_eq!(error.code, "secret_store");
         #[cfg(target_os = "linux")]
         assert!(error.message.contains("desbloqueie"));
@@ -218,7 +240,7 @@ fn inaccessible_wallet_preserves_custom_config_and_key_until_recovery() {
     assert_eq!(serde_json::from_str::<Config>(&raw).unwrap(), initial);
     store.fail_load(false);
     assert_eq!(store.load("gateway").unwrap().access, "original");
-    save(&mut db, &store, "gateway", &updated, None, true).unwrap();
+    save(&mut db, &store, "gateway", &updated, None, true, None).unwrap();
 }
 
 #[test]
@@ -231,7 +253,15 @@ fn custom_inference_uses_offline_catalog_and_never_refreshes_api_keys() {
     let alias = "Gateway";
     state
         .with_connection(home.path(), |db| {
-            save(db, store.as_ref(), alias, &initial, Some("key"), false)
+            save(
+                db,
+                store.as_ref(),
+                alias,
+                &initial,
+                Some("key"),
+                false,
+                None,
+            )
         })
         .unwrap();
     // An API key has no OAuth expiry semantics, even if a legacy timestamp is zero.

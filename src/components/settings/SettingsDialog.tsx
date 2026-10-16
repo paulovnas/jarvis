@@ -59,9 +59,11 @@ import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { accountList, enabledModels, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { accountList, enabledModels, providerDisplayName, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { ClaudeProviderCard } from "./ClaudeProviderCard";
+import { MuseProviderCard } from "./MuseProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { OpenCodeGoProviderForm } from "./OpenCodeGoProviderForm";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
@@ -196,6 +198,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
   const [accounts, setAccounts] = useState<ProviderAccount[]>(() => bootstrap?.resources.accounts ?? []);
   const [listError, setListError] = useState<string | null>(null);
   const [suffix, setSuffix] = useState("");
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [provider, setProvider] = useState("openai-codex");
   const [editingCustom, setEditingCustom] = useState<ProviderAccount | null>(null);
   const [reauthorizing, setReauthorizing] = useState<ProviderAccount | null>(null);
@@ -309,6 +312,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
   const openAddView = () => {
     if (startingRef.current || cancellingRef.current) return;
     setReauthorizing(null);
+    setDisplayName(null);
     setView("add");
     setConnectionError(null);
     setSuffixError(null);
@@ -331,7 +335,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
 
     let started: ActiveConnection | null = null;
     try {
-      const result = await invoke<ConnectionStart>(reauthorize ? "reauthorize_provider_account" : "begin_openai_codex_connection", { alias });
+      const result = await invoke<ConnectionStart>(reauthorize ? "reauthorize_provider_account" : "begin_openai_codex_connection", { alias, ...(!reauthorize ? { displayName: (displayName ?? alias).trim() } : {}) });
       if (
         !result ||
         typeof result.flowId !== "string" ||
@@ -412,7 +416,10 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
     event.preventDefault();
     const validationError = validateAliasSuffix(suffix);
     setSuffixError(validationError);
-    if (!validationError) void connectAccount(`${aliasPrefix}${suffix}`);
+    if (validationError) return;
+    const nameError = validateProviderDisplayName(displayName ?? `${aliasPrefix}${suffix}`);
+    setConnectionError(nameError);
+    if (!nameError) void connectAccount(`${aliasPrefix}${suffix}`);
   };
 
   const handleReauthorize = (account: ProviderAccount) => {
@@ -528,6 +535,17 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
     }
   };
 
+  const handleDisplayNameChange = async (alias: string, displayName: string) => {
+    if (togglingRef.current) return;
+    togglingRef.current = true; setToggling(true);
+    try {
+      await invoke("set_provider_display_name", { alias, displayName });
+      updateAccounts(accounts.map(account => account.alias === alias ? { ...account, displayName } : account));
+      toast.success("Nome do provedor atualizado");
+    } catch { toast.error("Não foi possível salvar o nome do provedor."); }
+    finally { togglingRef.current = false; setToggling(false); }
+  };
+
   const handleModelEnabledChange = async (alias: string, modelId: string, enabled: boolean) => {
     if (togglingRef.current) return;
     togglingRef.current = true; setToggling(true);
@@ -636,6 +654,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
 
         <div className="flex min-w-0 flex-col gap-3">
             <ClaudeProviderCard />
+            <MuseProviderCard />
             {accounts.map((account) => (
               <ProviderAccountCard
                 key={account.alias}
@@ -650,6 +669,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
                 onUsageChange={(alias, showUsage, showThirdPartyUsage, showFiveHourUsage, showWeeklyUsage) => { void handleUsageChange(alias, showUsage, showThirdPartyUsage, showFiveHourUsage, showWeeklyUsage); }}
                 onUsageAlertChange={(alias, alert) => { void handleUsageAlertChange(alias, alert); }}
                 onEnabledChange={(alias, enabled) => { void handleEnabledChange(alias, enabled); }}
+                onDisplayNameChange={(alias, displayName) => { void handleDisplayNameChange(alias, displayName); }}
                 onDisconnect={(alias) => {
                   setDisconnectAlias(alias);
                 }}
@@ -717,7 +737,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
                 Alias completo: <code className="font-mono text-primary">{computedAlias}</code>
               </p>
             </div>
-
+            <ProviderDisplayNameField value={displayName ?? computedAlias} onChange={setDisplayName} disabled={starting} />
             {connectionError && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/35 bg-destructive/5 p-3 text-xs text-destructive">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -754,7 +774,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
       <DialogHeader>
         <DialogTitle>Re-autorizar provedor</DialogTitle>
         <DialogDescription>
-          Entre novamente com {connectionLabel} para atualizar a autorização de <span className="font-mono">{reauthorizing?.alias}</span>. O alias e as configurações serão mantidos.
+          Entre novamente com {connectionLabel} para atualizar a autorização de <span>{reauthorizing ? providerDisplayName(reauthorizing) : ""}</span>. O alias e as configurações serão mantidos.
         </DialogDescription>
       </DialogHeader>
       {connectionError && <p role="alert" className="text-xs text-destructive">{connectionError}</p>}

@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import type { ChatDraft, MessagePart } from "./chat";
 
-export async function refinePrompt(draft: ChatDraft, conversationId?: string): Promise<ChatDraft> {
-  const response = z.string().trim().min(1).max(65_536).safeParse(await invoke("refine_chat_prompt", { prompt: draft.content, conversationId: conversationId ?? null }));
+export async function refinePrompt(draft: ChatDraft, conversationId?: string, requestId?: string): Promise<ChatDraft> {
+  const response = z.string().trim().min(1).max(65_536).safeParse(await invoke("refine_chat_prompt", { prompt: draft.content, conversationId: conversationId ?? null, ...(requestId ? { requestId } : {}) }));
   if (!response.success) throw new Error("O modelo retornou um prompt vazio ou inválido. Seu texto foi mantido.");
   const content = response.data;
   if (!draft.parts) return { content };

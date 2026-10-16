@@ -15,6 +15,18 @@ it("uses the conversation override ahead of history and leaves shared defaults i
   expect(data.defaults["standard/builder"]).toEqual(primary);
 });
 
+it("retains Muse selections through remote defaults, history and turn submission", () => {
+  const data = choices();
+  const muse = { executor: "muse" as const, account: "", model: "muse-wonder", reasoning: null };
+  data.models.push({ provider: "Muse Code", executor: "muse", models: [{ value: muse.model, label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] });
+  data.defaults["standard/builder"] = muse;
+  expect(remoteModelChoice(data, "standard", null)).toEqual(muse);
+  expect(remoteModelProblem(data, "standard", muse)).toBeNull();
+  const options = remoteTurnOptions("standard", muse, chatOptions);
+  expect(options).toMatchObject(muse);
+  expect(remoteModelChoice(data, "standard", options)).toEqual(muse);
+});
+
 it("keeps an unavailable historical choice visible instead of replacing it silently", () => {
   const selected = remoteModelChoice(choices(), "standard", chatOptions);
   expect(selected).toMatchObject({ account: chatOptions.account, model: chatOptions.model });

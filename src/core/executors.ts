@@ -2,14 +2,14 @@ import { z } from "zod";
 import type { ModelChoice } from "./provider-references";
 
 // Retired executors remain readable in saved history without becoming runnable.
-export const executorSchema = z.string().transform(value => value === "jarvis" ? "jarvis" as const : value === "claude" ? "claude" as const : "unavailable" as const);
+export const executorSchema = z.string().transform(value => value === "jarvis" ? "jarvis" as const : value === "claude" ? "claude" as const : value === "muse" ? "muse" as const : "unavailable" as const);
 export type Executor = z.infer<typeof executorSchema>;
 export const serviceTierSchema = z.literal("priority").nullable().transform(value => value ?? undefined).optional();
 export type ServiceTier = z.infer<typeof serviceTierSchema>;
 export type ExecutionChoice = { executor?: Executor; account: string; model: string; reasoning: string | null; serviceTier?: ServiceTier };
 export type ExecutionSelection = { executor?: Executor; model: string; reasoning: string | null; serviceTier?: ServiceTier };
 export const executorOf = (choice?: { executor?: Executor } | null): Executor => choice?.executor ?? "jarvis";
-export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "unavailable" ? "Executor removido" : choice.account} / ${choice.model}${choice.serviceTier === "priority" ? " · Fast" : ""}`;
+export const executionLabel = (choice: ExecutionChoice) => `${executorOf(choice) === "claude" ? "Claude Code" : executorOf(choice) === "muse" ? "Muse Code" : executorOf(choice) === "unavailable" ? "Executor removido" : choice.account} / ${choice.model}${choice.serviceTier === "priority" ? " · Fast" : ""}`;
 export const sameExecutionTarget = (first: ExecutionChoice, second: ExecutionChoice) => executorOf(first) === executorOf(second) && first.account === second.account && first.model === second.model;
 export const FAST_USAGE_NOTICE = "Maior consumo dos limites/créditos";
 export function supportsFastMode(providerKind: string | undefined, model: { supportsFast?: boolean } | null | undefined, executor?: Executor): boolean {
@@ -66,3 +66,10 @@ export function claudeModels(runtime: ClaudeRuntime | null) {
   const preferences = runtime?.preferences ?? DEFAULT_CLAUDE_PREFERENCES;
   return preferences.enabled ? runtime?.models.filter(model => !preferences.disabledModels.includes(model.id)).map(model => ({ value: model.id, label: model.name, reasoningLevels: model.reasoningLevels, defaultReasoningLevel: model.defaultReasoning })) ?? [] : [];
 }
+
+export const museProviderPreferencesSchema = claudeProviderPreferencesSchema;
+export type MuseProviderPreferences = z.infer<typeof museProviderPreferencesSchema>;
+export const DEFAULT_MUSE_PREFERENCES: MuseProviderPreferences = { ...DEFAULT_CLAUDE_PREFERENCES, disabledModels: [] };
+export const museRuntimeSchema = claudeRuntimeSchema;
+export type MuseRuntime = z.infer<typeof museRuntimeSchema>;
+export const museModels = claudeModels;

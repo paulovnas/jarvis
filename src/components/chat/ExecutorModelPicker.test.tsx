@@ -7,12 +7,31 @@ import type { ModelSelection } from "./ModelPicker";
 import type { ClaudeRuntime } from "@/core/executors";
 
 const runtime = vi.hoisted(() => ({ data: null as ClaudeRuntime | null, loading: false, error: null as string | null, refresh: vi.fn() }));
+const muse = vi.hoisted(() => ({ data: null as ClaudeRuntime | null, loading: false, saving: false, error: null as string | null, refresh: vi.fn(), savePreferences: vi.fn() }));
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => runtime }));
+vi.mock("@/hooks/use-muse-runtime", () => ({ useMuseRuntime: () => muse }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 
 beforeEach(() => {
   runtime.data = { installed: true, authenticated: true, version: "2.1", error: null, models: [{ id: "sonnet", name: "Claude Sonnet", description: "CLI", reasoningLevels: ["low", "high"], defaultReasoning: "high" }] };
   runtime.loading = false; runtime.error = null; runtime.refresh.mockClear();
+  muse.data = null; muse.loading = false; muse.error = null; muse.refresh.mockClear();
+});
+
+it("offers official Muse models without converting them to a native provider alias", async () => {
+  muse.data = { installed: true, authenticated: true, version: "1", error: null, models: [{ id: "muse-wonder", name: "Muse Wonder", description: "", reasoningLevels: [], defaultReasoning: null }] };
+  const user = userEvent.setup(), select = vi.fn();
+  render(<ExecutorModelPicker modelGroups={[]} selection={{ executor: "muse", model: "muse-wonder", reasoning: null }} onSelect={select} showProviderIdentity />);
+  const picker = screen.getByRole("button", { name: "Selecionar modelo de IA" });
+  expect(picker).toHaveTextContent("Muse Code · Muse Wonder");
+  await user.click(picker);
+  (await screen.findByRole("menuitem", { name: "Muse Code" })).focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Muse Wonder" }));
+  expect(select).toHaveBeenCalledWith({ executor: "muse", model: "muse-wonder", reasoning: null });
+  expect(screen.getByRole("button", { name: "Status e configuração do Muse Code" })).toBeVisible();
+  await user.click(picker);
+  await user.click(await screen.findByRole("menuitem", { name: "Atualizar lista de modelos" }));
+  expect(muse.refresh).toHaveBeenCalledOnce();
 });
 
 it("keeps ordinary Antigravity available without exposing the retired CLI provider", async () => {

@@ -624,6 +624,47 @@ describe("Jarvito chat", () => {
     expect(call.mock.calls.some(([name]) => name === "list_provider_accounts" || name === "refresh_claude_runtime")).toBe(false);
   });
 
+  it("refreshes Muse selections when subscription login finishes in another window", async () => {
+    globalChat.options = { ...options, executor: "muse", account: "", model: "muse-wonder", reasoning: null };
+    const original = call.getMockImplementation()!;
+    let connected = false;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "get_companion_models"
+      ? connected ? [{ provider: "Muse Code", executor: "muse", models: [{ value: "muse-wonder", label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] }] : []
+      : original(command, args, invokeOptions));
+    render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("muse-wonder · Indisponível");
+    expect(events.has("muse-runtime:changed")).toBe(true);
+    connected = true;
+    act(() => events.get("muse-runtime:changed")?.({}));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("Muse Code · Muse Wonder"));
+    expect(call.mock.calls.some(([name]) => name === "list_provider_accounts" || name === "refresh_muse_runtime")).toBe(false);
+  });
+
+  it.each(["resolve", "reject"] as const)("keeps the new Muse catalog when an older discovery later %ss", async outcome => {
+    globalChat.options = { ...options, executor: "muse", account: "", model: "muse-wonder", reasoning: null };
+    const original = call.getMockImplementation()!;
+    let finish: (value: unknown) => void = () => {};
+    let fail: (cause: Error) => void = () => {};
+    const older = new Promise<unknown>((resolve, reject) => { finish = resolve; fail = reject; });
+    const models = [{ provider: "Muse Code", executor: "muse", models: [{ value: "muse-wonder", label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] }];
+    let probes = 0;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "get_companion_models"
+      ? ++probes === 1 ? older : models : original(command, args, invokeOptions));
+    const user = userEvent.setup();
+    render(<CompanionChatPane />);
+    await screen.findByText("Oi, eu sou o Jarvito.");
+    act(() => events.get("muse-runtime:changed")?.({}));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("Muse Code · Muse Wonder"));
+    await waitFor(() => expect(call.mock.calls.filter(([name]) => name === "get_companion_chat")).toHaveLength(2));
+    await user.type(screen.getByRole("textbox", { name: "Mensagem para Jarvito" }), "Continue a tarefa");
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeEnabled();
+    await act(async () => { if (outcome === "resolve") finish([]); else fail(new Error("Consulta antiga falhou")); await older.catch(() => {}); });
+    expect(screen.getByRole("button", { name: "Modelo do Jarvito" })).toHaveTextContent("Muse Code · Muse Wonder");
+    expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("replaces an unavailable historical model through the standard picker before sending", async () => {
     globalChat.options = { ...options, model: "retired-model" };
     const user = userEvent.setup(); render(<CompanionChatPane />);

@@ -4,7 +4,9 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { File } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Children, isValidElement, useMemo, useState } from "react";
+import { Children, isValidElement, useMemo, useState, type ReactNode } from "react";
+import type { Element, ElementContent, Root } from "hast";
+import type { Plugin } from "unified";
 import { CodeBlock } from "./CodeBlock";
 import { MarkdownPrefixCache } from "./markdown-prefix";
 import { useStreamedText } from "./use-streamed-text";
@@ -43,13 +45,31 @@ const markdownComponents: Components = {
   img: ({ alt }) => <span className="text-muted-foreground">[Imagem: {alt || "sem descrição"}]</span>,
 };
 
-export type ChatMarkdownProps = { content: string; isStreaming?: boolean; streamId?: string };
+function inlinePartsPlugin(parts: ReadonlyMap<string, ReactNode>): Plugin<[], Root> {
+  return () => tree => {
+    const visit = (parent: Root | Element) => {
+      for (let index = parent.children.length - 1; index >= 0; index--) {
+        const node = parent.children[index];
+        if (node.type === "element") visit(node);
+        if (node.type !== "text") continue;
+        const children: ElementContent[] = node.value.split(/(JARVISSKILL[a-f0-9]+TOKEN)/).filter(Boolean).map(value => parts.has(value)
+          ? { type: "element", tagName: "span", properties: { "data-jarvis-part": value }, children: [] }
+          : { type: "text", value });
+        parent.children.splice(index, 1, ...children);
+      }
+    };
+    visit(tree);
+  };
+}
 
-export default function ChatMarkdown({ content, isStreaming = false, streamId = "" }: ChatMarkdownProps) {
+export type ChatMarkdownProps = { content: string; isStreaming?: boolean; streamId?: string; inlineParts?: ReadonlyMap<string, ReactNode> };
+
+export default function ChatMarkdown({ content, isStreaming = false, streamId = "", inlineParts }: ChatMarkdownProps) {
   const [cache] = useState(() => new MarkdownPrefixCache());
   const displayed = useStreamedText(content, isStreaming, streamId);
   return useMemo(() => {
     const projection = cache.prepare(displayed, isStreaming, streamId);
-    return <ReactMarkdown remarkPlugins={[remarkGfm, projection.plugin]} urlTransform={(url, key) => key === "href" && localFilePath(url) ? url : defaultUrlTransform(url)} components={markdownComponents}>{projection.content}</ReactMarkdown>;
-  }, [cache, displayed, isStreaming, streamId]);
+    const components: Components = inlineParts ? { ...markdownComponents, span: ({ node, children }) => inlineParts.get(String(node?.properties["data-jarvis-part"])) ?? <span>{children}</span> } : markdownComponents;
+    return <ReactMarkdown remarkPlugins={[remarkGfm, projection.plugin]} rehypePlugins={inlineParts ? [inlinePartsPlugin(inlineParts)] : []} urlTransform={(url, key) => key === "href" && localFilePath(url) ? url : defaultUrlTransform(url)} components={components}>{projection.content}</ReactMarkdown>;
+  }, [cache, displayed, isStreaming, streamId, inlineParts]);
 }

@@ -453,6 +453,7 @@ mod tests {
                         None,
                         None,
                     ),
+                    None,
                 )
                 .unwrap();
                 Ok::<_, crate::persistence::PersistenceError>(())

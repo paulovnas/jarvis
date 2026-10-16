@@ -38,7 +38,7 @@ export function UserMessageBubble({ message }: UserMessageBubbleProps) {
         )}
 
         {liveRequest ? <LiveRequestCard request={liveRequest} timestamp={message.timestamp} /> : <div className="instrument-panel group relative min-w-0 max-w-full border-primary/15 bg-secondary/60 px-4 py-3 text-sm leading-relaxed text-foreground">
-          <p className="whitespace-pre-wrap break-words"><MessageContent content={message.content} parts={message.parts} /></p>
+          <div className="markdown-editor-prose min-w-0 break-words [&_p]:whitespace-pre-wrap"><MessageContent content={message.content} parts={message.parts} markdown /></div>
           <div className="mt-2 flex items-center justify-end gap-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
             <span>{message.timestamp}</span>
             <User className="size-3 text-[#61afef]" />

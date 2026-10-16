@@ -12,11 +12,12 @@ import { FlowPicker } from "./FlowPicker";
 import { ComposerSkeleton } from "@/components/layout/LoadingSkeletons";
 import { PromptRefinementStatus } from "./PromptRefinementStatus";
 import { useMessagePrediction } from "@/hooks/use-message-prediction";
-import { refinePrompt } from "@/core/prompt-refinement";
+import { usePromptRefinement } from "@/hooks/use-prompt-refinement";
 import { type ProviderModelGroup, type ModelSelection, type ModelOptionDef } from "./ModelPicker";
 import { ExecutorModelPicker } from "./ExecutorModelPicker";
-import { claudeModels, executionChoice, executionSelection, executorOf, fastModeUnavailable, selectModelChoice, type ExecutionChoice } from "@/core/executors";
+import { claudeModels, museModels, executionChoice, executionSelection, executorOf, fastModeUnavailable, selectModelChoice, type ExecutionChoice } from "@/core/executors";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
+import { useMuseRuntime } from "@/hooks/use-muse-runtime";
 export type { ProviderModelGroup } from "./ModelPicker";
 import type { AgentModelsController } from "@/hooks/use-agent-models";
 import type { ChatAgentModelsController } from "@/hooks/use-chat-agent-models";
@@ -118,6 +119,9 @@ export function ChatComposer({
   workflowSnapshot,
 }: ChatComposerProps) {
   const [draft, updateDraft] = useState<ChatDraft>(() => draftKey ? drafts?.get(draftKey) ?? { content: "" } : { content: "" });
+  const [localDrafts] = useState(() => new Map<string, ChatDraft>());
+  const draftStore = drafts ?? localDrafts;
+  const draftScope = draftKey ?? "";
   const text = draft.content;
   const draftRef = useRef(draft);
   const input = useRef<{ focus: () => void }>(null);
@@ -125,13 +129,18 @@ export function ChatComposer({
   const importing = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
-  const [refining, setRefining] = useState(false);
+  const refinement = usePromptRefinement(draftStore, draftScope, draftKey);
+  const refining = refinement.refining;
   const prediction = useMessagePrediction(draftKey, historySnapshot, Boolean(text), refining || disabled || running || compacting || uploading);
-  const refinementControl = useRef({ request: 0, locked: false });
   useEffect(() => {
-    const control = refinementControl.current;
-    return () => { control.request++; control.locked = false; };
-  }, []);
+    if (refining) return;
+    const restored = draftStore.get(draftScope);
+    if (!restored || restored === draftRef.current) return;
+    draftRef.current = restored;
+    updateDraft(restored);
+    const frame = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [refining, draftScope, draftStore]);
   const attachments = draft.parts?.filter(part => part.type === "attachment") ?? [];
   const removeLocks = useRef(new Set<string>());
   const lastInsertion = useRef<string | null>(null);
@@ -140,39 +149,23 @@ export function ChatComposer({
     lastInsertion.current = draftInsertion.id;
     const next = mergeDrafts(draftRef.current, { content: draftInsertion.text });
     draftRef.current = next;
-    if (draftKey) drafts?.set(draftKey, next);
+    draftStore.set(draftScope, next);
     updateDraft(next);
     const frame = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [draftInsertion, draftKey, drafts]);
+  }, [draftInsertion, draftScope, draftStore]);
   const setDraft = (value: ChatDraft) => {
     if (value.content !== draftRef.current.content && value.content) prediction.dismiss();
     draftRef.current = value;
-    if (draftKey) { if (value.content || value.parts?.length) drafts?.set(draftKey, value); else drafts?.delete(draftKey); }
+    if (value.content || value.parts?.length) draftStore.set(draftScope, value); else draftStore.delete(draftScope);
     updateDraft(value);
   };
-  const handleRefine = async () => {
-    if (refinementControl.current.locked || disabled || compacting || sending || uploading || !draftRef.current.content.trim()) return;
-    refinementControl.current.locked = true;
-    const request = ++refinementControl.current.request;
-    setRefining(true);
-    try {
-      await stopDictation(draftKey ? `chat:${draftKey}` : undefined);
-      if (request !== refinementControl.current.request) return;
-      const submitted = draftRef.current;
-      const refined = await refinePrompt(submitted, draftKey);
-      if (request !== refinementControl.current.request) return;
-      if (draftRef.current !== submitted) { toast.info("O rascunho mudou durante o refinamento. Seu texto atual foi mantido."); return; }
-      setDraft(refined);
-      requestAnimationFrame(() => input.current?.focus());
-    } catch (cause) {
-      if (request === refinementControl.current.request) toast.error(libraryError(cause, "Não foi possível refinar o prompt. Seu texto foi mantido."));
-    } finally {
-      if (request === refinementControl.current.request) { refinementControl.current.locked = false; setRefining(false); }
-    }
+  const handleRefine = () => {
+    if (refinement.pending() || disabled || compacting || sending || uploading || !draftRef.current.content.trim()) return;
+    void refinement.start(() => stopDictation(draftKey ? `chat:${draftKey}` : undefined), () => draftStore.get(draftScope) ?? draftRef.current);
   };
   async function addFiles(files: File[]) {
-    if (!draftKey || disabled || compacting || refinementControl.current.locked || importing.current || !files.length) return;
+    if (!draftKey || disabled || compacting || refinement.pending() || importing.current || !files.length) return;
     const existing = draftRef.current.parts?.filter(part => part.type === "attachment") ?? [];
     if (files.length + existing.length > 8 || files.reduce((sum, file) => sum + file.size, existing.reduce((sum, part) => sum + part.attachment.size, 0)) > 50 * 1024 * 1024) { toast.error("Anexe até 8 arquivos, somando no máximo 50 MB."); return; }
     importing.current = true; setUploading(true);
@@ -230,7 +223,7 @@ export function ChatComposer({
     const submitted = draftRef.current;
     const trimmed = submitted.content.trim() || (submitted.parts?.some(part => part.type === "attachment") ? "Analise os anexos." : "");
     if (modelError) { toast.error("Revise o modelo antes de enviar", { description: modelError }); return false; }
-    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || refinementControl.current.locked || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
+    if (!trimmed || disabled || !selectionReady || customUnavailable || compacting || refinement.pending() || importing.current || chatModels?.saving || choosingModelLock.current || sendLock.current || !currentModelDef) return false;
     const choice = executionChoice({ executor: executorOf(effectiveSelection), model: currentModelDef.value, reasoning, ...(effectiveSelection?.serviceTier === "priority" ? { serviceTier: "priority" } : {}) });
     if (choice.executor === "jarvis" && !choice.account) return false;
     sendLock.current = true;
@@ -279,26 +272,31 @@ export function ChatComposer({
       ? [...(savedChoice ? [{ name: customFlow?.name ?? "Chat", choice: savedChoice }] : []), ...(catalog.data?.agents.flatMap(agent => agent.model && customFlow?.steps.some(step => step.agentId === agent.id) ? [{ name: agent.name, choice: agent.model }] : []) ?? [])]
       : Object.entries({ ...agentModels?.data, ...chatModels?.data, ...localChoices }).flatMap(([key, choice]) => key.startsWith(`${workflow}/`) ? [{ name: key, choice: key === modelKey && savedChoice ? savedChoice : choice }] : []);
   const claudeRequired = executorOf(effectiveSelection) === "claude" || configuredAgents.some(agent => executorOf(agent.choice) === "claude" || executorOf(agent.choice.fallback) === "claude");
+  const museRequired = executorOf(effectiveSelection) === "muse" || configuredAgents.some(agent => executorOf(agent.choice) === "muse" || executorOf(agent.choice.fallback) === "muse");
   const claude = useClaudeRuntime(claudeRequired);
+  const muse = useMuseRuntime(museRequired);
   const runtimeModels = claudeModels(claude.data);
-  const modelsFor = (choice: ModelSelection | null): ModelOptionDef[] => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "unavailable" ? [] : nativeModels;
+  const museRuntimeModels = museModels(muse.data);
+  const modelsFor = (choice: ModelSelection | null): ModelOptionDef[] => executorOf(choice) === "claude" ? runtimeModels : executorOf(choice) === "muse" ? museRuntimeModels : executorOf(choice) === "unavailable" ? [] : nativeModels;
   const availableModels = modelsFor(effectiveSelection);
-  const selectionReady = (!chatModels || chatModels.data !== null && !chatModels.error) && (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading);
+  const selectionReady = (!chatModels || chatModels.data !== null && !chatModels.error) && (executorOf(effectiveSelection) !== "jarvis" || modelsReady) && (!claudeRequired || Boolean(claude.data) && !claude.loading) && (!museRequired || Boolean(muse.data) && !muse.loading);
   const currentModelDef =
     availableModels.find((availableModel) => availableModel.value === effectiveSelection?.model) ??
     (effectiveSelection ? undefined : availableModels[0]);
   const invalidSelection = (choice: ModelSelection) => {
     if (executorOf(choice) === "claude" && !claude.data) return false;
+    if (executorOf(choice) === "muse" && !muse.data) return false;
     const model = modelsFor(choice).find(item => item.value === choice.model);
     const group = modelGroups.find(group => executorOf(group) === executorOf(choice) && group.models.some(item => item.value === choice.model));
     return !model || Boolean(choice.reasoning && !model.reasoningLevels.includes(choice.reasoning)) || choice.serviceTier === "priority" && fastModeUnavailable(group?.providerKind, model, choice.executor, group?.modelsStale);
   };
   const invalidAgent = configuredAgents.find(agent => invalidSelection(executionSelection(agent.choice)!) || Boolean(agent.choice.fallback && invalidSelection(executionSelection(agent.choice.fallback)!)))?.name;
   const claudeProblem = !claudeRequired || claude.loading ? null : claude.error ?? (claude.data?.preferences?.enabled === false ? "Ative o Claude Code em Configurações → Provedores." : claude.data && !claude.data.installed ? "Instale o Claude Code em Configurações → Provedores e atualize o status." : claude.data && !claude.data.authenticated ? "Entre na sua conta com claude auth login e atualize o status do Claude Code." : null);
+  const museProblem = !museRequired || muse.loading ? null : muse.error ?? (muse.data?.preferences?.enabled === false ? "Ative o Muse Code em Configurações → Provedores." : muse.data && !muse.data.installed ? "Instale o Muse Code em Configurações → Provedores e atualize o status." : muse.data && !muse.data.authenticated ? "Conecte sua assinatura Muse Code em Configurações → Provedores e atualize o status." : muse.data?.error ?? null);
   const removedExecutor = executorOf(effectiveSelection) === "unavailable" || configuredAgents.some(agent => executorOf(agent.choice) === "unavailable" || executorOf(agent.choice.fallback) === "unavailable");
   const selectedGroup = modelGroups.find(group => group.models.some(item => item.value === effectiveSelection?.model));
   const fastProblem = selectionReady && effectiveSelection?.serviceTier === "priority" && fastModeUnavailable(selectedGroup?.providerKind, currentModelDef, effectiveSelection.executor, selectedGroup?.modelsStale) ? "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo." : null;
-  const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? fastProblem ?? (!selectionReady ? null : invalidAgent
+  const modelError = chatModels?.error ?? (removedExecutor ? "Este executor foi removido. Escolha um provedor e modelo disponíveis para continuar." : null) ?? claudeProblem ?? museProblem ?? fastProblem ?? (!selectionReady ? null : invalidAgent
     ? `O agente ${invalidAgent} usa um modelo indisponível. Selecione um modelo válido para este chat.`
     : effectiveSelection && invalidSelection(effectiveSelection) ? `O modelo ${effectiveSelection.model} está indisponível. Revise o provedor e o modelo deste chat.` : null);
   useModelProblemNotice("Chat", modelError, `chat:${draftKey ?? "new"}`);
@@ -381,7 +379,7 @@ export function ChatComposer({
         onReorder={onReorderQueued}
         onResume={onResumeQueue}
       />}
-      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} prediction={prediction.text} onDismissPrediction={prediction.dismiss} onAcceptPrediction={() => { if (prediction.text) { const parts = draftRef.current.parts?.filter(part => part.type === "attachment"); setDraft(parts?.length ? { content: prediction.text, parts: [{ type: "text", text: prediction.text }, ...parts] } : { content: prediction.text }); prediction.dismiss(); requestAnimationFrame(() => input.current?.focus()); } }} actions={<Hint content="Refinar prompt"><Button type="button" variant="ghost" size="icon" aria-label="Refinar prompt" aria-busy={refining} disabled={!text.trim() || disabled || compacting || refining || sending || uploading} className="size-7 cursor-pointer rounded-lg text-muted-foreground hover:text-primary" onClick={() => { void handleRefine(); }}><Sparkles aria-hidden="true" className="size-4" /></Button></Hint>} loading={refining ? <PromptRefinementStatus /> : undefined} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending || refining} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting || refining} compacting={compacting} working={running || compacting}>
+      <Suspense fallback={<ComposerSkeleton />}><SkillInput ref={input} draft={draft} onChange={setDraft} prediction={prediction.text} onDismissPrediction={prediction.dismiss} onAcceptPrediction={() => { if (prediction.text) { const parts = draftRef.current.parts?.filter(part => part.type === "attachment"); setDraft(parts?.length ? { content: prediction.text, parts: [{ type: "text", text: prediction.text }, ...parts] } : { content: prediction.text }); prediction.dismiss(); requestAnimationFrame(() => input.current?.focus()); } }} actions={<Hint content={refining ? "Cancelar refinamento" : "Refinar prompt"}><Button type="button" variant="ghost" size="icon" aria-label={refining ? "Cancelar refinamento" : "Refinar prompt"} aria-busy={refining} disabled={!refining && (!text.trim() || disabled || compacting || sending || uploading)} className="size-7 cursor-pointer rounded-lg text-muted-foreground hover:text-primary" onClick={() => { if (refining) refinement.cancel(); else void handleRefine(); }}>{refining ? <Square aria-hidden="true" className="size-3.5 fill-current" /> : <Sparkles aria-hidden="true" className="size-4" />}</Button></Hint>} loading={refining ? <PromptRefinementStatus /> : undefined} loadHistory={draftKey ? before => readComposerHistory(draftKey, historySnapshot, before) : undefined} onFiles={files => { void addFiles(files); }} attachments={(attachments.length > 0 || uploading) && <div className="flex flex-wrap gap-1 px-5 pt-4" aria-label="Anexos da mensagem">{attachments.map(part => <AttachmentPreview key={part.attachment.id} attachment={part.attachment} disabled={disabled || compacting || sending || refining} onRemove={() => { const current = draftRef.current; setDraft({ ...current, parts: current.parts?.filter(item => item.type !== "attachment" || item.attachment.id !== part.attachment.id) }); }} />)}{uploading && <Skeleton className="mb-2 size-20 rounded-lg" role="status" aria-label="Preparando anexos" />}</div>} onSend={() => { void handleSend(); }} disabled={disabled || compacting || refining} compacting={compacting} working={running || compacting}>
 
         <div className="flex w-full min-w-0 flex-col">
         {draftKey && <div className="px-4"><VoiceSessionPanel target={`chat:${draftKey}`} /></div>}

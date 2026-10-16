@@ -8,6 +8,7 @@ import { WebSearchSettings } from "./WebSearchSettings";
 import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/hooks/use-muse-runtime", () => ({ useMuseRuntime: () => ({ data: null, loading: false, error: null }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), dismiss: vi.fn() } }));
 const invokeMock = vi.mocked(invoke);
 const account = (alias: string, providerKind = "openai-codex"): ProviderAccount => ({

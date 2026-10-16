@@ -20,12 +20,12 @@ it("keeps distinct built-in role colors on waiting cards consistent with Setting
   });
   expect(new Set(colors).size).toBe(roles.length);
 });
-it("shows the account suffix, model and effort and updates execution states with the current roster", () => {
+it("shows the complete legacy alias, model and effort and updates execution states with the current roster", () => {
   const current = { ...agent, options: { ...agent.options, account: "openai-codex-paulo" } };
   const workflow = { data: { conversationId: "c1", revision: 1, flow: "planned" as const, agents: [current] }, error: null, loading: false, retry: vi.fn() };
   const view = render(<WorkflowAgents conversationId="c1" workflow={workflow} />);
   const card = screen.getByRole("button", { name: "Abrir agente Construtor: Implementar busca" });
-  expect(within(card).getByText("paulo")).toBeInTheDocument();
+  expect(within(card).getByText("openai-codex-paulo")).toBeInTheDocument();
   expect(card).toHaveTextContent("gpt-5.6-terra·Alto");
   expect(card).toHaveAttribute("data-status", "running");
   view.rerender(<WorkflowAgents conversationId="c1" workflow={{ ...workflow, data: { ...workflow.data, agents: [{ ...current, status: "waiting" }] } }} />);

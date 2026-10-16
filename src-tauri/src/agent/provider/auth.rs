@@ -113,7 +113,7 @@ mod tests {
             let alias = "openai-codex-test";
             state
                 .with_connection(home.path(), |db| {
-                    crate::persistence::insert_provider_account(db, alias, "original")?;
+                    crate::persistence::insert_provider_account(db, alias, "original", None)?;
                     Ok::<_, crate::persistence::PersistenceError>(())
                 })
                 .unwrap();

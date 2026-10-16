@@ -133,7 +133,15 @@ fn existing_go_accounts_get_corrected_contracts_without_reconnect_or_catalog_rew
     legacy.token_field = TokenField::MaxTokens;
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, "synthetic-key", false, &[legacy.clone()])
+            save(
+                db,
+                &store,
+                alias,
+                "synthetic-key",
+                false,
+                &[legacy.clone()],
+                None,
+            )
         })
         .unwrap();
     let corrected = model_config(&state, home.path(), alias, "deepseek-v4.1-flash").unwrap();
@@ -184,7 +192,15 @@ fn go_recovery_glm_thinking_only_alias_is_normalized_for_new_and_cached_accounts
     legacy.models[0].default_reasoning_level = Some("off".into());
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, "synthetic-key", false, &[legacy.clone()])
+            save(
+                db,
+                &store,
+                alias,
+                "synthetic-key",
+                false,
+                &[legacy.clone()],
+                None,
+            )
         })
         .unwrap();
     let corrected = model_config(&state, home.path(), alias, "glm-5.1").unwrap();
@@ -245,6 +261,7 @@ fn key_rotation_keeps_identity_and_public_catalog_while_secrets_never_cross_ipc(
                 "synthetic-key",
                 false,
                 &fixtures(),
+                Some("Minha assinatura"),
             )
         })
         .unwrap();
@@ -252,6 +269,8 @@ fn key_rotation_keeps_identity_and_public_catalog_while_secrets_never_cross_ipc(
     let records = state.list_provider_accounts(home.path()).unwrap();
     let account = account(&state, home.path(), records[0].clone()).unwrap();
     assert_eq!(account.provider_kind, "opencode-go");
+    assert_eq!(account.alias, alias);
+    assert_eq!(account.display_name.as_deref(), Some("Minha assinatura"));
     assert!(account.show_usage);
     assert!(account.custom.is_none());
     assert!(account.vision_models.contains(&"qwen3.8-max".into()));
@@ -260,7 +279,15 @@ fn key_rotation_keeps_identity_and_public_catalog_while_secrets_never_cross_ipc(
         .contains("synthetic-key"));
     state
         .with_connection(home.path(), |db| {
-            save(db, store.as_ref(), alias, "rotated-key", true, &fixtures())
+            save(
+                db,
+                store.as_ref(),
+                alias,
+                "rotated-key",
+                true,
+                &fixtures(),
+                None,
+            )
         })
         .unwrap();
     let rotated = credential(&state, home.path(), store.as_ref(), alias).unwrap();
@@ -306,7 +333,7 @@ fn invalid_alias_disabled_account_and_changed_identity_are_rejected() {
     let alias = "opencode-go-work";
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, alias, "synthetic", false, &fixtures())
+            save(db, &store, alias, "synthetic", false, &fixtures(), None)
         })
         .unwrap();
     state
@@ -332,7 +359,15 @@ fn go_catalog_survives_restart_and_disconnect_cascades_public_metadata_only() {
     let state = AppState::default();
     state
         .with_connection(home.path(), |db| {
-            save(db, &store, "opencode-go-home", "secret", false, &fixtures())
+            save(
+                db,
+                &store,
+                "opencode-go-home",
+                "secret",
+                false,
+                &fixtures(),
+                None,
+            )
         })
         .unwrap();
     drop(state);
@@ -369,7 +404,7 @@ fn secure_store_failure_rolls_back_new_account_and_existing_catalog_rotation() {
     let alias = "opencode-go-work";
     let original = fixtures();
     store.fail_store(true);
-    assert!(save(&mut db, &store, alias, "new-key", false, &original).is_err());
+    assert!(save(&mut db, &store, alias, "new-key", false, &original, None).is_err());
     for table in ["provider_accounts", "opencode_go_catalogs"] {
         assert_eq!(
             db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
@@ -379,11 +414,11 @@ fn secure_store_failure_rolls_back_new_account_and_existing_catalog_rotation() {
         );
     }
     store.fail_store(false);
-    save(&mut db, &store, alias, "old-key", false, &original).unwrap();
+    save(&mut db, &store, alias, "old-key", false, &original, None).unwrap();
     let mut modified = original.clone();
     modified[0].models[0].name = "Changed".into();
     store.fail_store(true);
-    assert!(save(&mut db, &store, alias, "rotated", true, &modified).is_err());
+    assert!(save(&mut db, &store, alias, "rotated", true, &modified, None).is_err());
     assert_eq!(store.load(alias).unwrap().access, "old-key");
     let raw: String = db
         .query_row("SELECT catalog FROM opencode_go_catalogs", [], |r| r.get(0))

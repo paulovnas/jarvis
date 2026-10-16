@@ -1,4 +1,4 @@
-//! Windows notification-area menu. Refresh on demand without polling or loading journals.
+//! Windows notification-area and macOS menu-bar tray. Refresh without polling or loading journals.
 use crate::{
     auxiliary_windows::{self, AuxiliaryWindowKind},
     system::CloseBehavior,
@@ -134,6 +134,7 @@ fn build_menu(app: &tauri::AppHandle, chats: &Chats) -> tauri::Result<Menu<tauri
 
 #[derive(Debug, PartialEq, Eq)]
 enum TrayAction {
+    Menu,
     Open,
     Settings,
     About,
@@ -142,6 +143,17 @@ enum TrayAction {
 }
 
 impl TrayAction {
+    fn from_click(button: MouseButton, state: MouseButtonState) -> Option<Self> {
+        if state != MouseButtonState::Up {
+            return None;
+        }
+        match button {
+            MouseButton::Left if !cfg!(target_os = "macos") => Some(Self::Open),
+            MouseButton::Left | MouseButton::Right => Some(Self::Menu),
+            _ => None,
+        }
+    }
+
     fn from_id(id: &str) -> Option<Self> {
         match id {
             "tray.open" => Some(Self::Open),
@@ -169,12 +181,13 @@ fn show_main(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 fn report(app: &tauri::AppHandle, error: impl std::fmt::Display) {
-    eprintln!("Windows tray: {error}");
+    eprintln!("System tray: {error}");
     let _ = app.emit_to("main", "app:auxiliary-error", error.to_string());
 }
 
 fn act(app: &tauri::AppHandle, action: TrayAction) {
     match action {
+        TrayAction::Menu => open_menu(app),
         TrayAction::Open => {
             if let Err(error) = show_main(app) {
                 report(app, error);
@@ -237,13 +250,13 @@ fn open_menu(app: &tauri::AppHandle) {
         let chats = match chats {
             Ok(Ok(chats)) => chats,
             error => {
-                eprintln!("Windows tray conversations: {error:?}");
+                eprintln!("System tray conversations: {error:?}");
                 report(&app, "Não foi possível listar as conversas da bandeja.");
                 Chats::default()
             }
         };
         let handle = app.clone();
-        if let Err(error) = app.run_on_main_thread(move || {
+        let open = move || {
             let result = (|| -> tauri::Result<()> {
                 if let Some(tray) = handle.tray_by_id(TRAY_ID) {
                     tray.set_menu(Some(build_menu(&handle, &chats)?))?;
@@ -258,7 +271,12 @@ fn open_menu(app: &tauri::AppHandle) {
             if let Err(error) = result {
                 report(&handle, error);
             }
-        }) {
+        };
+        // AppKit's menu loop must not re-enter an active winit event handler.
+        #[cfg(target_os = "macos")]
+        dispatch2::DispatchQueue::main().exec_async(open);
+        #[cfg(not(target_os = "macos"))]
+        if let Err(error) = app.run_on_main_thread(open) {
             app.state::<TrayState>()
                 .opening
                 .store(false, Ordering::Release);
@@ -267,10 +285,24 @@ fn open_menu(app: &tauri::AppHandle) {
     });
 }
 
-pub(crate) fn install(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    app.manage(TrayState::default());
+fn tray_image() -> Result<image::RgbaImage, image::ImageError> {
     let image =
         image::load_from_memory(include_bytes!("../../public/v2/png/mark-32.png"))?.into_rgba8();
+    #[cfg(target_os = "macos")]
+    {
+        // Keep the native slot size while giving the mark an inset on both axes.
+        let mark = image::imageops::resize(&image, 24, 24, image::imageops::FilterType::Lanczos3);
+        let mut padded = image::RgbaImage::new(32, 32);
+        image::imageops::overlay(&mut padded, &mark, 4, 4);
+        Ok(padded)
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(image)
+}
+
+pub(crate) fn install(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    app.manage(TrayState::default());
+    let image = tray_image()?;
     let (width, height) = image.dimensions();
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(tauri::image::Image::new_owned(
@@ -278,6 +310,7 @@ pub(crate) fn install(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
             width,
             height,
         ))
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Jarvis")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
@@ -288,14 +321,12 @@ pub(crate) fn install(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button,
-                button_state: MouseButtonState::Up,
+                button_state,
                 ..
             } = event
             {
-                match button {
-                    MouseButton::Right => open_menu(tray.app_handle()),
-                    MouseButton::Left => act(tray.app_handle(), TrayAction::Open),
-                    _ => {}
+                if let Some(action) = TrayAction::from_click(button, button_state) {
+                    act(tray.app_handle(), action);
                 }
             }
         })
@@ -339,6 +370,30 @@ pub(crate) fn hide_on_close(window: &tauri::Window) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_icon_keeps_its_canvas_and_adds_transparent_insets_only_on_macos() {
+        let original = image::load_from_memory(include_bytes!("../../public/v2/png/mark-32.png"))
+            .unwrap()
+            .into_rgba8();
+        let icon = tray_image().unwrap();
+        assert_eq!(icon.dimensions(), original.dimensions());
+        #[cfg(target_os = "macos")]
+        {
+            assert!(icon.pixels().any(|pixel| pixel[3] > 0));
+            for (x, y, pixel) in icon.enumerate_pixels() {
+                if !(4..28).contains(&x) || !(4..28).contains(&y) {
+                    assert_eq!(pixel[3], 0, "nontransparent margin at ({x}, {y})");
+                }
+            }
+            assert!(
+                icon.pixels().filter(|pixel| pixel[3] > 0).count()
+                    < original.pixels().filter(|pixel| pixel[3] > 0).count()
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(icon, original);
+    }
 
     fn database() -> rusqlite::Connection {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
@@ -472,6 +527,31 @@ mod tests {
         assert!(menu_entries(&chats)
             .iter()
             .any(|item| matches!(item, MenuEntry::Item { label, .. } if label == "R&&D\tA&&B")));
+    }
+
+    #[test]
+    fn tray_clicks_follow_native_conventions_without_acting_on_press_or_middle_click() {
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            assert_eq!(TrayAction::from_click(button, MouseButtonState::Down), None);
+        }
+        assert_eq!(
+            TrayAction::from_click(MouseButton::Middle, MouseButtonState::Up),
+            None
+        );
+        assert_eq!(
+            TrayAction::from_click(MouseButton::Right, MouseButtonState::Up),
+            Some(TrayAction::Menu)
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            TrayAction::from_click(MouseButton::Left, MouseButtonState::Up),
+            Some(TrayAction::Open)
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            TrayAction::from_click(MouseButton::Left, MouseButtonState::Up),
+            Some(TrayAction::Menu)
+        );
     }
 
     #[test]

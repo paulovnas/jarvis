@@ -615,11 +615,34 @@ impl Index {
             .filter(|file| !persisted_files.contains(&file.path))
             .cloned()
             .collect();
-        let inherited_mcp_intent = self.entries[..self.replay.start_entry]
+        let mut inherited_mcp_intent = self.entries[..self.replay.start_entry]
             .iter()
             .rev()
             .find_map(|entry| entry.mcp_intent.clone())
             .unwrap_or_default();
+        if inherited_mcp_intent.mode == crate::mcp::McpIntentMode::Explicit {
+            for index in (0..self.replay.start_entry).rev() {
+                let source = self.stored_turn(path, index)?;
+                if source.mcp_parent_intent.is_some() {
+                    break;
+                }
+                let messages = std::iter::once(source.turn.user)
+                    .chain(
+                        source
+                            .turn
+                            .auxiliary_messages
+                            .into_iter()
+                            .map(|message| message.content),
+                    )
+                    .collect::<Vec<_>>();
+                if let Some(restored) =
+                    crate::mcp::runtime::restored_intent_scope(&inherited_mcp_intent, &messages)
+                {
+                    inherited_mcp_intent = restored;
+                    break;
+                }
+            }
+        }
         let replayed_bytes = replayed_records
             .into_iter()
             .map(|(_, length)| u64::try_from(length).unwrap_or(u64::MAX))
@@ -2252,6 +2275,35 @@ mod tests {
         assert_eq!(compaction::input(&data), full_input);
         assert_eq!(data.total_turns(), 5);
         assert_eq!(session.snapshot_data(&data).history.total, 5);
+    }
+
+    #[test]
+    fn bounded_replay_restores_legacy_mcp_scope_from_original_human_messages() {
+        for (user, expected) in [
+            ("Use o MCP Gemini Notebook para consultar a reunião e cadastre as tarefas no Monday.", crate::mcp::McpIntentMode::OnDemand),
+            ("Use apenas o MCP Gemini Notebook.", crate::mcp::McpIntentMode::Explicit),
+        ] {
+            let fixture = Fixture::new();
+            let path = fixture.root.join("legacy-mcp-scope.jsonl");
+            fs::write(&path, "{}\n").unwrap();
+            for turn_index in 0..5 {
+                let mut turn = stored(turn_index);
+                if turn_index == 0 { turn.turn.user = user.into(); }
+                turn.mcp_intent = Some(crate::mcp::McpIntent {
+                    mode: crate::mcp::McpIntentMode::Explicit,
+                    servers: vec![crate::mcp::McpIntentServer {
+                        id: "notebook".into(), name: "gemini-notebook-mcp".into(),
+                    }],
+                    ..crate::mcp::McpIntent::default()
+                });
+                journal::append(&path, &turn).unwrap();
+            }
+            journal::append_event(&path, "context_checkpoint", &checkpoint(5)).unwrap();
+            let replay = HistoryState::default().load_replay(&path, &fixture.root).unwrap();
+            assert_eq!(replay.turn_base, 2);
+            assert_eq!(replay.inherited_mcp_intent.mode, expected);
+            assert_eq!(replay.inherited_mcp_intent.servers[0].id, "notebook");
+        }
     }
 
     #[test]

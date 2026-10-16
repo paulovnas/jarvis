@@ -18,7 +18,8 @@ fn fixture() -> (Connection, tempfile::TempDir) {
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(crate::data_dir::root(home.path())).unwrap();
     for name in ["old", "new", "third"] {
-        persistence::insert_provider_account(&db, &format!("openai-codex-{name}"), name).unwrap();
+        persistence::insert_provider_account(&db, &format!("openai-codex-{name}"), name, None)
+            .unwrap();
     }
     db.execute("INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES(1,'openai-codex-old','old-model',0)", []).unwrap();
     std::fs::write(
@@ -43,8 +44,8 @@ fn model_inventory_releases_database_during_history_io_and_preserves_bindings_an
     original.fallback = Some(Box::new(choice("openai-codex-old", "historical-secondary")));
     let target = choice("openai-codex-new", "replacement-model");
     state.with_connection(home.path(), |db| {
-        persistence::insert_provider_account(db, "openai-codex-old", "old")?;
-        persistence::insert_provider_account(db, "openai-codex-new", "new")?;
+        persistence::insert_provider_account(db, "openai-codex-old", "old", None)?;
+        persistence::insert_provider_account(db, "openai-codex-new", "new", None)?;
         db.execute_batch("INSERT INTO workspaces(id,name) VALUES('w','Workspace');")?;
         db.execute("INSERT INTO projects(id,workspace_id,name,path) VALUES(?1,'w','Project','/tmp/project')", [&project])?;
         db.execute("INSERT INTO conversations(id,project_id,title) VALUES(?1,?2,'History snapshot')", params![conversation, project])?;

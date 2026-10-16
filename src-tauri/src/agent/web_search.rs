@@ -15,6 +15,7 @@ const TIMEOUT: Duration = Duration::from_secs(90);
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
+    pub executor: crate::claude::Executor,
     pub inherit_chat: bool,
     pub account_alias: Option<String>,
     pub model: Option<String>,
@@ -23,6 +24,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            executor: crate::claude::Executor::Jarvis,
             inherit_chat: true,
             account_alias: None,
             model: None,
@@ -33,12 +35,19 @@ impl Config {
     pub(super) fn resolve(&self, options: &TurnOptions) -> Self {
         if self.inherit_chat {
             Self {
+                executor: if options.executor == crate::claude::Executor::Muse {
+                    crate::claude::Executor::Muse
+                } else {
+                    crate::claude::Executor::Jarvis
+                },
                 inherit_chat: false,
                 account_alias: options
                     .executor
                     .is_jarvis()
                     .then(|| options.account.clone()),
-                model: options.executor.is_jarvis().then(|| options.model.clone()),
+                model: (options.executor.is_jarvis()
+                    || options.executor == crate::claude::Executor::Muse)
+                    .then(|| options.model.clone()),
             }
         } else {
             self.clone()
@@ -60,6 +69,12 @@ pub(super) fn supports(kind: &str, model: &str) -> bool {
 pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> bool {
     load(state, home).is_ok_and(|config| {
         let selected = config.resolve(options);
+        if selected.executor == crate::claude::Executor::Muse {
+            return selected.model.as_deref().is_some_and(|model| {
+                crate::muse::executable().is_some()
+                    && crate::muse::validate_available_model(home, model).is_ok()
+            });
+        }
         selected
             .account_alias
             .as_deref()
@@ -80,16 +95,20 @@ fn storage_error() -> AgentError {
 fn read_config(connection: &Connection) -> Result<Config, AgentError> {
     connection
         .query_row(
-            "SELECT account_alias, model, inherit_chat FROM web_search_config WHERE id = 1",
+            "SELECT account_alias, model, inherit_chat, executor FROM web_search_config WHERE id = 1",
             [],
             |row| {
                 let account_alias: Option<String> = row.get(0)?;
-                let model = if account_alias.is_some() {
+                let executor = if row.get::<_, String>(3)? == "muse" {
+                    crate::claude::Executor::Muse
+                } else { crate::claude::Executor::Jarvis };
+                let model = if account_alias.is_some() || executor == crate::claude::Executor::Muse {
                     row.get(1)?
                 } else {
                     None
                 };
                 Ok(Config {
+                    executor,
                     account_alias,
                     model,
                     inherit_chat: row.get(2)?,
@@ -110,7 +129,22 @@ fn save_config(
     account_alias: Option<String>,
     model: Option<String>,
     inherit_chat: bool,
+    executor: crate::claude::Executor,
 ) -> Result<Config, AgentError> {
+    if !matches!(
+        executor,
+        crate::claude::Executor::Jarvis | crate::claude::Executor::Muse
+    ) || (executor == crate::claude::Executor::Muse && (inherit_chat || account_alias.is_some()))
+    {
+        return Err(AgentError::new(
+            "web_search_account",
+            "Selecione uma origem válida para Web Search.",
+        ));
+    }
+    if executor == crate::claude::Executor::Muse {
+        crate::muse::validate_selection(model.as_deref().unwrap_or_default(), None)
+            .map_err(|message| AgentError::new("web_search_model", &message))?;
+    }
     let transaction = connection.transaction().map_err(|_| storage_error())?;
     if let Some(alias) = &account_alias {
         let compatible: bool = transaction.query_row(
@@ -125,11 +159,12 @@ fn save_config(
         }
     }
     transaction.execute(
-        "INSERT INTO web_search_config (id, account_alias, model, inherit_chat) VALUES (1, ?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat",
-        params![account_alias, model, inherit_chat],
+        "INSERT INTO web_search_config (id, account_alias, model, inherit_chat, executor) VALUES (1, ?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat, executor = excluded.executor",
+        params![account_alias, model, inherit_chat, if executor == crate::claude::Executor::Muse { "muse" } else { "jarvis" }],
     ).map_err(|_| storage_error())?;
     transaction.commit().map_err(|_| storage_error())?;
     Ok(Config {
+        executor,
         account_alias,
         model,
         inherit_chat,
@@ -155,8 +190,36 @@ pub async fn set_web_search_config(
     account_alias: Option<String>,
     model: Option<String>,
     inherit_chat: bool,
+    executor: Option<crate::claude::Executor>,
 ) -> Result<Config, AgentError> {
     let home = app.path().home_dir().map_err(|_| storage_error())?;
+    let executor = executor.unwrap_or_default();
+    if executor == crate::claude::Executor::Muse {
+        let runtime = crate::muse::get_muse_runtime(app.state(), app.state())
+            .await
+            .map_err(|message| AgentError::new("web_search_account", &message))?;
+        if !runtime.authenticated
+            || !runtime.installed
+            || !runtime.preferences.enabled
+            || !runtime.models.iter().any(|item| {
+                Some(item.id.as_str()) == model.as_deref() && runtime.preferences.allows(&item.id)
+            })
+        {
+            return Err(AgentError::new(
+                "web_search_model",
+                "Conecte a assinatura Muse Code e selecione um modelo disponível.",
+            ));
+        }
+        return state.with_connection(&home, |connection| {
+            save_config(connection, account_alias, model, inherit_chat, executor)
+        });
+    }
+    if executor != crate::claude::Executor::Jarvis {
+        return Err(AgentError::new(
+            "web_search_account",
+            "Origem de Web Search indisponível.",
+        ));
+    }
     let state = state.inner().clone();
     let oauth = app.state::<OpenAiCodexState>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -179,7 +242,7 @@ pub async fn set_web_search_config(
             None
         };
         state.with_connection(&home, |connection| {
-            save_config(connection, account_alias, model, inherit_chat)
+            save_config(connection, account_alias, model, inherit_chat, executor)
         })
     })
     .await
@@ -257,9 +320,40 @@ pub(super) async fn execute(
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
     let args = arguments(value)?;
+    if *signal.borrow() {
+        return Err(AgentError::cancelled());
+    }
+    let stored = load(state, home)?;
+    let config = stored.resolve(options);
+    if config.executor == crate::claude::Executor::Muse {
+        let model = config.model.as_deref().ok_or_else(|| {
+            AgentError::new("web_search_model", "Selecione o modelo de Web Search.")
+        })?;
+        crate::muse::validate_available_model(home, model)
+            .map_err(|message| AgentError::new("web_search_model", &message))?;
+        // The native session owns its bounded interrupt and process cleanup on cancellation.
+        let result = crate::muse::session::search(
+            home,
+            model,
+            &args.query,
+            args.limit.unwrap_or(5),
+            response_language,
+            signal.clone(),
+        )
+        .await
+        .map_err(|message| {
+            if *signal.borrow() {
+                AgentError::cancelled()
+            } else {
+                AgentError::new(
+                    "web_search_provider",
+                    &format!("Pesquisa na web: {message}"),
+                )
+            }
+        })?;
+        return serde_json::to_string(&result).map_err(|_| AgentError::internal());
+    }
     let search = async {
-        let stored = load(state, home)?;
-        let config = stored.resolve(options);
         let alias = config.account_alias.clone().ok_or_else(|| {
             AgentError::new(
                 "web_search_disabled",

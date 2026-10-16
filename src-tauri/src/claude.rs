@@ -103,6 +103,7 @@ pub(crate) enum Executor {
     #[default]
     Jarvis,
     Claude,
+    Muse,
     /// Retired or unknown executors remain readable without acquiring another provider.
     #[serde(other)]
     Unavailable,

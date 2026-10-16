@@ -285,8 +285,12 @@ fn save(
     config: &Config,
     api_key: Option<&str>,
     editing: bool,
+    display_name: Option<&str>,
 ) -> Result<(), ProviderError> {
     validate_alias(alias)?;
+    let display_name = display_name
+        .map(super::display_name::validate)
+        .transpose()?;
     config.validate()?;
     let previous: Option<(String, String)> = connection
         .query_row(
@@ -334,6 +338,9 @@ fn save(
     if !editing {
         transaction.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id, show_usage) VALUES (?1, 'custom', ?2, 0)", params![alias, account_id]).map_err(|_| ProviderError::database())?;
     }
+    if let Some(name) = display_name {
+        super::display_name::update(&transaction, alias, name)?;
+    }
     transaction.execute("INSERT INTO custom_provider_configs(alias, config) VALUES (?1, ?2) ON CONFLICT(alias) DO UPDATE SET config = excluded.config", params![alias, serde_json::to_string(config).map_err(|_| ProviderError::internal())?]).map_err(|_| ProviderError::database())?;
     if let Some(credential) = &next_credential {
         store
@@ -370,10 +377,12 @@ pub(super) fn save_probe(
         config,
         Some("loopback-probe"),
         false,
+        None,
     )
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn save_custom_provider(
     app: tauri::AppHandle,
     persistence_state: tauri::State<'_, AppState>,
@@ -382,6 +391,7 @@ pub async fn save_custom_provider(
     config: Config,
     api_key: Option<String>,
     editing: bool,
+    display_name: Option<String>,
 ) -> Result<ProviderAccount, ProviderError> {
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
@@ -399,6 +409,7 @@ pub async fn save_custom_provider(
                 &config,
                 api_key.as_deref(),
                 editing,
+                display_name.as_deref(),
             )
         })?;
         let record = state

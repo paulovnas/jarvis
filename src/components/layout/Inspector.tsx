@@ -93,14 +93,14 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
             {tools.some(tool => tool.name === "bash" || tool.name.startsWith("mcp_")) && <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">Alterações feitas pelo terminal ou por MCPs ainda não entram nesta lista.</p>}
           </ActivitySection>
           {selectedChat && workflow?.data?.conversationId === selectedChat.conversationId && (publishingFlow || !individualAgent && ["planned", "complete", "custom"].includes(workflow.data.flow) || workflow.data.flow === latestFlow && workflow.data.agents.some(agent => agent.parentId !== null)) && <ActivitySection title="Subagentes" icon={<Users aria-hidden="true" className="size-4 text-muted-foreground" />}>
-            <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} />
+            <WorkflowAgents workflow={workflow} conversationId={selectedChat?.conversationId} accounts={accounts} />
           </ActivitySection>}
           {selectedChat && manualValidation && !directFlow && workflow?.data?.conversationId === selectedChat.conversationId && ["planned", "complete", "custom"].includes(workflow.data.flow) && <ActivitySection title="Validação" icon={<ClipboardCheck aria-hidden="true" className="size-4 text-muted-foreground" />} count={workflow.data.validation?.items.length}>
             <WorkflowValidation key={`${selectedChat.conversationId}/${workflow.data.validation?.id ?? "empty"}`} conversationId={selectedChat.conversationId} batch={workflow.data.validation} busy={!!selectedChat.activeTurnId || compacting || pending || (selectedChat.queuedMessages?.length ?? 0) > 0 || workflow.data.agents.some(activeAgent)} onRefresh={workflow.retry} />
           </ActivitySection>}
         </div></ScrollArea>
     </div>
-    <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} external={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) !== "jarvis"} externalProvider={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) === "unavailable" ? "Executor removido" : "Claude Code"} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
+    <ContextUsage key={selectedChat?.conversationId ?? "empty"} context={conversationContext(turns, accounts)} live={selectedChat?.context} onCompact={onCompact} compacting={compacting} external={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) !== "jarvis"} externalProvider={executorOf(selectedChat?.latestOptions ?? latestTurn?.options) === "unavailable" ? "Executor removido" : executorOf(selectedChat?.latestOptions ?? latestTurn?.options) === "muse" ? "Muse Code" : "Claude Code"} disabled={!selectedChat || turns.length === 0 || !!selectedChat.activeTurnId || pending} />
       </div>
       <div hidden={section !== "github"} className={`min-h-0 flex-1 ${section === "github" ? "block" : "hidden"}`}>
         {projectId && (githubVisited || section === "github") ? <GithubRepositoriesPanel key={projectId} projectId={projectId} active={section === "github"} /> : section === "github" ? <p className="p-4 text-xs text-muted-foreground">Abra uma conversa para consultar os repositórios do projeto.</p> : null}

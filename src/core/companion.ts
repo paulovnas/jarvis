@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateProviderDisplayName } from "./provider-accounts";
 export const JARVITO_CHAT_ID = "00000000000000000000000000000003";
 import { pendingQuestionSchema } from "./questions";
 import { directTaskSchema, readChat, turnOptionsSchema } from "./chat";
@@ -50,7 +51,7 @@ export const companionConversationsSchema = z.array(z.object({
   title: z.string(), lastActivityAt: z.number(),
 }));
 export const companionModelsSchema = z.array(z.object({
-  provider: z.string(), providerKind: z.string().optional(), executor: z.literal("claude").optional(),
+  provider: z.string(), displayName: z.string().refine(value => validateProviderDisplayName(value) === null).nullable().optional(), providerKind: z.string().optional(), executor: z.enum(["claude", "muse"]).optional(),
   models: z.array(z.object({ value: z.string(), label: z.string(), reasoningLevels: z.array(z.string()), defaultReasoningLevel: z.string().nullable(), supportsFast: z.boolean().optional() })),
   emptyMessage: z.string().optional(),
 }));

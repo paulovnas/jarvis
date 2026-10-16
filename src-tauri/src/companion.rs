@@ -31,6 +31,7 @@ const ISLAND_MAX_HEIGHT: f64 = 600.0;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CompanionUsage {
     provider_kind: String,
+    display_name: Option<String>,
     #[serde(flatten)]
     usage: AccountUsage,
 }
@@ -2034,11 +2035,38 @@ pub(crate) async fn get_companion_usage(
         let usage = refresh_usage(&app).await;
         *state.usage.lock().map_err(|_| "Limites indisponíveis.")? = usage;
     }
-    state
+    let mut usage = state
         .usage
         .lock()
         .map(|usage| usage.clone())
-        .map_err(|_| "Limites indisponíveis.".into())
+        .map_err(|_| "Limites indisponíveis.")?;
+    if let Ok(home) = app.path().home_dir() {
+        let _ = app
+            .state::<crate::persistence::AppState>()
+            .with_connection(&home, |db| usage_display_names(db, &mut usage));
+    }
+    Ok(usage)
+}
+
+fn usage_display_names(
+    db: &rusqlite::Connection,
+    usage: &mut [CompanionUsage],
+) -> Result<(), crate::persistence::PersistenceError> {
+    use rusqlite::OptionalExtension;
+    for report in usage
+        .iter_mut()
+        .filter(|report| report.provider_kind != "claude-code")
+    {
+        report.display_name = db
+            .query_row(
+                "SELECT display_name FROM provider_accounts WHERE alias=?1",
+                [&report.usage.alias],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+    }
+    Ok(())
 }
 
 fn unavailable(alias: String, message: String) -> AccountUsage {
@@ -2083,6 +2111,7 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
                         .retain(|window| !window.third_party || account.show_third_party_usage);
                     CompanionUsage {
                         provider_kind: account.provider_kind,
+                        display_name: account.display_name,
                         usage,
                     }
                 });
@@ -2098,6 +2127,20 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
                     .unwrap_or_else(|error| unavailable("Claude Code".into(), error));
                 CompanionUsage {
                     provider_kind: "claude-code".into(),
+                    display_name: None,
+                    usage,
+                }
+            });
+        }
+        if preferences.muse.enabled && preferences.muse.show_usage {
+            let app = app.clone();
+            probes.spawn(async move {
+                let usage = crate::muse::get_muse_usage(app.state(), app.state())
+                    .await
+                    .unwrap_or_else(|error| unavailable("Muse Code".into(), error));
+                CompanionUsage {
+                    provider_kind: "muse-code".into(),
+                    display_name: None,
                     usage,
                 }
             });
@@ -2239,12 +2282,35 @@ mod tests {
             });
             let mut expected = serde_json::to_value(&usage).unwrap();
             expected["providerKind"] = provider_kind.into();
+            expected["displayName"] = "Conta principal".into();
             let report = CompanionUsage {
                 provider_kind: provider_kind.into(),
+                display_name: Some("Conta principal".into()),
                 usage,
             };
             assert_eq!(serde_json::to_value(&report).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn renamed_accounts_update_cached_usage_without_requerying_quota() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::persistence::initialize_database(&mut db).unwrap();
+        crate::persistence::insert_provider_account(&db, "personal", "credential", None).unwrap();
+        let mut reports = vec![CompanionUsage {
+            provider_kind: "openai-codex".into(),
+            display_name: Some("Previous name".into()),
+            usage: unavailable("personal".into(), "cached offline report".into()),
+        }];
+        let original = serde_json::to_value(&reports[0].usage).unwrap();
+        db.execute(
+            "UPDATE provider_accounts SET display_name='New name' WHERE alias='personal'",
+            [],
+        )
+        .unwrap();
+        usage_display_names(&db, &mut reports).unwrap();
+        assert_eq!(reports[0].display_name.as_deref(), Some("New name"));
+        assert_eq!(serde_json::to_value(&reports[0].usage).unwrap(), original);
     }
 
     fn compact_origin(placement: &Placement, scale: f64) -> CompanionPosition {

@@ -45,7 +45,9 @@ impl ModelChoice {
                 .is_some_and(|value| !valid(value, 40))
             || match self.executor {
                 crate::claude::Executor::Jarvis => !valid(&self.account, 200),
-                crate::claude::Executor::Claude => !self.account.is_empty(),
+                crate::claude::Executor::Claude | crate::claude::Executor::Muse => {
+                    !self.account.is_empty()
+                }
                 crate::claude::Executor::Unavailable => {
                     !self.account.is_empty() && !valid(&self.account, 200)
                 }
@@ -55,6 +57,10 @@ impl ModelChoice {
         }
         if self.executor == crate::claude::Executor::Claude {
             crate::claude::validate_selection(&self.model, self.reasoning.as_deref())
+                .map_err(|message| invalid(&message))?;
+        }
+        if self.executor == crate::claude::Executor::Muse {
+            crate::muse::validate_selection(&self.model, self.reasoning.as_deref())
                 .map_err(|message| invalid(&message))?;
         }
         if let Some(fallback) = &self.fallback {
@@ -93,6 +99,9 @@ pub(crate) fn validate_choice(
         if selection.executor == crate::claude::Executor::Claude {
             crate::claude::validate_available_model(home, &selection.model)
                 .map_err(|message| AgentError::new("claude_provider", &message))?;
+        } else if selection.executor == crate::claude::Executor::Muse {
+            crate::muse::validate_available_model(home, &selection.model)
+                .map_err(|message| AgentError::new("muse_provider", &message))?;
         } else {
             oauth.validate_model_choice(state, home, selection)?;
         }
@@ -462,6 +471,7 @@ mod instruction_tests {
                     db,
                     "openai-codex-disabled",
                     "disabled",
+                    None,
                 )?;
                 db.execute("UPDATE provider_accounts SET enabled=0", [])?;
                 Ok::<_, crate::persistence::PersistenceError>(())

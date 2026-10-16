@@ -29,6 +29,8 @@ it("salva alias, endpoint e limites sem iniciar autenticação ou descoberta rem
   for (const [label, value] of [["Alias completo",account.alias], ["URL base",account.custom!.baseUrl], ["Chave de API","private-key"], ["ID do modelo 1","vendor/model"], ["Nome do modelo 1","Meu modelo"], ["Contexto (tokens) · modelo 1","64000"], ["Saída máxima (tokens) · modelo 1","4000"]]) {
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
   }
+  expect(screen.getByRole("textbox", { name: "Nome de exibição" })).toHaveValue(account.alias);
+  fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Gateway pessoal" } });
   await user.click(screen.getByRole("combobox", { name: "Endpoint" }));
   await user.click(await screen.findByRole("option", { name: "Anthropic · Messages" }));
   await user.click(screen.getByRole("button", { name: "Compatibilidade avançada" }));
@@ -36,7 +38,7 @@ it("salva alias, endpoint e limites sem iniciar autenticação ou descoberta rem
   await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
   await waitFor(() => expect(onSaved).toHaveBeenCalledWith(account));
   expect(invoke).toHaveBeenCalledTimes(1);
-  expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ alias: account.alias, apiKey: "private-key", editing: false, config: expect.objectContaining({ protocol: "anthropic-messages", models: [expect.objectContaining({ id: "vendor/model", contextWindow: 64000, maxOutputTokens: 4000 })] }) }));
+  expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ alias: account.alias, displayName: "Gateway pessoal", apiKey: "private-key", editing: false, config: expect.objectContaining({ protocol: "anthropic-messages", models: [expect.objectContaining({ id: "vendor/model", contextWindow: 64000, maxOutputTokens: 4000 })] }) }));
 });
 it("edita modelos sem expor ou substituir a chave armazenada", async () => {
   const user = userEvent.setup(); const account = customAccountFixture(); invoke.mockResolvedValue(account);

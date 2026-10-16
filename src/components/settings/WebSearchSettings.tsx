@@ -1,3 +1,4 @@
+import { providerDisplayName } from "@/core/provider-accounts";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Eye, Globe, ImagePlus } from "lucide-react";
@@ -10,15 +11,19 @@ import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
 import { webSearchConfigSchema } from "@/core/web-search";
 import { modelProblem } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
+import { museModels } from "@/core/executors";
+import { useMuseRuntime } from "@/hooks/use-muse-runtime";
 
-interface Config { accountAlias: string | null; model: string | null; inheritChat: boolean }
+interface Config { executor: "jarvis" | "muse"; accountAlias: string | null; model: string | null; inheritChat: boolean }
 const OFF = "off";
 const INHERIT = "inherit";
+const MUSE = "executor:muse";
 export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange }: { accounts: ProviderAccount[]; kind?: "web_search" | "vision" | "image_generation"; onBusyChange?: (busy: boolean) => void }) {
   const imageGeneration = kind === "image_generation";
   const imageModel = { id: "gemini-3.1-flash-image", name: "Gemini 3.1 Flash Image" };
   const title = imageGeneration ? "Gerar imagens" : kind === "vision" ? "Vision" : "Web Search";
-  const [config, setConfig] = useState<Config>({ accountAlias: null, model: null, inheritChat: !imageGeneration });
+  const [config, setConfig] = useState<Config>({ executor: "jarvis", accountAlias: null, model: null, inheritChat: !imageGeneration });
+  const muse = useMuseRuntime(kind === "web_search");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
@@ -36,20 +41,25 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
   const supports = (provider: ProviderAccount, model: string) => provider.providerKind === "custom" ? kind === "vision" && provider.custom?.models.some(item => item.id === model && item.supportsImages) : kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
   const compatible = accounts.filter(account => account.enabled && (imageGeneration ? account.providerKind === "antigravity" : enabledModels(account).some(model => supports(account, model.id))));
   const selected = compatible.find(account => account.alias === config.accountAlias);
-  const models = imageGeneration ? [imageModel] : selected ? enabledModels(selected).filter(model => supports(selected, model.id)) : [];
-  const unavailable = config.accountAlias !== null && !selected;
-  const problem = !loading && !error && !config.inheritChat && config.accountAlias ? modelProblem({ account: config.accountAlias, model: imageGeneration ? imageModel.id : config.model ?? "", reasoning: null }, accounts, kind) : null;
+  const museSelected = kind === "web_search" && config.executor === "muse" && !config.inheritChat;
+  const museCatalog = museModels(muse.data).map(model => ({ id: model.value, name: model.label }));
+  const museAvailable = Boolean(muse.data?.installed && muse.data.authenticated && museCatalog.length && !muse.error && !muse.data.error);
+  const models = museSelected ? museCatalog : imageGeneration ? [imageModel] : selected ? enabledModels(selected).filter(model => supports(selected, model.id)) : [];
+  const unavailable = !museSelected && config.accountAlias !== null && !selected;
+  const museProblem = muse.error ?? (muse.data?.preferences?.enabled === false ? "Ative o Muse Code em Configurações → Provedores." : !muse.data?.installed ? "Instale o Muse Code em Configurações → Provedores." : !muse.data.authenticated ? "Conecte sua assinatura Muse Code em Configurações → Provedores." : muse.data.error ?? (!museCatalog.some(model => model.id === config.model) ? "O modelo de busca do Muse Code está indisponível. Selecione outro modelo." : null));
+  const problem = loading || error || config.inheritChat ? null : museSelected ? muse.loading ? null : museProblem : config.accountAlias ? modelProblem({ account: config.accountAlias, model: imageGeneration ? imageModel.id : config.model ?? "", reasoning: null }, accounts, kind) : null;
   useModelProblemNotice(title, problem);
-  const accountItems = [...(imageGeneration ? [] : [{ value: INHERIT, label: "Herdar do chat" }]), { value: OFF, label: "Desligado" }, ...compatible.map(account => ({ value: account.alias, label: account.alias })), ...(unavailable ? [{ value: config.accountAlias!, label: `${config.accountAlias} · Indisponível` }] : [])];
+  const accountItems = [...(imageGeneration ? [] : [{ value: INHERIT, label: "Herdar do chat" }]), { value: OFF, label: "Desligado" }, ...(kind === "web_search" ? [{ value: MUSE, label: "Muse Code" }] : []), ...compatible.map(account => ({ value: account.alias, label: providerDisplayName(account) })), ...(unavailable ? [{ value: config.accountAlias!, label: `${config.accountAlias} · Indisponível` }] : [])];
   const modelItems = models.map(model => ({ value: model.id, label: model.name }));
   if (config.model && !models.some(model => model.id === config.model)) modelItems.push({ value: config.model, label: `${config.model} · Indisponível` });
   async function save(next: Config) {
     if (lock.current || JSON.stringify(next) === JSON.stringify(config)) return;
     lock.current = true; setSaving(true);
     try {
-      const saved = webSearchConfigSchema.parse(await invoke(`set_${kind}_config`, { ...next }));
+      const { executor, ...native } = next;
+      const saved = webSearchConfigSchema.parse(await invoke(`set_${kind}_config`, kind === "web_search" && executor === "muse" ? next : native));
       if (mounted.current) setConfig(saved);
-      toast.success(next.inheritChat || next.accountAlias ? `${title} atualizado` : `${title} desligado`);
+      toast.success(next.executor === "muse" || next.inheritChat || next.accountAlias ? `${title} atualizado` : `${title} desligado`);
     } catch { toast.error(`Não foi possível salvar ${title}. A seleção anterior foi mantida.`); }
     finally { lock.current = false; if (mounted.current) setSaving(false); }
   }
@@ -57,22 +67,24 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
     <CardHeader className="px-4"><CardTitle className="flex items-center gap-2 text-sm">{imageGeneration ? <ImagePlus className="size-4 text-onedark-green" /> : kind === "vision" ? <Eye className="size-4 text-onedark-purple" /> : <Globe className="size-4 text-primary" />}{title}</CardTitle></CardHeader>
     <CardContent className="px-4">
       {loading ? <Skeleton className="h-8 w-full" role="status" aria-label={`Carregando ${title}`} /> : error ? <div className="flex gap-2"><p role="alert" className="text-xs text-destructive">Não foi possível carregar {title}.</p><Button variant="outline" size="sm" onClick={() => { setLoading(true); setRetry(value => value + 1); }}>Recarregar {title}</Button></div> : <div className="grid min-w-0 gap-3" aria-busy={saving}>
-        <Select items={accountItems} value={config.inheritChat ? INHERIT : config.accountAlias ?? OFF} disabled={saving} onValueChange={value => {
+        <Select items={accountItems} value={config.inheritChat ? INHERIT : museSelected ? MUSE : config.accountAlias ?? OFF} disabled={saving} onValueChange={value => {
           if (!value) return;
-          if (value === OFF || value === INHERIT) { void save({ accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
+          if (value === OFF || value === INHERIT) { void save({ executor: "jarvis", accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
+          if (value === MUSE) { if (museAvailable) void save({ executor: "muse", accountAlias: null, model: museCatalog[0].id, inheritChat: false }); return; }
           const account = compatible.find(item => item.alias === value);
           const model = imageGeneration ? imageModel : account && enabledModels(account).find(item => supports(account, item.id));
           if (!model) { toast.error("Nenhum modelo disponível nesta conta."); return; }
-          void save({ accountAlias: value, model: model.id, inheritChat: false });
+          void save({ executor: "jarvis", accountAlias: value, model: model.id, inheritChat: false });
         }}>
           <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Provedor de ${title}`}><SelectValue /></SelectTrigger>
-          <SelectContent>{accountItems.map(item => <SelectItem key={item.value} value={item.value} disabled={unavailable && item.value === config.accountAlias} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
+          <SelectContent>{accountItems.map(item => <SelectItem key={item.value} value={item.value} disabled={item.value === MUSE ? !museAvailable : unavailable && item.value === config.accountAlias} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
         </Select>
-        <Select items={modelItems} value={imageGeneration ? imageModel.id : config.model} disabled={imageGeneration || saving || config.inheritChat || !selected || !models.length} onValueChange={model => { if (model) void save({ ...config, model }); }}>
+        <Select items={modelItems} value={imageGeneration ? imageModel.id : config.model} disabled={imageGeneration || saving || config.inheritChat || (museSelected ? !museAvailable : !selected) || !models.length} onValueChange={model => { if (model) void save({ ...config, model }); }}>
           <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Modelo de ${title}`}><SelectValue placeholder={config.inheritChat ? "Modelo do chat" : "Modelo"} /></SelectTrigger>
           <SelectContent>{modelItems.map(item => <SelectItem key={item.value} value={item.value} disabled={!models.some(model => model.id === item.value)} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
         </Select>
         {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+        {museSelected && <p className="text-xs text-muted-foreground">A busca usa sua assinatura Muse Code, independente do modelo do chat.</p>}
       </div>}
     </CardContent>
   </Card>;

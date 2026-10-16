@@ -1,5 +1,19 @@
 import { expect, it } from "vitest";
-import { companionGeometrySchema, companionSnapshotSchema } from "./companion";
+import { companionGeometrySchema, companionModelsSchema, companionSnapshotSchema } from "./companion";
+
+it("preserves Muse model catalogs for Companion and remote clients", () => {
+  const group = { provider: "Muse Code", executor: "muse", models: [{ value: "muse-wonder", label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] };
+  expect(companionModelsSchema.safeParse([group]).success).toBe(true);
+  expect(companionModelsSchema.parse([group])).toEqual([group]);
+});
+
+it("preserves display names in remote catalogs without changing routing aliases", () => {
+  const group = { provider: "openai-codex-long-legacy-alias", models: [{ value: "openai-codex-long-legacy-alias/model", label: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] };
+  expect(companionModelsSchema.parse([group])).toEqual([group]);
+  const named = { ...group, displayName: "Minha conta 💻" };
+  expect(companionModelsSchema.parse([named])).toEqual([named]);
+  expect(companionModelsSchema.safeParse([{ ...group, displayName: "x".repeat(19) }]).success).toBe(false);
+});
 
 it("accepts snapshots without a task plan and validates actual task states", () => {
   const item = {

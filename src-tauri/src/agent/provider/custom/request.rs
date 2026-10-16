@@ -1,7 +1,5 @@
 use super::*;
 use crate::openai_codex::custom::{Reasoning, TokenField};
-use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 
 pub(super) fn scope(config: &Config, options: &TurnOptions) -> Value {
     json!({"account":options.account,"model":options.model,"endpoint":config.base_url,"protocol":config.protocol})
@@ -116,46 +114,6 @@ fn blocks(message: &mut Value) -> &mut Vec<Value> {
         .expect("constructed content array")
 }
 
-fn anthropic_tool_ids(input: &[Value]) -> BTreeMap<&str, Value> {
-    let ids: BTreeSet<_> = input
-        .iter()
-        .filter(|item| {
-            matches!(
-                item["type"].as_str(),
-                Some("function_call" | "function_call_output")
-            )
-        })
-        .filter_map(|item| item["call_id"].as_str())
-        .collect();
-    let valid = |id: &str| {
-        !id.is_empty()
-            && id.len() <= 64
-            && id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    };
-    let mut used: BTreeSet<String> = ids
-        .iter()
-        .filter(|id| valid(id))
-        .map(|id| (*id).to_owned())
-        .collect();
-    let mut mapped = BTreeMap::new();
-    // Preserve saved IDs and native valid IDs; adapt only the provider projection.
-    // Hash the full foreign ID so shared prefixes never merge confirmed outcomes.
-    for id in ids.into_iter().filter(|id| !valid(id)) {
-        let digest = format!("{:x}", Sha256::digest(id.as_bytes()));
-        let base = format!("toolu_{}", &digest[..32]);
-        let mut candidate = base.clone();
-        let mut suffix = 1usize;
-        while !used.insert(candidate.clone()) {
-            candidate = format!("{base}_{suffix}");
-            suffix += 1;
-        }
-        mapped.insert(id, json!(candidate));
-    }
-    mapped
-}
-
 fn messages(
     input: &[Value],
     scope: &Value,
@@ -164,7 +122,7 @@ fn messages(
     replay_unsigned: bool,
 ) -> Result<Vec<Value>, AgentError> {
     let tool_ids = if anthropic {
-        anthropic_tool_ids(input)
+        super::super::wire_tool_ids(input)
     } else {
         BTreeMap::new()
     };
@@ -317,7 +275,7 @@ pub(super) fn body_with_capabilities(
         && effort.is_some_and(|effort| !matches!(effort, "off" | "none"));
     let mut body = match config.protocol {
         Protocol::OpenaiResponses => {
-            let input: Vec<_> = input
+            let input: Vec<_> = super::super::project_tool_ids(input)
                 .into_iter()
                 .filter_map(|mut item| {
                     if item["type"] == "reasoning" {

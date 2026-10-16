@@ -950,7 +950,7 @@ fn native_optional_schemas_keep_responses_opt_out_without_leaking_it_to_other_pr
 }
 
 #[test]
-fn anthropic_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
+fn strict_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
     let anthropic = config(Protocol::AnthropicMessages);
     let shared = "call_1234567890abcdef12345678".repeat(4);
     let ids = [
@@ -959,6 +959,8 @@ fn anthropic_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
         "foreign/call|item:1".into(),
         "toolu_valid-1".into(),
         "a".repeat(64),
+        "muse:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222221".into(),
+        "muse:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222".into(),
     ];
     let mut input = vec![json!({"role":"user","content":"Continue the confirmed task."})];
     for (index, id) in ids.iter().enumerate() {
@@ -1029,8 +1031,19 @@ fn anthropic_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
                     assert_eq!(body["messages"][3 + index]["tool_call_id"], *id);
                 }
                 Protocol::OpenaiResponses => {
-                    assert_eq!(body["input"][1 + index]["call_id"], *id);
-                    assert_eq!(body["input"][1 + ids.len() + index]["call_id"], *id);
+                    assert_eq!(body["input"][1 + index]["call_id"], emitted[index]);
+                    assert_eq!(
+                        body["input"][1 + ids.len() + index]["call_id"],
+                        emitted[index]
+                    );
+                    assert_eq!(
+                        body["input"][1 + index]["arguments"],
+                        original[1 + index]["arguments"]
+                    );
+                    assert_eq!(
+                        body["input"][1 + ids.len() + index]["output"],
+                        original[1 + ids.len() + index]["output"]
+                    );
                 }
                 Protocol::AnthropicMessages => unreachable!(),
             }

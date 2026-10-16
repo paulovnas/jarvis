@@ -89,3 +89,18 @@ it("preserves metadata and embedded HTML through source editing instead of silen
   expect(within(screen.getByRole("textbox", { name: "Documento" })).getByText("Novo requisito")).toBeVisible();
   expect(await markdownSource(user, "Documento")).toHaveValue(`${value}\n\nNovo requisito`);
 });
+
+it("preserves bold from rich clipboard content", async () => {
+  render(<Harness />);
+  const field = screen.getByRole("textbox", { name: "Documento" });
+  fireEvent.paste(field, { clipboardData: { getData: (type: string) => type === "text/html" ? "<p>Texto <strong>importante</strong></p>" : type === "text/plain" ? "Texto importante" : "", files: [] } });
+  expect(within(field).getByText("importante").tagName).toBe("STRONG");
+});
+
+it("keeps footnote definitions in source mode", async () => {
+  const value = "Pedido[^nota]\n\n[^nota]: Referência importante";
+  const user = userEvent.setup();
+  render(<Harness initial={value} />);
+  expect(screen.getByRole("alert")).toHaveTextContent("Use Código");
+  expect(await markdownSource(user, "Documento")).toHaveValue(value);
+});

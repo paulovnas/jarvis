@@ -557,7 +557,7 @@ fn mcp_failures_keep_a_readable_history_and_a_structured_provider_result() {
 }
 
 #[test]
-fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
+fn a_new_user_turn_rechecks_legacy_exclusivity_against_human_messages() {
     let fixture = Fixture::new();
     let session = session(&fixture);
     session
@@ -592,9 +592,139 @@ fn a_new_user_turn_inherits_the_latest_durable_mcp_intent() {
         pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent)
             .expect("new turn needs resolution");
     assert_eq!(turn_id, data.turns.last().unwrap().turn.id);
-    assert_eq!(inherited, intent);
+    assert_eq!(inherited.mode, crate::mcp::McpIntentMode::OnDemand);
+    assert_eq!(inherited.servers, intent.servers);
     assert_eq!(unresolved, vec!["Continue e confirme a informação."]);
     assert_eq!(auxiliary_count, 0);
+}
+
+#[tokio::test]
+async fn restored_legacy_mcp_selection_recovers_without_replaying_confirmed_effects() {
+    for (user, expected) in [
+        (
+            "Troque para o MCP Gemini Notebook.",
+            crate::mcp::McpIntentMode::OnDemand,
+        ),
+        (
+            "Use o MCP Gemini Notebook para consultar a reunião e cadastre as tarefas no Monday.",
+            crate::mcp::McpIntentMode::OnDemand,
+        ),
+        (
+            "Use apenas o MCP Gemini Notebook.",
+            crate::mcp::McpIntentMode::Explicit,
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let session = session(&fixture);
+        let state = AppState::default();
+        let mcp = crate::mcp::McpState::default();
+        state.with_connection(&fixture.root, |db| {
+            db.execute("INSERT INTO mcp_servers (id,name,kind,enabled,configured,revision) VALUES ('notebook-id','gemini-notebook-mcp','local',1,1,1)", [])?;
+            Ok::<_, crate::mcp::McpError>(())
+        }).unwrap();
+        let signal = session
+            .reserve(user.into(), options(ApprovalMode::Yolo))
+            .unwrap();
+        session.update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.mcp_intent = Some(crate::mcp::McpIntent {
+                mode: crate::mcp::McpIntentMode::Explicit,
+                servers: vec![crate::mcp::McpIntentServer {
+                    id: "notebook-id".into(), name: "gemini-notebook-mcp".into(),
+                }],
+                ..crate::mcp::McpIntent::default()
+            });
+            current.wire.push(json!({"type":"function_call_output","call_id":"confirmed","output":"preserved"}));
+        }).unwrap();
+        preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal.clone())
+            .await
+            .unwrap();
+        {
+            let data = session.data.lock().unwrap();
+            let current = data.turns.last().unwrap();
+            assert_eq!(current.mcp_intent.as_ref().unwrap().mode, expected);
+            assert_eq!(current.turn.user, user);
+            assert_eq!(current.wire.last().unwrap()["output"], "preserved");
+        }
+        let revision = session.snapshot().unwrap().revision;
+        preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal)
+            .await
+            .unwrap();
+        assert_eq!(session.snapshot().unwrap().revision, revision);
+    }
+}
+
+#[tokio::test]
+async fn worker_dispatch_does_not_loosen_the_human_parent_mcp_scope() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    let state = AppState::default();
+    let mcp = crate::mcp::McpState::default();
+    let signal = session
+        .reserve("Consulte a reunião".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let intent = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "notebook-id".into(),
+            name: "gemini-notebook-mcp".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    session
+        .update(true, |data| {
+            let current = data.turns.last_mut().unwrap();
+            current.mcp_parent_intent = Some(intent.clone());
+            current.mcp_intent = Some(intent.clone());
+        })
+        .unwrap();
+    let revision = session.snapshot().unwrap().revision;
+    preserve_user_mcp_intent(&session, &mcp, &state, &fixture.root, signal)
+        .await
+        .unwrap();
+    assert_eq!(
+        session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .mcp_intent
+            .as_ref(),
+        Some(&intent)
+    );
+    assert_eq!(session.snapshot().unwrap().revision, revision);
+}
+
+#[test]
+fn a_missing_mcp_does_not_erase_a_real_exclusive_scope_during_recovery() {
+    let fixture = Fixture::new();
+    let session = session(&fixture);
+    session
+        .reserve("Use somente o MCP Foo.".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let intent = crate::mcp::McpIntent {
+        mode: crate::mcp::McpIntentMode::Explicit,
+        servers: vec![crate::mcp::McpIntentServer {
+            id: "removed-id".into(),
+            name: "Foo".into(),
+        }],
+        ..crate::mcp::McpIntent::default()
+    };
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().mcp_intent = Some(intent.clone());
+        })
+        .unwrap();
+    finish(&session, Ok(()));
+    session
+        .reserve("Continue a consulta.".into(), options(ApprovalMode::Yolo))
+        .unwrap();
+    let data = session.data.lock().unwrap();
+    let (_, inherited, _, _) =
+        pending_mcp_intent_resolution(&data.turns, &data.inherited_mcp_intent).unwrap();
+    assert_eq!(inherited, intent);
 }
 
 #[test]
@@ -649,7 +779,7 @@ async fn live_user_mcp_guidance_updates_durable_intent_once_without_replaying_re
     let (turns, _) = journal::load_all(&session.journal).unwrap();
     let current = turns.last().unwrap();
     let intent = current.mcp_intent.as_ref().unwrap();
-    assert_eq!(intent.mode, crate::mcp::McpIntentMode::Explicit);
+    assert_eq!(intent.mode, crate::mcp::McpIntentMode::OnDemand);
     assert_eq!(intent.servers[0].id, "voice-id");
     assert_eq!(current.mcp_intent_auxiliary_count, 1);
     assert_eq!(current.turn.auxiliary_messages[0].content, guidance);

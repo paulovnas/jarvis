@@ -1,3 +1,4 @@
+import { providerDisplayName } from "@/core/provider-accounts";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Settings } from "lucide-react";
@@ -9,6 +10,7 @@ import { Hint } from "@/components/ui/hint";
 
 const ProviderUsage = lazy(() => import("./ProviderUsage").then(module => ({ default: module.ProviderUsage })));
 const ClaudeUsage = lazy(() => import("./ProviderUsage").then(module => ({ default: module.ClaudeUsage })));
+const MuseUsage = lazy(() => import("./ProviderUsage").then(module => ({ default: module.MuseUsage })));
 const AppUpdate = lazy(() => import("./AppUpdate").then(module => ({ default: module.AppUpdate })));
 const ResourceUpdates = lazy(() => import("./ResourceUpdates").then(module => ({ default: module.ResourceUpdates })));
 const RemoteAccess = lazy(() => import("../remote/RemoteAccess").then(module => ({ default: module.RemoteAccess })));
@@ -39,7 +41,7 @@ export function StatusBar({ accounts = [], onOpenSettings, passive = false }: { 
       {!passive && <Suspense fallback={null}><RemoteAccess /></Suspense>}
       {!passive && <Suspense fallback={null}><AppUpdate /></Suspense>}
       {!passive && <Suspense fallback={null}><ResourceUpdates /></Suspense>}
-      <div aria-label="Limites dos provedores" className="ml-auto flex min-w-0 flex-row-reverse items-center overflow-x-auto">{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={<Skeleton aria-label={`Carregando limites de ${account.alias}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now.getTime()} /></Suspense>)}{!passive && <Suspense fallback={null}><ClaudeUsage now={now.getTime()} /></Suspense>}</div>
+      <div aria-label="Limites dos provedores" className="ml-auto flex min-w-0 flex-row-reverse items-center overflow-x-auto">{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={<Skeleton aria-label={`Carregando limites de ${providerDisplayName(account)}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now.getTime()} /></Suspense>)}{!passive && <Suspense fallback={null}><ClaudeUsage now={now.getTime()} /><MuseUsage now={now.getTime()} /></Suspense>}</div>
       <Hint content={now.toLocaleDateString("pt-BR", { dateStyle: "full" })}><time aria-label="Hora atual" dateTime={now.toISOString()} className="shrink-0 border-l border-border px-2 font-mono text-[11px] tabular-nums text-muted-foreground">
         {now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
       </time></Hint>

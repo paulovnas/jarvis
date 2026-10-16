@@ -13,6 +13,13 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.mocked(invoke).mockResolvedValue([]); });
 
 describe("Inspector", () => {
+  it("identifies the Muse context owner without offering native compaction", async () => {
+    const chat = { ...emptyChat(), latestOptions: { ...savedTurn().options, executor: "muse" as const } };
+    render(<DesktopLayoutProvider><Inspector library={populatedLibrary()} chat={chat} /></DesktopLayoutProvider>);
+    const context = await screen.findByLabelText("Contexto da conversa");
+    expect(context).toHaveTextContent("Contexto gerenciado pelo Muse Code");
+    expect(within(context).queryByRole("button", { name: "Compactar contexto" })).not.toBeInTheDocument();
+  });
   it("disables project panels for global chats and restores them in a project", async () => {
     const stored = populatedLibrary();
     const global = { ...stored, conversations: [...stored.conversations, { id: "global", projectId: null, title: "Global", createdAt: 1 }], selection: { workspaceId: "w1", projectId: null, conversationId: "global" } };

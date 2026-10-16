@@ -156,6 +156,8 @@ impl ModelOption {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelGroup {
     provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
     provider_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     executor: Option<crate::claude::Executor>,
@@ -653,6 +655,22 @@ async fn first_enabled_model(app: &tauri::AppHandle) -> Result<TurnOptions, Agen
             return Ok(options);
         }
     }
+    let muse = crate::muse::get_muse_runtime(app.state(), app.state())
+        .await
+        .map_err(|message| invalid(&message))?;
+    if muse.preferences.enabled && muse.installed && muse.authenticated {
+        if let Some(model) = muse
+            .models
+            .iter()
+            .find(|model| muse.preferences.allows(&model.id))
+        {
+            let mut options = base_options();
+            options.executor = crate::claude::Executor::Muse;
+            options.model.clone_from(&model.id);
+            options.reasoning.clone_from(&model.default_reasoning);
+            return Ok(options);
+        }
+    }
     Err(invalid("Configure um provedor e modelo em Configurações → Provedores ou no agente Construtor para conversar com o Jarvito."))
 }
 
@@ -672,6 +690,7 @@ pub(crate) async fn get_companion_models(
         .filter(|account| account.enabled)
         .map(|account| ModelGroup {
             provider: account.alias.clone(),
+            display_name: account.display_name,
             provider_kind: account.provider_kind,
             executor: None,
             models: account
@@ -697,6 +716,7 @@ pub(crate) async fn get_companion_models(
             .map_err(|message| invalid(&message))?;
         groups.push(ModelGroup {
             provider: "Claude Code".into(),
+            display_name: None,
             provider_kind: "claude-code".into(),
             executor: Some(crate::claude::Executor::Claude),
             models: runtime
@@ -717,6 +737,40 @@ pub(crate) async fn get_companion_models(
                 .collect(),
             empty_message: Some(
                 "Instale e autentique o Claude Code em Configurações → Provedores.".into(),
+            ),
+        });
+    }
+    if system
+        .muse_preferences()
+        .map_err(|message| invalid(&message))?
+        .enabled
+    {
+        let runtime = crate::muse::get_muse_runtime(app.state(), app.state())
+            .await
+            .map_err(|message| invalid(&message))?;
+        groups.push(ModelGroup {
+            provider: "Muse Code".into(),
+            display_name: None,
+            provider_kind: "muse-code".into(),
+            executor: Some(crate::claude::Executor::Muse),
+            models: runtime
+                .models
+                .into_iter()
+                .filter(|model| {
+                    runtime.installed
+                        && runtime.authenticated
+                        && runtime.preferences.allows(&model.id)
+                })
+                .map(|model| ModelOption {
+                    value: model.id,
+                    label: model.name,
+                    reasoning_levels: model.reasoning_levels,
+                    default_reasoning_level: model.default_reasoning,
+                    supports_fast: false,
+                })
+                .collect(),
+            empty_message: Some(
+                "Instale e conecte a assinatura Muse Code em Configurações → Provedores.".into(),
             ),
         });
     }

@@ -347,8 +347,12 @@ fn save(
     key: &str,
     editing: bool,
     catalog: &[Config],
+    display_name: Option<&str>,
 ) -> Result<(), ProviderError> {
     validate_alias(alias)?;
+    let display_name = display_name
+        .map(super::display_name::validate)
+        .transpose()?;
     if key.is_empty() || key.len() > 8192 || !key.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(error("Informe uma chave de API válida do OpenCode Go."));
     }
@@ -388,6 +392,9 @@ fn save(
     if !editing {
         tx.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES (?1,'opencode-go',?2)", params![alias,id]).map_err(|_| ProviderError::database())?;
     }
+    if let Some(name) = display_name {
+        super::display_name::update(&tx, alias, name)?;
+    }
     tx.execute("INSERT INTO opencode_go_catalogs(alias,catalog) VALUES (?1,?2) ON CONFLICT(alias) DO UPDATE SET catalog=excluded.catalog", params![alias,serde_json::to_string(catalog).map_err(|_| ProviderError::internal())?]).map_err(|_| ProviderError::database())?;
     store
         .store(alias, &next)
@@ -414,12 +421,17 @@ pub async fn save_opencode_go_provider(
     alias: String,
     api_key: Option<String>,
     editing: bool,
+    display_name: Option<String>,
 ) -> Result<ProviderAccount, ProviderError> {
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
     let manager = oauth_state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         validate_alias(&alias)?;
+        let display_name = display_name
+            .as_deref()
+            .map(super::display_name::validate)
+            .transpose()?;
         if let Some(key) = api_key.filter(|s| !s.is_empty()) {
             if key.len() > 8192 || !key.bytes().all(|b| b.is_ascii_graphic()) {
                 return Err(error("Informe uma chave de API válida do OpenCode Go."));
@@ -441,11 +453,14 @@ pub async fn save_opencode_go_provider(
                     &key,
                     editing,
                     &catalog,
+                    display_name,
                 )
             })?;
             manager.usage_cache.invalidate(&alias);
         } else if !editing {
             return Err(error("Informe a chave de API do OpenCode Go."));
+        } else if let Some(name) = display_name {
+            state.with_connection(&home, |db| super::display_name::update(db, &alias, name))?;
         }
         let record = state
             .list_provider_accounts(&home)

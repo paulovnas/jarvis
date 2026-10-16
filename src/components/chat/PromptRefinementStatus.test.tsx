@@ -7,7 +7,8 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 it("centers the sparkle above the heading and the animated dots below the changing text", () => {
   const view = render(<PromptRefinementStatus />);
   const status = screen.getByRole("status", { name: "Refinando prompt" });
-  const heading = screen.getByText("Refinando o texto…");
+  const heading = screen.getByText("Refinando o texto");
+  expect(status.textContent).not.toMatch(/…|\.{3}/);
   const sparkle = view.container.querySelector("svg")!;
   const dots = status.lastElementChild!;
   expect(sparkle.parentElement).toBe(status);

@@ -1,0 +1,36 @@
+{
+  "providerId": "meta",
+  "profileId": null,
+  "source": "fakeCatalog",
+  "models": [
+    {
+      "modelId": "muse-example",
+      "providerId": "meta",
+      "profileId": null,
+      "displayLabel": "Muse example",
+      "description": "Synthetic MSP catalog fixture, not an advertised model.",
+      "releaseDate": null,
+      "contextLimit": null,
+      "outputLimit": null,
+      "cost": null,
+      "isDefault": true,
+      "isActive": false,
+      "variants": ["none", "low", "high", "ultra"],
+      "defaultReasoningEffort": "high"
+    },
+    {
+      "modelId": "muse-unknown",
+      "providerId": "meta",
+      "profileId": null,
+      "displayLabel": "Unknown efforts",
+      "description": null,
+      "releaseDate": null,
+      "contextLimit": null,
+      "outputLimit": null,
+      "cost": null,
+      "isDefault": false,
+      "isActive": false,
+      "variants": "unknown"
+    }
+  ]
+}

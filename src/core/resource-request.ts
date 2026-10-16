@@ -11,6 +11,7 @@ const deadlines = {
   get_provider_usage: 45_000,
   get_opencode_go_free_models: 45_000,
   get_claude_usage: 45_000,
+  get_muse_usage: 45_000,
   check_core_updates: 40_000,
   check_app_update: 45_000,
   refresh_provider_models: 120_000,

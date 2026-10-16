@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateProviderDisplayName } from "./provider-accounts";
 
 export const usageWindowSchema = z.object({
   id: z.string(), group: z.string(), thirdParty: z.boolean(), label: z.string(),
@@ -8,6 +9,7 @@ export const usageWindowSchema = z.object({
 });
 export const accountUsageSchema = z.object({
   alias: z.string(), fetchedAt: z.number().nullable(), email: z.string().nullable(), plan: z.string().nullable(),
+  displayName: z.string().refine(value => validateProviderDisplayName(value) === null).nullable().optional(),
   windows: z.array(usageWindowSchema), error: z.string().nullable(),
   resetCredits: z.object({ availableCount: z.number().int().nonnegative(), expirations: z.array(z.number().nullable()), detailsAvailable: z.boolean() }).nullable(),
 });
@@ -50,7 +52,9 @@ export function quotaPercent(remaining: number | null) { return remaining === nu
 
 /** Expected remaining quota at a uniform consumption pace, on the same scale as the bar. */
 export function expectedQuotaRemaining(window: UsageWindow, now: number): number | null {
-  const { remainingPercent, durationSeconds, resetsAt } = window;
+  const { remainingPercent, resetsAt } = window;
+  // shortcut: Go monthly pacing uses a 30-day estimate; use provider cycle bounds when available.
+  const durationSeconds = window.durationSeconds ?? (window.id === "monthly" && window.group === "OpenCode Go" ? 30 * 86_400 : null);
   if (remainingPercent === null || durationSeconds === null || resetsAt === null) return null;
   const remaining = resetsAt - now, duration = durationSeconds * 1000;
   if (![remainingPercent, remaining, duration].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration) return null;

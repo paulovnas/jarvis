@@ -5,6 +5,7 @@ use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 pub(crate) mod antigravity;
 mod catalog_cache;
 pub(crate) mod custom;
+pub(crate) mod display_name;
 mod inference_auth;
 pub(crate) mod opencode_go;
 mod reauthorization;
@@ -174,6 +175,12 @@ impl UsageAlert {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ProviderAccount {
     pub(crate) alias: String,
+    #[serde(
+        default,
+        rename = "displayName",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) display_name: Option<String>,
     pub(crate) enabled: bool,
     #[serde(rename = "showUsage")]
     pub(crate) show_usage: bool,
@@ -229,6 +236,7 @@ impl ProviderAccount {
         let usage_alert = UsageAlert::from_record(&record);
         Self {
             alias: record.alias,
+            display_name: record.display_name,
             enabled: record.enabled,
             show_usage: record.show_usage,
             show_five_hour_usage: record.show_five_hour_usage,
@@ -396,6 +404,7 @@ pub(crate) trait SecretStore: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderAccountError {
     InvalidAlias(AliasValidationError),
+    InvalidDisplayName,
     InvalidAccountId,
     DuplicateAccount,
     SecretStore(SecretStoreError),
@@ -420,8 +429,13 @@ pub(crate) fn commit_provider_account(
     secret_store: &dyn SecretStore,
     alias: &str,
     credential: &CodexCredential,
+    display_name: Option<&str>,
 ) -> Result<ProviderAccount, ProviderAccountError> {
     validate_provider_alias(alias).map_err(ProviderAccountError::InvalidAlias)?;
+    let display_name = display_name
+        .map(display_name::validate)
+        .transpose()
+        .map_err(|_| ProviderAccountError::InvalidDisplayName)?;
     if credential.account_id.is_empty() {
         return Err(ProviderAccountError::InvalidAccountId);
     }
@@ -433,16 +447,20 @@ pub(crate) fn commit_provider_account(
     }
 
     secret_store.store(alias, credential)?;
-    let record =
-        match persistence::insert_provider_account(connection, alias, &credential.account_id) {
-            Ok(record) => record,
-            Err(_) => {
-                return match secret_store.remove(alias) {
-                    Ok(()) => Err(ProviderAccountError::Database),
-                    Err(_) => Err(ProviderAccountError::SecretCleanup),
-                };
-            }
-        };
+    let record = match persistence::insert_provider_account(
+        connection,
+        alias,
+        &credential.account_id,
+        display_name,
+    ) {
+        Ok(record) => record,
+        Err(_) => {
+            return match secret_store.remove(alias) {
+                Ok(()) => Err(ProviderAccountError::Database),
+                Err(_) => Err(ProviderAccountError::SecretCleanup),
+            };
+        }
+    };
 
     Ok(ProviderAccount::from_record(
         record,
@@ -777,6 +795,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .expect("account commit");
 
@@ -786,6 +805,7 @@ mod tests {
                 &secrets,
                 "openai-codex-one",
                 &credential("account-two"),
+                None
             ),
             Err(ProviderAccountError::DuplicateAccount)
         ));
@@ -795,6 +815,7 @@ mod tests {
                 &secrets,
                 "openai-codex-two",
                 &credential("account-one"),
+                None
             ),
             Err(ProviderAccountError::DuplicateAccount)
         ));
@@ -815,6 +836,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         );
 
         assert!(matches!(
@@ -845,6 +867,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         );
 
         assert!(matches!(result, Err(ProviderAccountError::Database)));
@@ -863,6 +886,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .expect("account commit");
 
@@ -888,6 +912,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .expect("account commit");
         secrets.fail_remove(true);
@@ -915,6 +940,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .unwrap();
         connection.execute_batch("CREATE TRIGGER reject_account_delete BEFORE DELETE ON provider_accounts BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
@@ -938,6 +964,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .unwrap();
         connection.execute("INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES(1,'openai-codex-one','original',0)", []).unwrap();
@@ -973,6 +1000,7 @@ mod tests {
             &secrets,
             "openai-codex-one",
             &credential("account-one"),
+            None,
         )
         .unwrap();
         connection.execute_batch("CREATE TABLE commit_guard(alias TEXT REFERENCES provider_accounts(alias) DEFERRABLE INITIALLY DEFERRED); INSERT INTO commit_guard VALUES('openai-codex-one');").unwrap();
@@ -988,6 +1016,7 @@ mod tests {
     fn provider_metadata_does_not_serialize_account_id() {
         let account = ProviderAccount {
             alias: "openai-codex-one".to_owned(),
+            display_name: None,
             enabled: true,
             show_usage: true,
             show_five_hour_usage: true,
@@ -1017,6 +1046,28 @@ mod tests {
         let restored: ProviderAccount = serde_json::from_value(legacy).unwrap();
         assert!(restored.show_five_hour_usage);
         assert!(restored.show_weekly_usage);
+    }
+
+    #[test]
+    fn invalid_display_names_do_not_write_credentials_or_provider_rows() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        initialize_database(&mut connection).unwrap();
+        let secrets = InMemorySecretStore::default();
+        let alias = "openai-codex-identity";
+        for name in ["", "  ", "line\nbreak", &"💻".repeat(19)] {
+            assert_eq!(
+                commit_provider_account(
+                    &connection,
+                    &secrets,
+                    alias,
+                    &credential("identity"),
+                    Some(name)
+                ),
+                Err(ProviderAccountError::InvalidDisplayName)
+            );
+            assert!(secrets.load(alias).is_err());
+            assert!(list_provider_accounts(&connection).unwrap().is_empty());
+        }
     }
 
     #[test]
@@ -1401,6 +1452,10 @@ impl ProviderError {
     fn from_account_error(error: ProviderAccountError) -> Self {
         match error {
             ProviderAccountError::InvalidAlias(_) => Self::invalid_alias(),
+            ProviderAccountError::InvalidDisplayName => Self::new(
+                "invalid_display_name",
+                "Informe um nome de exibição de 1–18 caracteres, sem quebras de linha.",
+            ),
             ProviderAccountError::InvalidAccountId => Self::new(
                 "malformed_token",
                 "A conta do provedor não foi identificada.",
@@ -1480,6 +1535,7 @@ impl OAuthEndpoints {
 struct OAuthFlow {
     id: String,
     alias: String,
+    display_name: Option<String>,
     replacing: Option<ProviderAccountRecord>,
     state: String,
     verifier: String,
@@ -1708,13 +1764,14 @@ impl OAuthManager {
         )
     }
 
+    #[cfg(test)]
     fn begin(
         self: &std::sync::Arc<Self>,
         app_state: &persistence::AppState,
         home_dir: &std::path::Path,
         alias: &str,
     ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
-        self.begin_connection(app_state, home_dir, alias, false)
+        self.begin_connection(app_state, home_dir, alias, false, None)
     }
 
     fn begin_connection(
@@ -1723,8 +1780,13 @@ impl OAuthManager {
         home_dir: &std::path::Path,
         alias: &str,
         reauthorize: bool,
+        display_name: Option<&str>,
     ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
         validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
+        let display_name = display_name
+            .map(display_name::validate)
+            .transpose()?
+            .map(str::to_owned);
 
         let mut active = self
             .active_flow
@@ -1786,6 +1848,7 @@ impl OAuthManager {
         let flow = std::sync::Arc::new(OAuthFlow {
             id: flow_id.clone(),
             alias: alias.to_owned(),
+            display_name,
             replacing,
             state,
             verifier,
@@ -2336,6 +2399,7 @@ fn run_oauth_flow_inner(
             manager.secret_store.as_ref(),
             &flow.alias,
             &credential,
+            flow.display_name.as_deref(),
         )
     };
     if result.is_ok() {
@@ -3222,10 +3286,11 @@ fn commit_provider_account_with_state(
     secret_store: &dyn SecretStore,
     alias: &str,
     credential: &CodexCredential,
+    display_name: Option<&str>,
 ) -> Result<ProviderAccount, ProviderError> {
     app_state
         .with_connection(home_dir, |connection| {
-            commit_provider_account(connection, secret_store, alias, credential)
+            commit_provider_account(connection, secret_store, alias, credential, display_name)
         })
         .map_err(ProviderError::from_account_error)
 }
@@ -3362,12 +3427,19 @@ pub async fn begin_openai_codex_connection(
     persistence_state: tauri::State<'_, persistence::AppState>,
     oauth_state: tauri::State<'_, OpenAiCodexState>,
     alias: String,
+    display_name: Option<String>,
 ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
     let home_dir = home_dir(&app)?;
     let persistence_state = persistence_state.inner().clone();
     let manager = oauth_state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager.begin(&persistence_state, &home_dir, &alias)
+        manager.begin_connection(
+            &persistence_state,
+            &home_dir,
+            &alias,
+            false,
+            display_name.as_deref(),
+        )
     })
     .await
     .map_err(|_| ProviderError::internal())?
@@ -3384,7 +3456,7 @@ pub async fn reauthorize_provider_account(
     let state = persistence_state.inner().clone();
     let manager = oauth_state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager.begin_connection(&state, &home, &alias, true)
+        manager.begin_connection(&state, &home, &alias, true, None)
     })
     .await
     .map_err(|_| ProviderError::internal())?
@@ -3470,7 +3542,7 @@ mod oauth_tests {
         let alias = "openai-codex-visibility";
         state
             .with_connection(&home, |db| {
-                persistence::insert_provider_account(db, alias, "visibility-account")?;
+                persistence::insert_provider_account(db, alias, "visibility-account", None)?;
                 Ok::<_, PersistenceError>(())
             })
             .expect("provider account");
@@ -3535,6 +3607,7 @@ mod oauth_tests {
                     connection,
                     "openai-codex-disabled",
                     "fixture-account",
+                    None,
                 )?;
                 assert!(record.enabled);
                 connection.execute(
@@ -3566,7 +3639,7 @@ mod oauth_tests {
         let alias = "openai-codex-offline";
         let records = state
             .with_connection(home.path(), |db| {
-                persistence::insert_provider_account(db, alias, "fixture-account")?;
+                persistence::insert_provider_account(db, alias, "fixture-account", None)?;
                 persistence::list_provider_accounts(db)
             })
             .unwrap();
@@ -3654,7 +3727,7 @@ mod oauth_tests {
         let alias = "openai-codex-choice";
         let records = state
             .with_connection(home.path(), |db| {
-                persistence::insert_provider_account(db, alias, "fixture-account")?;
+                persistence::insert_provider_account(db, alias, "fixture-account", None)?;
                 persistence::list_provider_accounts(db)
             })
             .unwrap();
@@ -3817,8 +3890,15 @@ mod oauth_tests {
             None,
         );
         let alias = "openai-codex-race";
-        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &credential)
-            .expect("connect");
+        commit_provider_account_with_state(
+            &state,
+            &home,
+            secrets.as_ref(),
+            alias,
+            &credential,
+            None,
+        )
+        .expect("connect");
         let manager = Arc::new(OAuthManager::production(secrets.clone()));
 
         let list_manager = manager.clone();
@@ -3948,7 +4028,7 @@ mod oauth_tests {
         );
         state
             .with_connection(home.path(), |db| {
-                commit_provider_account(db, store.as_ref(), alias, &credential).unwrap();
+                commit_provider_account(db, store.as_ref(), alias, &credential, None).unwrap();
                 Ok::<_, PersistenceError>(())
             })
             .unwrap();
@@ -4022,8 +4102,14 @@ mod oauth_tests {
             );
             state
                 .with_connection(home.path(), |db| {
-                    commit_provider_account(db, store.as_ref(), "openai-codex-test", &current)
-                        .unwrap();
+                    commit_provider_account(
+                        db,
+                        store.as_ref(),
+                        "openai-codex-test",
+                        &current,
+                        None,
+                    )
+                    .unwrap();
                     Ok::<_, PersistenceError>(())
                 })
                 .unwrap();
@@ -4079,7 +4165,8 @@ mod oauth_tests {
         fresh.expires = i64::MAX;
         state
             .with_connection(home.path(), |db| {
-                commit_provider_account(db, store.as_ref(), "antigravity-test", &fresh).unwrap();
+                commit_provider_account(db, store.as_ref(), "antigravity-test", &fresh, None)
+                    .unwrap();
                 Ok::<_, PersistenceError>(())
             })
             .unwrap();
@@ -4357,7 +4444,8 @@ mod oauth_tests {
             None,
             Some("plus".into()),
         );
-        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old).unwrap();
+        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old, None)
+            .unwrap();
         let original = state.list_provider_accounts(&home).unwrap();
         let access = jwt("existing-account");
         let (token_url, server) = fake_token_server(
@@ -4378,7 +4466,7 @@ mod oauth_tests {
             "duplicate_account"
         );
         let cancelled = manager
-            .begin_connection(&state, &home, alias, true)
+            .begin_connection(&state, &home, alias, true, None)
             .unwrap();
         let pending = manager.flow(&cancelled.flow_id).unwrap();
         manager.cancel(&cancelled.flow_id).unwrap();
@@ -4394,7 +4482,7 @@ mod oauth_tests {
             vec![free_port()],
         );
         let start = manager
-            .begin_connection(&state, &home, alias, true)
+            .begin_connection(&state, &home, alias, true, None)
             .unwrap();
         assert_eq!(secrets.load(alias).unwrap().refresh, "old-refresh");
         request(
@@ -4428,7 +4516,8 @@ mod oauth_tests {
             None,
             None,
         );
-        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old).unwrap();
+        commit_provider_account_with_state(&state, &home, secrets.as_ref(), alias, &old, None)
+            .unwrap();
         let original = state.list_provider_accounts(&home).unwrap();
         let (token_url, server) = fake_token_server("{}".into(), "400 Bad Request");
         let manager = new_manager(
@@ -4438,7 +4527,7 @@ mod oauth_tests {
             vec![free_port()],
         );
         let start = manager
-            .begin_connection(&state, &home, alias, true)
+            .begin_connection(&state, &home, alias, true, None)
             .unwrap();
         request(
             &start,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, CircleAlert } from "lucide-react";
 import { AGENT_ICONS } from "@/components/agents/agent-presentation";
-import { aliasSuffix } from "@/core/provider-usage";
+import { providerDisplayName, type ProviderAccount } from "@/core/provider-accounts";
 import { reasoningLabel } from "@/core/reasoning";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,9 +27,9 @@ function presentation(agent: WorkflowAgent) {
     : { Icon: AGENT_ICONS[agent.role], color: ROLE_COLORS[agent.role], label: ROLE_LABELS[agent.role] };
 }
 
-function ModelDetails({ agent }: { agent: WorkflowAgent }) {
+function ModelDetails({ agent, accounts }: { agent: WorkflowAgent; accounts: ProviderAccount[] }) {
   return <Hint content={executionLabel(agent.options)}><span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[9px] text-muted-foreground">
-    <span className="max-w-24 truncate text-foreground/75">{executorOf(agent.options) === "claude" ? "Claude Code" : executorOf(agent.options) === "unavailable" ? "Executor removido" : aliasSuffix(agent.options.account)}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
+    <span className="max-w-24 truncate text-foreground/75">{executorOf(agent.options) === "claude" ? "Claude Code" : executorOf(agent.options) === "muse" ? "Muse Code" : executorOf(agent.options) === "unavailable" ? "Executor removido" : providerDisplayName(accounts.find(account => account.alias === agent.options.account) ?? { alias: agent.options.account })}</span><span aria-hidden="true" className="text-border">/</span><span className="truncate">{agent.options.model}</span>
     {agent.options.serviceTier === "priority" && <Hint content={`Fast solicitado · ${FAST_USAGE_NOTICE}`}><Badge variant="outline" className="text-[9px] text-primary">Fast</Badge></Hint>}
     {agent.options.reasoning && <><span aria-hidden="true">·</span><span>{reasoningLabel(agent.options.reasoning)}</span></>}
   </span></Hint>;
@@ -60,7 +60,7 @@ function AgentHistory({ conversationId, agent }: { conversationId: string; agent
       </ScrollArea>}
   </div>;
 }
-export function WorkflowAgents({ workflow, conversationId }: { workflow?: WorkflowController; conversationId?: string }) {
+export function WorkflowAgents({ workflow, conversationId, accounts = [] }: { workflow?: WorkflowController; conversationId?: string; accounts?: ProviderAccount[] }) {
   const [selected, setSelected] = useState<string | null>(null);
   const agents = (workflow?.data?.agents ?? []).filter(agent => workflow?.data?.flow !== "publication" || agent.id !== "main");
   const now = useRunningClock(agents.some(timingActive));
@@ -90,7 +90,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
           {agent.title !== label && <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">{agent.title}</span>}
           {thought && <Hint content={thought} whenTruncated><span className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span></Hint>}
           <span className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono tabular-nums">{formatExecutionDuration(duration)}</span><GenerationRate generation={agent.generation} /></span>
-          <ModelDetails agent={agent} />
+          <ModelDetails agent={agent} accounts={accounts} />
         </Button>;
       })}</div>}
     <Dialog open={!!selectedAgent} onOpenChange={open => { if (!open) setSelected(null); }}>
@@ -98,7 +98,7 @@ export function WorkflowAgents({ workflow, conversationId }: { workflow?: Workfl
         <DialogHeader className="shrink-0 border-b border-border bg-sidebar p-5 pr-12">
           <DialogDescription className="micro-label flex items-center gap-2" style={{ color: presentation(selectedAgent).color }}><SelectedIcon className="size-3.5" />{presentation(selectedAgent).label}<StatusBadge agent={selectedAgent} /></DialogDescription>
           <DialogTitle className="text-sm">{selectedAgent.title}</DialogTitle>
-          <ModelDetails agent={selectedAgent} />
+          <ModelDetails agent={selectedAgent} accounts={accounts} />
           <span className="flex items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground"><span aria-label="Tempo de execução">{formatExecutionDuration(executionDuration(selectedAgent.startedAt, selectedAgent.durationMs, timingActive(selectedAgent), now, selectedAgent.activeSince))}</span><GenerationRate generation={selectedAgent.generation} /></span>
           {selectedAgent.attempts > 1 && <span className="font-mono text-[10px] text-muted-foreground">Rodada {selectedAgent.attempts}</span>}
         </DialogHeader>

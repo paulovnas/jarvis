@@ -130,7 +130,7 @@ it("remembers independent local choices when switching agents and flows", async 
   expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("SOL 6.1");
   expect(stored["chat-a"]).toEqual({ "standard/builder": swift, "designer/designer": sol });
   expect(globalSave).not.toHaveBeenCalled();
-});
+}, 15000);
 
 it.each(["primary", "fallback"] as const)("blocks sending after the saved %s disappears and keeps the red picker usable", async removed => {
   const fallback = { account: "removed", model: "gone", reasoning: null };

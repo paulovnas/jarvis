@@ -8,12 +8,13 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
-import { aliasSuffix, expectedQuotaRemaining, planLabel, quotaPercent, quotaReserve, remainingTime, type AccountUsage, type UsageWindow } from "@/core/provider-usage";
+import { providerDisplayName } from "@/core/provider-accounts";
+import { expectedQuotaRemaining, planLabel, quotaPercent, quotaReserve, remainingTime, type AccountUsage, type UsageWindow } from "@/core/provider-usage";
 import { cn } from "@/lib/utils";
 import { RemoteProviderIcon } from "./RemoteProviderIcon";
 
-export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "opencode-go" };
-const providerLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code", "opencode-go": "OpenCode Go" };
+export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "muse-code" | "opencode-go" };
+const providerLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code", "muse-code": "Muse Code", "opencode-go": "OpenCode Go" };
 
 function WindowUsage({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
@@ -35,9 +36,10 @@ function WindowUsage({ window, now, stale }: { window: UsageWindow; now: number;
 
 function AccountCard({ account, now, failed }: { account: RemoteUsageAccount; now: number; failed: boolean }) {
   const stale = failed || Boolean(account.error) || !account.fetchedAt || now - account.fetchedAt > 5 * 60_000;
-  return <Card size="sm" role="region" aria-label={`Limites de ${account.alias}`} className="min-w-0 shrink-0 gap-3 rounded-lg">
+  const name = providerDisplayName(account);
+  return <Card size="sm" role="region" aria-label={`Limites de ${name}`} className="min-w-0 shrink-0 gap-3 rounded-lg">
     <CardHeader>
-      <CardTitle className="flex min-w-0 items-center gap-2"><span role="img" aria-label={providerLabels[account.providerKind]} className="flex"><RemoteProviderIcon kind={account.providerKind} /></span><span className="min-w-0 flex-1 truncate" title={account.alias}>{aliasSuffix(account.alias)}</span>{account.plan && <Badge variant="outline" className="max-w-24 shrink-0 truncate">{planLabel(account.plan, "unknown")}</Badge>}</CardTitle>
+      <CardTitle className="flex min-w-0 items-center gap-2"><span role="img" aria-label={providerLabels[account.providerKind]} className="flex"><RemoteProviderIcon kind={account.providerKind} /></span><span className="min-w-0 flex-1 truncate" title={name}>{name}</span>{account.plan && <Badge variant="outline" className="max-w-24 shrink-0 truncate">{planLabel(account.plan, "unknown")}</Badge>}</CardTitle>
     </CardHeader>
     <CardContent className="flex min-w-0 flex-col gap-3">
       {account.error && <p role="status" className="text-xs text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}

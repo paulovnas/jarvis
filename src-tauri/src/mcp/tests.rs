@@ -175,7 +175,16 @@ async fn hook_mcp_core_call_preserves_structured_content_and_redacts_before_boun
         .lines()
         .find_map(|line| serde_json::from_str::<Value>(line).ok())
         .expect("the MCP structured content is preserved");
-    assert_eq!(structured, json!({"source":"fixture", "cwd":fixture.home}));
+    assert_eq!(structured["source"], "fixture");
+    assert_eq!(
+        fs::canonicalize(
+            structured["cwd"]
+                .as_str()
+                .expect("the MCP reports its working directory")
+        )
+        .unwrap(),
+        fs::canonicalize(&fixture.home).unwrap()
+    );
     assert!(!output.contains("fixture-sensitive-value"));
     let long = client
         .core_call(
@@ -538,6 +547,285 @@ async fn plugin_mcp_activity_tracks_real_calls_errors_parallelism_and_cancellati
     .unwrap_or_else(|_| panic!("unexpected cancellation"))
     .is_err());
     assert!(context.take_activity().is_empty());
+}
+
+#[tokio::test]
+async fn ordinary_mcp_selection_keeps_other_servers_discoverable() {
+    let f = Fixture::new();
+    f.local_with_tools("gemini-notebook-mcp", 2000, 50);
+    f.local_with_tools("monday-api-mcp", 2000, 85);
+    let intent = runtime::resolve_user_intent(
+        &f.mcp, &f.state, &f.home, &McpIntent::default(),
+        &["Use o MCP do Gemini Notebook para consultar a reunião e cadastre as tarefas no Monday.".into()],
+    ).await.unwrap();
+    assert_eq!(intent.mode, McpIntentMode::OnDemand);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &intent,
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let activate = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .expect("selecting one MCP must keep other enabled servers discoverable");
+    assert!(activate["parameters"]["properties"]["server"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("monday-api-mcp")));
+    let starts = fs::read_to_string(f.home.join("starts")).unwrap();
+    assert!(starts.contains("gemini-notebook-mcp"));
+    assert!(!starts.contains("monday-api-mcp"));
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":"monday-api-mcp"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let search = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_search_tools")
+        .unwrap();
+    let servers = &search["parameters"]["properties"]["server"]["enum"];
+    assert!(servers
+        .as_array()
+        .unwrap()
+        .contains(&json!("gemini-notebook-mcp")));
+    assert!(servers
+        .as_array()
+        .unwrap()
+        .contains(&json!("monday-api-mcp")));
+}
+
+#[tokio::test]
+async fn successive_mcp_activations_never_hide_remaining_servers() {
+    let f = Fixture::new();
+    for name in ["one", "two", "three", "four", "five"] {
+        f.local(name);
+    }
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    for name in ["one", "two", "three", "four"] {
+        let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        assert!(definitions
+            .iter()
+            .any(|tool| tool["name"] == "mcp_activate"));
+        clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_activate",
+                &json!({"server":name}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap();
+    }
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let activate = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .unwrap();
+    assert!(activate["parameters"]["properties"]["server"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("five")));
+    assert!(!fs::read_to_string(f.home.join("starts"))
+        .unwrap()
+        .contains("five"));
+}
+
+#[tokio::test]
+async fn only_a_real_exclusive_request_restricts_the_mcp_catalog() {
+    let f = Fixture::new();
+    let notebook = f.local("gemini-notebook-mcp");
+    f.local("monday-api-mcp");
+    for (message, expected) in [
+        (
+            "Use o MCP do Gemini Notebook apenas para consultar a reunião.",
+            McpIntentMode::OnDemand,
+        ),
+        (
+            "Use apenas o MCP do Gemini Notebook.",
+            McpIntentMode::Explicit,
+        ),
+        ("Use only the Gemini Notebook MCP.", McpIntentMode::Explicit),
+        ("Only use the Gemini Notebook MCP.", McpIntentMode::Explicit),
+        (
+            "Somente use o MCP Gemini Notebook.",
+            McpIntentMode::Explicit,
+        ),
+    ] {
+        let intent = runtime::resolve_user_intent(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &McpIntent::default(),
+            &[message.into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(intent.mode, expected, "{message}");
+        assert_eq!(intent.servers[0].id, notebook.id);
+        let continued = runtime::resolve_user_intent(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &intent,
+            &["Continue a consulta.".into()],
+        )
+        .await
+        .unwrap();
+        assert_eq!(continued, intent);
+        let (_sender, signal) = watch::channel(false);
+        let mut clients = runtime::TurnClients::discover_for_intent(
+            &f.mcp, &f.state, &f.home, &f.home, &continued, signal,
+        )
+        .await
+        .unwrap();
+        let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        assert_eq!(
+            definitions
+                .iter()
+                .any(|tool| tool["name"] == "mcp_activate"),
+            expected == McpIntentMode::OnDemand
+        );
+    }
+}
+
+#[tokio::test]
+async fn selecting_one_mcp_preserves_an_exclusion_in_the_same_message() {
+    let f = Fixture::new();
+    f.local("gemini-notebook-mcp");
+    let monday = f.local("monday-api-mcp");
+    f.local("database");
+    let intent = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &McpIntent::default(),
+        &["Use o MCP Gemini Notebook e não use o MCP monday-api-mcp.".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(intent.mode, McpIntentMode::OnDemand);
+    assert_eq!(intent.excluded_servers[0].id, monday.id);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp, &f.state, &f.home, &f.home, &intent, signal,
+    )
+    .await
+    .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let activate = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .unwrap();
+    assert_eq!(
+        activate["parameters"]["properties"]["server"]["enum"],
+        json!(["database"])
+    );
+    assert!(!fs::read_to_string(f.home.join("starts"))
+        .unwrap()
+        .contains("monday-api-mcp"));
+}
+
+#[tokio::test]
+async fn global_catalog_budget_keeps_small_peer_tools_searchable() {
+    let f = Fixture::new();
+    let small = f.local("small");
+    f.local_with_tools("large", 2000, 95);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    for name in ["small", "large"] {
+        clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        clients
+            .execute(
+                &f.mcp,
+                &f.state,
+                &f.home,
+                "mcp_activate",
+                &json!({"server":name}),
+                false,
+                signal.clone(),
+            )
+            .await
+            .unwrap();
+    }
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(definitions.len() <= 96);
+    let search = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_search_tools")
+        .unwrap();
+    assert!(search["parameters"]["properties"]["server"]["enum"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("small")));
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"server":"small","query":"lookup"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    let lookup = runtime::wire_name(&small, "lookup");
+    assert!(definitions.iter().any(|tool| tool["name"] == lookup));
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"status"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
 }
 
 #[tokio::test]
@@ -1384,15 +1672,18 @@ async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
     .unwrap();
     assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 1);
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
-    assert_eq!(definitions.len(), 2);
-    assert!(definitions.iter().all(|definition| {
-        definition["description"]
-            .as_str()
-            .unwrap()
-            .contains(required)
-    }));
+    assert_eq!(definitions.len(), 3);
+    assert!(definitions
+        .iter()
+        .filter(|definition| definition["name"] != "mcp_activate")
+        .all(|definition| {
+            definition["description"]
+                .as_str()
+                .unwrap()
+                .contains(required)
+        }));
     assert!(clients.instructions().contains("outcomeUncertain"));
-    assert!(clients.requires_explicit_attempt());
+    assert!(!clients.requires_explicit_attempt());
 
     let unrelated = runtime::wire_name(&database, "lookup");
     let error = clients
@@ -1408,7 +1699,7 @@ async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
         .await
         .unwrap_err();
     assert_eq!(error.code, "mcp_scope_violation");
-    assert!(clients.requires_explicit_attempt());
+    assert!(!clients.requires_explicit_attempt());
 
     let lookup = runtime::wire_name(&notebook, "lookup");
     let output = clients
@@ -1481,7 +1772,15 @@ async fn live_mcp_selection_preserves_the_peer_loaded_schema_and_confirmed_effec
     let before = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     assert!(before.iter().any(|definition| definition["name"] == lookup));
     let starts = fs::read_to_string(f.home.join("starts")).unwrap();
-    let intent = runtime::resolve_user_intent(&f.mcp, &f.state, &f.home, &McpIntent::default(), &["Se puder usar a narração usando mcp do voicestudio por favor, la o audio vem melhor e mais bonito".into()]).await.unwrap();
+    let intent = runtime::resolve_user_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &McpIntent::default(),
+        &["Use somente o MCP voicestudio para a narração.".into()],
+    )
+    .await
+    .unwrap();
     assert_eq!(intent.mode, McpIntentMode::Explicit);
     clients
         .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal.clone())
@@ -1641,7 +1940,7 @@ async fn harness_evaluation_large_mcp_catalog_loads_individual_tools_with_bounde
         &f.state,
         &f.home,
         &f.home,
-        "Use o MCP large catalog para consultar o arquivo.",
+        "Use apenas o MCP large catalog para consultar o arquivo.",
         signal.clone(),
     )
     .await
@@ -2243,7 +2542,7 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     )
     .await
     .unwrap();
-    assert_eq!(initial.mode, McpIntentMode::Explicit);
+    assert_eq!(initial.mode, McpIntentMode::OnDemand);
     assert_eq!(initial.servers.len(), 1);
     assert_eq!(initial.servers[0].id, notebook.id);
 
@@ -2275,10 +2574,12 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     .await
     .unwrap();
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
-    assert_eq!(definitions.len(), 2);
     assert!(definitions
         .iter()
-        .all(|definition| definition["description"]
+        .any(|definition| definition["name"] == "mcp_activate"));
+    assert!(definitions
+        .iter()
+        .any(|definition| definition["description"]
             .as_str()
             .unwrap()
             .contains("gemini-notebook-mcp")));
@@ -2292,7 +2593,7 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     )
     .await
     .unwrap();
-    assert_eq!(changed.mode, McpIntentMode::Explicit);
+    assert_eq!(changed.mode, McpIntentMode::OnDemand);
     assert_eq!(changed.servers.len(), 1);
     assert_eq!(changed.servers[0].id, database.id);
 
@@ -2305,7 +2606,7 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     )
     .await
     .unwrap();
-    assert_eq!(switched.mode, McpIntentMode::Explicit);
+    assert_eq!(switched.mode, McpIntentMode::OnDemand);
     assert_eq!(switched.servers.len(), 1);
     assert_eq!(switched.servers[0].id, database.id);
 
@@ -2512,9 +2813,10 @@ async fn harness_evaluation_timeout_reconnects_only_the_requested_mcp_without_re
     );
 
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
-    assert_eq!(definitions.len(), 2);
+    assert_eq!(definitions.len(), 3);
     assert!(definitions
         .iter()
+        .filter(|definition| definition["name"] != "mcp_activate")
         .all(|definition| definition["description"]
             .as_str()
             .unwrap()

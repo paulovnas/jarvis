@@ -41,10 +41,10 @@ it.each([84, 256])("keeps the blurred draft at height %i, prevents concurrent ac
   expect(loading.parentElement).toHaveClass("overflow-hidden");
   expect(screen.queryByRole("textbox", { name: "Mensagem" })).not.toBeInTheDocument();
   expect(field).toHaveAttribute("aria-disabled", "true");
-  expect(refine).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancelar refinamento" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Refinar prompt" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeDisabled();
-  await user.click(refine);
-  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "refine_chat_prompt")).toEqual([["refine_chat_prompt", { prompt: "Explique sem alterar código", conversationId: "c1" }]]);
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "refine_chat_prompt")).toEqual([["refine_chat_prompt", { prompt: "Explique sem alterar código", conversationId: "c1", requestId: expect.any(String) }]]);
   await act(async () => finish("Objetivo: explicar o projeto.\nRestrição: não alterar código.\nResposta: explicação concisa."));
   await waitFor(() => expect(field).toBeVisible());
   expect(field).toHaveTextContent("Restrição: não alterar código.");
@@ -73,7 +73,7 @@ it.each([null, { code: "prompt_refinement_error", message: "Escolha um modelo em
   expect(send).not.toHaveBeenCalled();
 });
 
-it("ignores a late response after leaving the original conversation", async () => {
+it("finishes in the original draft while another conversation is visible", async () => {
   let finish!: (value: string) => void;
   vi.mocked(invoke).mockImplementation(async command => command === "refine_chat_prompt" ? new Promise<string>(resolve => { finish = resolve; }) : catalog);
   const drafts = new Map<string, ChatDraft>([["c1", { content: "Rascunho A" }], ["c2", { content: "Rascunho B" }]]);
@@ -86,8 +86,54 @@ it("ignores a late response after leaving the original conversation", async () =
   const field = await screen.findByRole("textbox", { name: "Mensagem" });
   await act(async () => finish("Resposta tardia A"));
   expect(field).toHaveTextContent("Rascunho B");
-  expect(drafts.get("c1")?.content).toBe("Rascunho A");
+  expect(drafts.get("c1")?.content).toBe("Resposta tardia A");
   expect(drafts.get("c2")?.content).toBe("Rascunho B");
+  view.rerender(<ChatComposer {...props} key="c1" draftKey="c1" />);
+  expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Resposta tardia A");
+});
+
+it("restores a pending refinement after navigating away and back without starting another request", async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(invoke).mockImplementation(async command => command === "refine_chat_prompt" ? new Promise<string>(resolve => { finish = resolve; }) : catalog);
+  const drafts = new Map<string, ChatDraft>([["c1", { content: "Original A" }], ["c2", { content: "Original B" }]]);
+  const props = { drafts, modelGroups, onSendMessage: vi.fn() };
+  const view = render(<ChatComposer {...props} key="c1" draftKey="c1" />);
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Refinar prompt" }));
+  await screen.findByRole("status", { name: "Refinando prompt" });
+  view.rerender(<ChatComposer {...props} key="c2" draftKey="c2" />);
+  expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Original B");
+  view.rerender(<ChatComposer {...props} key="c1" draftKey="c1" />);
+  expect(await screen.findByRole("status", { name: "Refinando prompt" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Cancelar refinamento" })).toBeEnabled();
+  await act(async () => finish("Final A"));
+  expect(await screen.findByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Final A");
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "refine_chat_prompt")).toHaveLength(1);
+});
+
+it("stops refinement without losing the original and rejects its late result after a new edit", async () => {
+  let finish!: (value: string) => void;
+  vi.mocked(invoke).mockImplementation(async command => command === "refine_chat_prompt" ? new Promise<string>(resolve => { finish = resolve; }) : catalog);
+  const drafts = new Map<string, ChatDraft>([["c1", { content: "Meu texto original" }]]);
+  const user = userEvent.setup();
+  render(<ChatComposer draftKey="c1" drafts={drafts} modelGroups={modelGroups} onSendMessage={vi.fn()} />);
+  await user.click(await screen.findByRole("button", { name: "Refinar prompt" }));
+  const stop = await screen.findByRole("button", { name: "Cancelar refinamento" });
+  expect(stop).toHaveTextContent("");
+  await user.click(stop);
+  const field = await screen.findByRole("textbox", { name: "Mensagem" });
+  expect(field).toHaveTextContent("Meu texto original");
+  expect(screen.getByRole("button", { name: "Refinar prompt" })).toBeEnabled();
+  const request = vi.mocked(invoke).mock.calls.find(([command]) => command === "refine_chat_prompt")?.[1];
+  const cancellation = vi.mocked(invoke).mock.calls.find(([command]) => command === "cancel_chat_prompt_refinement")?.[1];
+  expect(cancellation).toEqual({ requestId: expect.any(String) });
+  expect(request).toMatchObject(cancellation ?? {});
+  await user.click(field);
+  await user.keyboard(" ajustado");
+  const edited = drafts.get("c1");
+  expect(edited?.content).toContain("ajustado");
+  await act(async () => finish("Resultado cancelado"));
+  expect(field).toHaveTextContent(edited?.content.trim() ?? "");
+  expect(drafts.get("c1")).toBe(edited);
 });
 
 it("preserves external draft additions made while refinement is pending", async () => {

@@ -1,3 +1,4 @@
+import { providerDisplayName } from "@/core/provider-accounts";
 import { useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -63,7 +64,7 @@ function ModelMappingRow({ target, accounts, choice, busy, onChange }: { target:
           label={`Provedor para ${target.label}`}
           value={choice?.account ?? UNASSIGNED}
           disabled={busy}
-          options={[{ value: UNASSIGNED, label: "Configurar depois" }, ...available.map(item => ({ value: item.alias, label: item.alias }))]}
+          options={[{ value: UNASSIGNED, label: "Configurar depois" }, ...available.map(item => ({ value: item.alias, label: providerDisplayName(item) }))]}
           onChange={alias => {
             const next = available.find(item => item.alias === alias);
             const first = next ? compatibleModels(next, target.kind)[0] : undefined;

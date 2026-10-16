@@ -85,12 +85,7 @@ fn alert_notices(
         "opencode-go" => "OpenCode Go",
         _ => "OpenAI Codex",
     };
-    let alias = record
-        .alias
-        .strip_prefix("openai-codex-")
-        .or_else(|| record.alias.strip_prefix("antigravity-"))
-        .or_else(|| record.alias.strip_prefix("opencode-go-"))
-        .unwrap_or(&record.alias);
+    let alias = record.display_name.as_deref().unwrap_or(&record.alias);
     usage
         .windows
         .iter()

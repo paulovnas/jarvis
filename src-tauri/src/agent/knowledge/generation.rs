@@ -667,6 +667,20 @@ pub(crate) async fn generate_project_knowledge(
             crate::claude::validate_available_model(&home, &request.choice.model)
                 .map_err(|e| error(&e))?;
             claude_text(&root, &request.choice, prompt, input).await?
+        } else if request.choice.executor == crate::claude::Executor::Muse {
+            crate::muse::validate_available_model(&home, &request.choice.model)
+                .map_err(|message| error(&message))?;
+            crate::muse::session::text(
+                &home,
+                &root,
+                &request.choice.model,
+                request.choice.reasoning.as_deref(),
+                &prompt,
+                &json!([{"type":"text","text":input}]),
+                signal.clone(),
+            )
+            .await
+            .map_err(|message| error(&message))?
         } else {
             let options = TurnOptions {
                 executor: request.choice.executor,
@@ -765,6 +779,21 @@ pub(in crate::agent) async fn synthesize(
 ) -> Result<String, AgentError> {
     let (state, oauth, home) = runtime;
     options.executor.require_available()?;
+    if options.executor == crate::claude::Executor::Muse {
+        crate::muse::validate_available_model(home, &options.model)
+            .map_err(|message| error(&message))?;
+        return crate::muse::session::text(
+            home,
+            root,
+            &options.model,
+            options.reasoning.as_deref(),
+            prompt,
+            &json!([{"type":"text","text":input}]),
+            signal,
+        )
+        .await
+        .map_err(|message| error(&message));
+    }
     if options.executor == crate::claude::Executor::Claude {
         return claude_text(
             root,

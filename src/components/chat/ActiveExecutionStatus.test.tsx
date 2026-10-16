@@ -98,3 +98,21 @@ it("does not display a fabricated rate when the provider has no generation measu
   expect(screen.queryByLabelText(/Velocidade média/)).not.toBeInTheDocument();
   expect(screen.getByTestId("active-execution-status")).not.toHaveTextContent("tok/s");
 });
+
+it.each([
+  { executor: "jarvis" as const, account: "openai-codex-pessoal" },
+  { executor: "jarvis" as const, account: "opencode-go-pessoal" },
+  { executor: "claude" as const, account: "" },
+  { executor: "muse" as const, account: "" },
+])("renders the same observed speed for $executor / $account", options => {
+  const turn = { ...savedTurn(), status: "running" as const, options: { ...savedTurn().options, ...options } };
+  const sample = { outputTokens: 80, durationMs: 2_000, estimated: false };
+  const { rerender } = render(<ActiveExecutionStatus turn={{ ...turn, steps: [{ ...turn.steps[0], generation: sample }] }} />);
+  expect(screen.getByLabelText("Velocidade média medida: 40,0 tokens por segundo")).toHaveTextContent("40,0 tok/s");
+  rerender(<ActiveExecutionStatus turn={{ ...turn, steps: [{ ...turn.steps[0], generation: { ...sample, estimated: true } }] }} />);
+  expect(screen.getByLabelText("Velocidade média estimada: 40,0 tokens por segundo")).toHaveTextContent("≈ 40,0 tok/s");
+  for (const generation of [undefined, { ...sample, outputTokens: 0 }, { ...sample, durationMs: 0 }]) {
+    rerender(<ActiveExecutionStatus turn={{ ...turn, steps: [{ ...turn.steps[0], generation }] }} />);
+    expect(screen.queryByLabelText(/Velocidade média/)).not.toBeInTheDocument();
+  }
+});

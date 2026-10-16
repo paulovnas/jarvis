@@ -4,7 +4,7 @@ fn evidence(id: &str) -> Evidence {
     Evidence {
         conversation_id: "chat-a".into(),
         message_id: id.into(),
-        excerpt: "Sempre use o Select do projeto e exiba o label, não o value.".into(),
+        excerpt: "Lembre-se: sempre use o Select do projeto e exiba o label, não o value.".into(),
         created_at: 1,
     }
 }
@@ -14,7 +14,7 @@ fn candidate(scope: &str) -> Candidate {
         content: "O Select deve mostrar o label, preservando o value como identificador.".into(),
         topics: vec!["select".into(), "interface".into()],
         check: "Selecione uma opção e verifique o texto visível.".into(),
-        quote: "Sempre use o Select do projeto e exiba o label".into(),
+        quote: "Lembre-se: sempre use o Select do projeto e exiba o label".into(),
         inferred: false,
         supersedes: None,
     }
@@ -37,6 +37,78 @@ fn setup(state: &AppState, home: &Path, root: &Path) {
             Ok::<_, AgentError>(())
         })
         .unwrap();
+}
+
+#[test]
+fn saving_requires_an_explicit_memory_or_reinforcement_quote() {
+    let root = tempfile::tempdir().unwrap();
+    let mut data = Store::empty();
+    retain(
+        &mut data,
+        root.path(),
+        candidate("."),
+        &evidence("existing"),
+    )
+    .unwrap();
+    let mut legacy = data.lessons[0].clone();
+    legacy.id = "legacy-business-definition".into();
+    legacy.content = "O orçamento usa o preço da tabela vigente.".into();
+    data.lessons.push(legacy);
+    let before = serde_json::to_value(&data.lessons).unwrap();
+    for quote in [
+        "O orçamento sempre usa o preço da tabela vigente.",
+        "Sempre use o Select do projeto nesta implementação.",
+        "Corrija o erro e não use any na nova função.",
+    ] {
+        let mut source = evidence("ordinary-task");
+        source.excerpt = format!("Lembre-se de sempre usar o Select do projeto.\n{quote}");
+        let mut proposed = candidate(".");
+        proposed.quote = quote.into();
+        proposed.content = quote.into();
+        assert!(
+            retain(&mut data, root.path(), proposed, &source).is_err(),
+            "{quote}"
+        );
+        assert_eq!(serde_json::to_value(&data.lessons).unwrap(), before);
+    }
+    let mut source = evidence("quoted-reminder");
+    source.excerpt =
+        "Lembre-se: use o Select do projeto. Mostre `Lembre-se de validar o frete` na ajuda."
+            .into();
+    let mut proposed = candidate(".");
+    proposed.quote = "Lembre-se de validar o frete".into();
+    assert!(retain(&mut data, root.path(), proposed, &source).is_err());
+    assert_eq!(serde_json::to_value(&data.lessons).unwrap(), before);
+}
+
+#[test]
+fn explicit_and_reinforced_technical_guidance_is_saved_with_its_source() {
+    let root = tempfile::tempdir().unwrap();
+    let mut data = Store::empty();
+    for (index, quote) in [
+        "Lembre-se de que precisamos sempre utilizar XYZ para validar os dados.",
+        "De novo? Eu já falei que não pode usar select nativo; use o Select do projeto.",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut source = evidence(&format!("intentional-{index}"));
+        source.excerpt = (*quote).into();
+        let mut proposed = candidate(".");
+        proposed.quote = (*quote).into();
+        proposed.content = if index == 0 {
+            "Use XYZ para validar os dados.".into()
+        } else {
+            "Use o Select do projeto em vez do select nativo.".into()
+        };
+        assert_eq!(
+            retain(&mut data, root.path(), proposed, &source).unwrap(),
+            "saved"
+        );
+        assert_eq!(data.lessons[index].status, Status::Active);
+        assert_eq!(data.lessons[index].evidence[0].excerpt, *quote);
+    }
+    assert_eq!(data.lessons.len(), 2);
 }
 
 #[test]

@@ -16,6 +16,7 @@ export type ProviderUsageAlert = {
 
 export type ProviderAccount = {
   alias: string;
+  displayName?: string | null;
   providerKind: string;
   enabled: boolean;
   showUsage?: boolean;
@@ -33,6 +34,17 @@ export type ProviderAccount = {
   disabledModels?: string[];
   custom?: CustomConfig;
 };
+
+export function providerDisplayName(account: Pick<ProviderAccount, "alias" | "displayName">): string {
+  return account.displayName ?? account.alias;
+}
+
+export function validateProviderDisplayName(value: string): string | null {
+  const name = value.trim();
+  return !name || [...name].length > 18 || [...value].some(char => char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159))
+    ? "Informe um nome de exibição de 1–18 caracteres, sem quebras de linha."
+    : null;
+}
 
 function isUsageAlert(value: unknown): value is ProviderUsageAlert {
   if (typeof value !== "object" || value === null) return false;
@@ -67,6 +79,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
   const account = value as Partial<ProviderAccount>;
   return (
     typeof account.alias === "string" &&
+    (account.displayName == null || (typeof account.displayName === "string" && validateProviderDisplayName(account.displayName) === null)) &&
     typeof account.providerKind === "string" &&
     (account.custom === undefined || customConfigSchema.safeParse(account.custom).success) &&
     typeof account.enabled === "boolean" &&

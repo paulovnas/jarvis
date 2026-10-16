@@ -681,7 +681,7 @@ fn probe_context() -> tauri::Context {
 }
 
 pub fn run() {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     if std::env::var("JARVIS_TRAY_PROBE").is_ok_and(|value| value == "1") {
         return crate::windows_tray::probe::run();
     }

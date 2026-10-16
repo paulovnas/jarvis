@@ -467,7 +467,7 @@ describe("Home shell", () => {
     await user.keyboard("{Enter}");
 
     expect(
-      await screen.findByText("openai-codex-pessoal"),
+      await screen.findByRole("menuitem", { name: "openai-codex-pessoal" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: /GPT-5.6 Luna/ })).not.toBeInTheDocument();
     screen.getByRole("menuitem", { name: "openai-codex-pessoal" }).focus();

@@ -21,7 +21,8 @@ import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field
 import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { companionGeometrySchema, companionIsStageCompletion, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
-import { accountUsageSchema, aliasSuffix } from "@/core/provider-usage";
+import { providerDisplayName } from "@/core/provider-accounts";
+import { accountUsageSchema } from "@/core/provider-usage";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ROLE_LABELS } from "@/core/workflow";
 import { libraryError } from "@/core/library";
@@ -47,9 +48,9 @@ const statusColor: Record<CompanionStatus, string> = {
   running: "text-primary", waiting: "text-onedark-yellow", reconnecting: "text-onedark-yellow",
   completed: "text-onedark-green", failed: "text-onedark-red", idle: "text-muted-foreground",
 };
-const usageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code", "opencode-go"]) }));
+const usageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code", "muse-code", "opencode-go"]) }));
 type CompanionUsage = z.infer<typeof usageSchema>[number];
-const usageProviderLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code", "opencode-go": "OpenCode Go" };
+const usageProviderLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code", "muse-code": "Muse Code", "opencode-go": "OpenCode Go" };
 
 function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; error: string | null; now: number }) {
   if (error && !accounts) return <p role="alert" className="text-xs text-onedark-yellow">{error}</p>;
@@ -57,8 +58,8 @@ function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; er
   return <div className="companion-usage-grid">
     {error && <p role="status" className="col-span-full text-xs text-onedark-yellow">{error}</p>}
     {!accounts.length && <p className="col-span-full py-8 text-center text-xs text-muted-foreground">Nenhum limite disponível nos provedores conectados.</p>}
-    {accounts.map(account => <section key={account.alias} aria-label={`Limites de ${account.alias}`} className="min-w-0 space-y-2 rounded-md border border-border bg-sidebar/40 p-2.5">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium"><span role="img" aria-label={usageProviderLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><Hint content={account.alias} whenTruncated><p className="min-w-0 flex-1 truncate">{aliasSuffix(account.alias)}</p></Hint>{account.fetchedAt && <time dateTime={new Date(account.fetchedAt).toISOString()} aria-label={`Atualizado às ${new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`} className="shrink-0 font-mono text-[9px] text-muted-foreground/70">{new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time>}</div>
+    {accounts.map(account => <section key={account.alias} aria-label={`Limites de ${providerDisplayName(account)}`} className="min-w-0 space-y-2 rounded-md border border-border bg-sidebar/40 p-2.5">
+      <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium"><span role="img" aria-label={usageProviderLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><Hint content={providerDisplayName(account)} whenTruncated><p className="min-w-0 flex-1 truncate">{providerDisplayName(account)}</p></Hint>{account.fetchedAt && <time dateTime={new Date(account.fetchedAt).toISOString()} aria-label={`Atualizado às ${new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`} className="shrink-0 font-mono text-[9px] text-muted-foreground/70">{new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time>}</div>
       {account.error && <p role="status" className="text-[11px] text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {!account.error && !account.windows.length && <p className="text-[11px] text-muted-foreground">Nenhuma janela informada.</p>}
       <div className="companion-usage-windows">{account.windows.map(window => <div key={window.id} className="companion-usage-window min-w-0 space-y-1.5">

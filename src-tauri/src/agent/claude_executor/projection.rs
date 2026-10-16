@@ -11,7 +11,8 @@ struct Preview {
 /// The public journal remains the only UI history. A full assistant envelope
 /// replaces its streamed preview rather than appending a second copy.
 #[derive(Default)]
-pub(super) struct Projection {
+pub(in crate::agent) struct Projection {
+    omit_request_metrics: bool,
     message: Option<String>,
     started: Option<std::time::Instant>,
     previews: HashMap<String, BTreeMap<u64, Preview>>,
@@ -273,7 +274,17 @@ pub(in crate::agent) fn mapped_call(name: &str, args: Value) -> (String, Value) 
 }
 
 impl Projection {
-    pub(super) fn pause_generation(&mut self, session: &Session) -> Result<(), AgentError> {
+    pub(in crate::agent) fn unmetered() -> Self {
+        Self {
+            omit_request_metrics: true,
+            ..Self::default()
+        }
+    }
+
+    pub(in crate::agent) fn pause_generation(
+        &mut self,
+        session: &Session,
+    ) -> Result<(), AgentError> {
         let Some(id) = &self.message else {
             return Ok(());
         };
@@ -344,7 +355,7 @@ impl Projection {
             self.recoverable_provider_failure =
                 matches!(event["error"].as_str(), Some("rate_limit" | "server_error"));
         }
-        {
+        if !self.omit_request_metrics {
             let data = session.data.lock().map_err(|_| AgentError::internal())?;
             let turn = data.turns.last().ok_or_else(AgentError::internal)?;
             self.metrics
@@ -429,11 +440,10 @@ impl Projection {
                 return Ok(());
             };
             let blocks = message["content"].as_array().cloned().unwrap_or_default();
-            let generation = self.generation.get_mut(id).and_then(|clock| {
-                clock.reported(message["usage"]["output_tokens"].as_u64());
-                clock.snapshot(std::time::Instant::now())
-            });
             let previews = self.previews.entry(id.into()).or_default();
+            let previous_bytes = previews.values().fold(0_u64, |total, preview| {
+                total.saturating_add(preview.text.len() as u64)
+            });
             for (index, block) in blocks.iter().enumerate() {
                 let Some(kind @ ("text" | "thinking")) = block["type"].as_str() else {
                     continue;
@@ -466,6 +476,14 @@ impl Projection {
                     },
                 );
             }
+            let generation = self.generation.get_mut(id).and_then(|clock| {
+                let bytes = previews.values().fold(0_u64, |total, preview| {
+                    total.saturating_add(preview.text.len() as u64)
+                });
+                clock.reconcile(previous_bytes, bytes);
+                clock.reported(message["usage"]["output_tokens"].as_u64());
+                clock.snapshot(std::time::Instant::now())
+            });
             session.update(true, |data| {
                 if let Some(turn) = data.turns.last_mut() {
                     // A native MCP callback may arrive before its assistant
@@ -662,6 +680,72 @@ mod tests {
             .unwrap()
             .contains("private-test-value"));
     }
+    #[test]
+    fn timed_unstreamed_final_text_uses_the_shared_estimator_for_both_native_executors() {
+        for unmetered in [false, true] {
+            let fixture = crate::agent::tests::Fixture::new();
+            let session = crate::agent::tests::session(&fixture);
+            session
+                .reserve(
+                    "Teste".into(),
+                    crate::agent::tests::options(ApprovalMode::Yolo),
+                )
+                .unwrap();
+            let mut projection = if unmetered {
+                Projection::unmetered()
+            } else {
+                Projection::default()
+            };
+            projection.apply(&session, &json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"answer"}}})).unwrap();
+            projection.generation.insert(
+                "answer".into(),
+                generation::Clock::new(std::time::Instant::now() - Duration::from_secs(2)),
+            );
+            projection.apply(&session, &json!({"type":"assistant","uuid":"answer","message":{"id":"answer","content":[{"type":"text","text":"abcdefgh"}]}})).unwrap();
+            projection
+                .apply(
+                    &session,
+                    &json!({"type":"stream_event","event":{"type":"message_stop"}}),
+                )
+                .unwrap();
+            let snapshot = session.snapshot().unwrap();
+            let metrics = snapshot.turns[0].steps[0].generation.as_ref().unwrap();
+            assert_eq!(metrics.output_tokens, 2);
+            assert!(metrics.duration_ms >= 2_000);
+            assert!(metrics.estimated);
+        }
+    }
+
+    #[test]
+    fn authoritative_text_reconciles_preview_bytes_without_counting_them_twice() {
+        let fixture = crate::agent::tests::Fixture::new();
+        let session = crate::agent::tests::session(&fixture);
+        session
+            .reserve(
+                "Teste".into(),
+                crate::agent::tests::options(ApprovalMode::Yolo),
+            )
+            .unwrap();
+        let mut projection = Projection::unmetered();
+        for event in [
+            json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"answer"}}}),
+            json!({"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"text":"abcdefgh"}}}),
+            json!({"type":"assistant","uuid":"answer","message":{"id":"answer","content":[{"type":"text","text":"abcd"}]}}),
+        ] {
+            projection.apply(&session, &event).unwrap();
+        }
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.turns[0].steps[0].text, "abcd");
+        assert_eq!(
+            snapshot.turns[0].steps[0]
+                .generation
+                .as_ref()
+                .unwrap()
+                .output_tokens,
+            1
+        );
+    }
+
     #[test]
     fn split_envelopes_do_not_stop_the_stream_or_add_cumulative_usage() {
         use crate::agent::tests::{options, session, Fixture};

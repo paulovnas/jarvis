@@ -16,6 +16,15 @@ const models: ProviderModelGroup[] = [
 const choice: ModelChoice = { account: "ene", model: "gpt-sol", reasoning: "high", fallback: { executor: "claude", account: "", model: "sonnet", reasoning: null } };
 const props = (overrides: Partial<RemoteChatSelectorsProps> = {}): RemoteChatSelectorsProps => ({ catalog: customCatalog, modelGroups: models, flow: "standard", choice, onFlowChange: vi.fn(), onModelChange: vi.fn(), ...overrides });
 
+it("selects the official Muse executor without introducing an account alias", async () => {
+  const user = userEvent.setup(), onModelChange = vi.fn();
+  render(<RemoteChatSelectors {...props({ onModelChange, modelGroups: [...models, { provider: "Muse Code", executor: "muse", models: [{ value: "muse-wonder", label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] }] })} />);
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  await user.click(await screen.findByRole("option", { name: "Muse Code · Muse Wonder" }));
+  await user.click(screen.getByRole("button", { name: "Aplicar modelo" }));
+  expect(onModelChange).toHaveBeenCalledExactlyOnceWith({ executor: "muse", account: "", model: "muse-wonder", reasoning: null, fallback: choice.fallback });
+});
+
 it("selects custom flows and individual agents without offering flow-only agents", async () => {
   const user = userEvent.setup(), onFlowChange = vi.fn();
   const current = props({ onFlowChange, catalog: { ...customCatalog, agents: [...customCatalog.agents, { ...customAgent, id: "d".repeat(32), name: "Agente interno", usage: "flow_only" }] } });

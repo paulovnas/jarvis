@@ -3,8 +3,9 @@ use crate::openai_codex::{
     CodexCredential, ProviderModel, OPENAI_CODEX_BASE_URL, OPENAI_CODEX_CLIENT_VERSION,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, Weak,
@@ -945,6 +946,61 @@ fn validate_requested_service_tier(
     Ok(())
 }
 
+fn wire_tool_ids(input: &[Value]) -> BTreeMap<String, Value> {
+    let ids: BTreeSet<_> = input
+        .iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("function_call" | "function_call_output")
+            )
+        })
+        .filter_map(|item| item["call_id"].as_str())
+        .collect();
+    let valid = |id: &str| {
+        !id.is_empty()
+            && id.len() <= 64
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    };
+    let mut used: BTreeSet<String> = ids
+        .iter()
+        .filter(|id| valid(id))
+        .map(|id| (*id).to_owned())
+        .collect();
+    let mut mapped = BTreeMap::new();
+    // Preserve saved IDs and native valid IDs; adapt only the provider projection.
+    // Hash the full foreign ID so shared prefixes never merge confirmed outcomes.
+    for id in ids.into_iter().filter(|id| !valid(id)) {
+        let digest = format!("{:x}", Sha256::digest(id.as_bytes()));
+        let base = format!("toolu_{}", &digest[..32]);
+        let mut candidate = base.clone();
+        let mut suffix = 1usize;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        mapped.insert(id.to_owned(), json!(candidate));
+    }
+    mapped
+}
+
+fn project_tool_ids(mut input: Vec<Value>) -> Vec<Value> {
+    let tool_ids = wire_tool_ids(&input);
+    for item in &mut input {
+        if matches!(
+            item["type"].as_str(),
+            Some("function_call" | "function_call_output")
+        ) {
+            if let Some(id) = item["call_id"].as_str().and_then(|id| tool_ids.get(id)) {
+                item["call_id"] = id.clone();
+            }
+        }
+    }
+    input
+}
+
 fn request_body(
     options: &TurnOptions,
     capabilities: &ModelCapabilities,
@@ -953,7 +1009,7 @@ fn request_body(
     tools: Vec<Value>,
     session_id: &str,
 ) -> Value {
-    let input: Vec<Value> = input
+    let input: Vec<Value> = project_tool_ids(input)
         .into_iter()
         .filter_map(|mut item| {
             if item["type"] == "reasoning"
@@ -2364,6 +2420,70 @@ mod tests {
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
         assert_eq!(body["store"], false);
         assert!(body.get("account").is_none());
+    }
+
+    #[test]
+    fn responses_request_projects_foreign_tool_ids_without_changing_saved_history() {
+        let options = super::super::tests::options(ApprovalMode::Yolo);
+        let credential = CodexCredential::new("", "", 0, "", None, None);
+        let capabilities = ModelCapabilities::resolve_for_options(&credential, &options);
+        let ids = [
+            "muse:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222221"
+                .to_owned(),
+            "muse:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222"
+                .to_owned(),
+            "foreign/call|item:1".to_owned(),
+            "call_native-1".to_owned(),
+            "a".repeat(64),
+            // Reserve the first foreign ID's alias as an existing native call.
+            "toolu_042fe938ea6522aa6758ad3d29977369".to_owned(),
+        ];
+        let mut input = vec![json!({"role":"user","content":"Continue the confirmed task."})];
+        for (index, id) in ids.iter().enumerate() {
+            input.push(json!({"type":"function_call","call_id":id,"name":"read","arguments":format!("{{\"path\":\"file-{index}.txt\"}}" )}));
+        }
+        for (index, id) in ids.iter().enumerate() {
+            input.push(json!({"type":"function_call_output","call_id":id,"output":format!("Confirmed result {index}; receipt {id}")}));
+        }
+        input.push(json!({"role":"user","content":"Use the updated requirement."}));
+        let original = input.clone();
+        let build = |input| {
+            request_body(
+                &options,
+                &capabilities,
+                "instructions",
+                input,
+                vec![],
+                "session",
+            )
+        };
+        let body = build(input.clone());
+        let wire = body["input"].as_array().unwrap();
+        let mut emitted = std::collections::BTreeSet::new();
+        assert_eq!(wire.len(), input.len());
+        assert_eq!(wire.first(), input.first());
+        assert_eq!(wire.last(), input.last());
+        for (index, original_id) in ids.iter().enumerate() {
+            let id = wire[1 + index]["call_id"].as_str().unwrap();
+            assert!(!id.is_empty() && id.len() <= 64, "{id}");
+            assert!(id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')));
+            assert!(emitted.insert(id));
+            let output_index = 1 + ids.len() + index;
+            assert_eq!(wire[output_index]["call_id"], id);
+            for position in [1 + index, output_index] {
+                let mut expected = input[position].clone();
+                expected["call_id"] = json!(id);
+                assert_eq!(wire[position], expected);
+            }
+            if index >= 3 {
+                assert_eq!(id, original_id);
+            }
+        }
+        assert_eq!(body, build(input.clone()));
+        assert_eq!(body, build(wire.clone()));
+        assert_eq!(input, original);
     }
 
     #[test]

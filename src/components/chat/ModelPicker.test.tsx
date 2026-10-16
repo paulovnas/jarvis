@@ -3,6 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { ModelPicker } from "./ModelPicker";
 
+it("shows the provider display name while the selected model keeps its internal alias", async () => {
+  const user = userEvent.setup(), select = vi.fn();
+  const groups = [{ provider: "openai-codex-internal", displayName: "Minha conta", models: [{ value: "openai-codex-internal/model", label: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] }];
+  render(<ModelPicker modelGroups={groups} selection={{ model: "openai-codex-internal/model", reasoning: null }} onSelect={select} showProviderIdentity />);
+  expect(screen.getByRole("button", { name: "Selecionar modelo de IA" })).toHaveTextContent("Minha conta · Modelo");
+  await user.click(screen.getByRole("button", { name: "Selecionar modelo de IA" }));
+  const provider = await screen.findByRole("menuitem", { name: "Minha conta" });
+  provider.focus(); await user.keyboard("{ArrowRight}");
+  await user.click(await screen.findByRole("menuitem", { name: "Modelo" }));
+  expect(select).toHaveBeenCalledWith({ model: "openai-codex-internal/model", reasoning: null });
+});
+
 it("shows each provider icon by its kind even when aliases are arbitrary", async () => {
   const user = userEvent.setup();
   const groups = (["openai-codex", "antigravity", "custom"] as const).map((providerKind, index) => ({ provider: `Conta ${index}`, providerKind, models: [{ value: `alias-${index}/model`, label: "Modelo", reasoningLevels: [], defaultReasoningLevel: null }] }));

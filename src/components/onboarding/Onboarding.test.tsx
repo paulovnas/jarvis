@@ -161,7 +161,7 @@ it("offers ordinary Antigravity and Claude setup without requesting the retired 
   await waitFor(() => expect(screen.getByRole("button", { name: "Avançar" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Avançar" }));
   await screen.findByRole("heading", { name: "Conecte sua inteligência" });
-  expect(screen.getByText(/instalação local do Claude Code e escolha/)).toBeVisible();
+  expect(screen.getByText(/instalação local do Claude Code ou Muse Code e escolha/)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Detalhes de Antigravity CLI" })).not.toBeInTheDocument();
   expect(invokeMock.mock.calls.some(([command]) => String(command).includes("agy"))).toBe(false);
 });

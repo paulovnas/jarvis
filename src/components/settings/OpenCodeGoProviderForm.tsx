@@ -8,7 +8,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupText } from "@/components/ui/input-group";
-import { accountList, type ProviderAccount } from "@/core/provider-accounts";
+import { accountList, validateProviderDisplayName, type ProviderAccount } from "@/core/provider-accounts";
+import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 
 const prefix = "opencode-go-";
 
@@ -20,6 +21,7 @@ export function OpenCodeGoProviderForm({ account, onSaved, onCancel, onBusyChang
 }) {
   const [suffix, setSuffix] = useState(account?.alias.slice(prefix.length) ?? "");
   const [apiKey, setApiKey] = useState("");
+  const [displayName, setDisplayName] = useState<string | null>(account?.displayName ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<"alias" | "key" | null>(null);
@@ -36,9 +38,14 @@ export function OpenCodeGoProviderForm({ account, onSaved, onCancel, onBusyChang
     }
     const key = apiKey.trim();
     if (!account && !key) { setInvalidField("key"); setError("Informe a chave de API da sua assinatura OpenCode Go."); return; }
+    const name = displayName ?? alias;
+    if (!account || displayName !== null) {
+      const nameError = validateProviderDisplayName(name);
+      if (nameError) { setError(nameError); return; }
+    }
     lock.current = true; setSaving(true); setError(null); setInvalidField(null); onBusyChange?.(true);
     try {
-      const result = await invoke<unknown>("save_opencode_go_provider", { alias, apiKey: key || null, editing: Boolean(account) });
+      const result = await invoke<unknown>("save_opencode_go_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), apiKey: key || null, editing: Boolean(account) });
       const saved = accountList([result])[0];
       if (!saved || saved.providerKind !== "opencode-go" || saved.alias !== alias) throw new Error("Não foi possível confirmar o cadastro do OpenCode Go.");
       setApiKey("");
@@ -60,6 +67,7 @@ export function OpenCodeGoProviderForm({ account, onSaved, onCancel, onBusyChang
         </InputGroup>
         <FieldDescription className="text-xs">Letras minúsculas, números e hífens internos.</FieldDescription>
       </Field>
+      <ProviderDisplayNameField value={displayName ?? alias} onChange={setDisplayName} disabled={saving} required={!account} />
       <Field data-invalid={invalidField === "key"}>
         <FieldLabel htmlFor="go-provider-api-key">Chave de API</FieldLabel>
         <Input id="go-provider-api-key" type="password" value={apiKey} onChange={event => setApiKey(event.currentTarget.value)} placeholder={account ? "Manter a chave atual" : "Sua chave do OpenCode Go"} disabled={saving} aria-invalid={invalidField === "key"} autoComplete="new-password" />

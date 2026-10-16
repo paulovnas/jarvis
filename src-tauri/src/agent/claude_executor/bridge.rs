@@ -134,7 +134,11 @@ impl<'a> Bridge<'a> {
         {
             prompt.push_str(self_development::INSTRUCTIONS);
         }
-        let backend = "Claude Code";
+        let backend = if options.executor == crate::claude::Executor::Muse {
+            "Muse Code"
+        } else {
+            "Claude Code"
+        };
         let mcp_dispatcher = "call_mcp_tool";
         prompt.push_str(&format!("\nExecution backend: {backend}. Keep your native reasoning and conversation management. All project operations, commands, tasks, questions, workflow coordination, approvals and external integrations are exposed by the Jarvis MCP server. Use these tools rather than describing actions for the user to execute. Jarvis owns their permissions and durable results. Do not create a second task/agent system. MCP discovery results include availableTools with exact schemas. Execute newly available tools and discovery controls through {mcp_dispatcher} using their exact name and arguments; no new user message or tools/list refresh is required. Search results marked loaded:true already include their schema; do not load them again. Native built-in tools are intentionally disabled to preserve the selected Jarvis role, project scope and approval contract.\n"));
         if !owner.global() {

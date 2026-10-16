@@ -12,17 +12,30 @@ function account(overrides: Partial<RemoteUsageAccount> = {}): RemoteUsageAccoun
   ], ...overrides };
 }
 
-it("identifies Go and displays monthly quota without inventing reserve or a fixed duration", async () => {
+it("identifies Muse subscription quotas with their reported windows", async () => {
+  const user = userEvent.setup();
+  render(<RemoteUsage load={vi.fn().mockResolvedValue([account({ alias: "Muse Code", providerKind: "muse-code" })])} />);
+  await user.click(screen.getByRole("button", { name: "Limites dos provedores" }));
+  const region = await screen.findByRole("region", { name: "Limites de Muse Code" });
+  expect(within(region).getByRole("img", { name: "Muse Code" })).toBeVisible();
+  expect(within(region).getByRole("progressbar", { name: "Codex 5h restante" })).toHaveAttribute("aria-valuenow", "70");
+});
+
+it("identifies Go by its display name and displays its monthly 30-day pace marker and reserve", async () => {
   vi.spyOn(Date, "now").mockReturnValue(now);
   const user = userEvent.setup();
-  const go = account({ alias: "opencode-go-pessoal", providerKind: "opencode-go", plan: "go", windows: [{ id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: 67, resetsAt: now + 86_400_000 }] });
+  const go = account({ alias: "opencode-go-pessoal", displayName: "Go Pessoal", providerKind: "opencode-go", plan: "go", windows: [{ id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: 67, resetsAt: now + (18 * 24 + 10) * 3600_000 }] });
   render(<RemoteUsage load={vi.fn().mockResolvedValue([go])} />);
   await user.click(screen.getByRole("button", { name: "Limites dos provedores" }));
-  const region = await screen.findByRole("region", { name: `Limites de ${go.alias}` });
+  const region = await screen.findByRole("region", { name: "Limites de Go Pessoal" });
   expect(within(region).getByRole("img", { name: "OpenCode Go" })).toBeVisible();
-  expect(within(region).getByText("pessoal")).toBeVisible();
+  expect(within(region).getByText("Go Pessoal")).toBeVisible();
+  expect(within(region).queryByText(go.alias)).not.toBeInTheDocument();
   expect(within(region).getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", "67");
-  expect(within(region).queryByText(/reserva|déficit/)).not.toBeInTheDocument();
+  const marker = within(region).getByRole("img", { name: "Restante esperado: 61%" });
+  expect(marker).toBeVisible();
+  expect(parseFloat(marker.style.left)).toBeCloseTo(61.3889, 2);
+  expect(within(region).getByText("6% em reserva")).toBeVisible();
 });
 
 it("opens compact provider limits on demand and includes identity, windows, renewals and reserve or deficit", async () => {
@@ -35,7 +48,7 @@ it("opens compact provider limits on demand and includes identity, windows, rene
   expect(load).toHaveBeenCalledWith(true);
   const panel = await screen.findByRole("dialog", { name: "Limites dos provedores" });
   const usage = await within(panel).findByRole("region", { name: "Limites de openai-codex-work" });
-  expect(within(usage).getByText("work")).toBeVisible();
+  expect(within(usage).getByText("openai-codex-work")).toBeVisible();
   expect(within(usage).getByRole("img", { name: "OpenAI Codex" })).toBeVisible();
   expect(within(usage).getByText("Pro")).toBeVisible();
   expect(within(usage).getByRole("progressbar", { name: "Codex 5h restante" })).toHaveAttribute("aria-valuenow", "70");

@@ -543,7 +543,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let state = window.state::<DesktopState>().inner().clone();
     match event {
         tauri::WindowEvent::CloseRequested { api, .. } => {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             if crate::windows_tray::hide_on_close(window) {
                 api.prevent_close();
                 return;

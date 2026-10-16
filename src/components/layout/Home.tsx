@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/resizable";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { SettingsSkeleton } from "./LoadingSkeletons";
-import { accountList, enabledModels, mergeModelCatalogRefresh, type ProviderAccount } from "@/core/provider-accounts";
+import { accountList, enabledModels, mergeModelCatalogRefresh, providerDisplayName, type ProviderAccount } from "@/core/provider-accounts";
 import { Inspector, InspectorNavigation, type InspectorSection } from "./Inspector";
 import type { DesignerSession } from "./DesignerPanel";
 import { AppSidebar } from "./Sidebar";
@@ -179,6 +179,7 @@ export function Home() {
     .filter((account) => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)
     .map((account) => ({
       provider: account.alias,
+      displayName: providerDisplayName(account),
       providerKind: account.providerKind,
       modelsStale: account.modelsStale,
       models: enabledModels(account).map((model) => ({

@@ -1,0 +1,5 @@
+{
+  "state": "accountLogin",
+  "credentialRequired": true,
+  "label": "member@example.test"
+}

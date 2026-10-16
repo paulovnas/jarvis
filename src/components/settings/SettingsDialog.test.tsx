@@ -69,6 +69,34 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("validates the name before opening OAuth and preserves the full internal alias", async () => {
+    invokeMock.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderSettings();
+    await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Sufixo do alias" }), { target: { value: "pessoal" } });
+    const name = screen.getByRole("textbox", { name: "Nome de exibição" });
+    expect(name).toHaveValue("openai-codex-pessoal");
+    await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("18");
+    expect(invokeMock).not.toHaveBeenCalledWith("begin_openai_codex_connection", expect.anything());
+    fireEvent.change(name, { target: { value: "   " } });
+    await user.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(invokeMock).not.toHaveBeenCalledWith("begin_openai_codex_connection", expect.anything());
+  });
+
+  it("saves a renamed legacy account by its immutable alias", async () => {
+    const legacy = account("openai-codex-long-legacy-alias");
+    invokeMock.mockImplementation(command => Promise.resolve(command === "list_provider_accounts" ? [legacy] : undefined));
+    const user = userEvent.setup(), changed = vi.fn();
+    render(<SettingsDialog embeddedProviders open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(await screen.findByRole("button", { name: `Detalhes de ${legacy.alias}` }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Equipe 💻" } });
+    await user.click(screen.getByRole("button", { name: "Salvar nome" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_provider_display_name", { alias: legacy.alias, displayName: "Equipe 💻" }));
+    expect(changed).toHaveBeenLastCalledWith([{ ...legacy, displayName: "Equipe 💻" }]);
+    expect(screen.getByRole("dialog", { name: "Equipe 💻" })).toBeVisible();
+  });
   it("opens computer setup directly on Tools and focuses its permission section", async () => {
     render(<SettingsDialog standalone open initialSection="computer" onOpenChange={vi.fn()} />);
     expect(screen.getByRole("tab", { name: /Ferramentas/ })).toHaveAttribute("aria-selected", "true");
@@ -317,10 +345,11 @@ describe("SettingsDialog provider accounts", () => {
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("option", { name: "OpenCode Go" }));
     fireEvent.change(screen.getByLabelText("Sufixo do alias"), { target: { value: "pessoal" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "private-test-key" } });
     await user.click(screen.getByRole("button", { name: "Conectar OpenCode Go" }));
     const detailsButton = await screen.findByRole("button", { name: `Detalhes de ${go.alias}` });
-    expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, apiKey: "private-test-key", editing: false });
+    expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, displayName: "Minha conta", apiKey: "private-test-key", editing: false });
     await user.click(detailsButton);
     expect(screen.getByRole("switch", { name: `Limites de ${go.alias} na statusbar` })).toBeChecked();
     expect(screen.queryByRole("button", { name: "Re-autorizar" })).not.toBeInTheDocument();
@@ -470,8 +499,9 @@ describe("SettingsDialog provider accounts", () => {
     await user.click(await screen.findByRole("option", { name: "Antigravity" }));
     expect(screen.getByRole("combobox", { name: "Provedor" })).toHaveTextContent("Antigravity");
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com Antigravity" }));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("begin_openai_codex_connection", { alias: "antigravity-pessoal" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("begin_openai_codex_connection", { alias: "antigravity-pessoal", displayName: "Minha conta" }));
     expect(openUrlMock).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?state=test");
     expect(screen.getByRole("dialog", { name: "Conectar com Antigravity" })).toBeInTheDocument();
     connected = true; login.resolve(google);
@@ -736,6 +766,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
 
     expect(await screen.findByText("Aguardando autenticação no navegador")).toBeInTheDocument();
@@ -744,7 +775,7 @@ describe("SettingsDialog provider accounts", () => {
     expect(openUrlMock).toHaveBeenCalledTimes(2);
     expect(openUrlMock).toHaveBeenNthCalledWith(2, authorizationUrl);
     expect(invokeMock).toHaveBeenCalledWith("begin_openai_codex_connection", {
-      alias: "openai-codex-pessoal",
+      alias: "openai-codex-pessoal", displayName: "Minha conta",
     });
     expect(invokeMock).toHaveBeenCalledWith("wait_openai_codex_connection", {
       flowId: "flow-1",
@@ -764,6 +795,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Este alias já está conectado.");
@@ -788,6 +820,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível abrir o navegador.");
@@ -817,6 +850,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     expect(await screen.findByText("Aguardando autenticação no navegador")).toBeInTheDocument();
 
@@ -844,6 +878,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     expect(await screen.findByText("Aguardando autenticação no navegador")).toBeInTheDocument();
 
@@ -876,6 +911,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings();
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "pessoal");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     await user.click(await screen.findByRole("button", { name: "Cancelar conexão" }));
 
@@ -898,6 +934,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings(onOpenChange);
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "empresa");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
@@ -926,6 +963,7 @@ describe("SettingsDialog provider accounts", () => {
     renderSettings(onOpenChange);
     await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
     await user.type(screen.getByRole("textbox", { name: "Sufixo do alias" }), "empresa");
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     await user.click(screen.getByRole("button", { name: "Conectar com ChatGPT" }));
     expect(await screen.findByText("Aguardando autenticação no navegador")).toBeInTheDocument();
 

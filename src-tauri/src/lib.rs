@@ -17,6 +17,7 @@ mod http_client;
 mod library;
 mod mcp;
 mod model_bindings;
+mod muse;
 mod openai_codex;
 mod optional_tools;
 mod persistence;
@@ -29,7 +30,7 @@ mod skills;
 mod system;
 mod updater;
 mod voice;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod windows_tray;
 
 fn application_context() -> tauri::Context {
@@ -239,6 +240,7 @@ pub fn run() {
         .manage(persistence::AppState::default())
         .manage(openai_codex::OpenAiCodexState::default())
         .manage(claude::ClaudeState::default())
+        .manage(muse::MuseState::default())
         .manage(agent::AgentState::default())
         .manage(agent::remote::RuntimeState::default())
         .manage(remote::RemoteState::default())
@@ -298,7 +300,7 @@ pub fn run() {
             skills::setup(&home).map_err(|error| std::io::Error::other(error.message))?;
             core::health::start_monitor(app.handle());
             system::setup(app.handle())?;
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             windows_tray::install(app.handle())?;
             companion::setup(app.handle());
             #[cfg(all(
@@ -418,9 +420,17 @@ pub fn run() {
                 claude::refresh_claude_runtime,
                 claude::get_claude_usage,
                 system::save_claude_provider_preferences,
+                muse::get_muse_runtime,
+                muse::refresh_muse_runtime,
+                muse::get_muse_usage,
+                muse::start_muse_login,
+                muse::cancel_muse_login,
+                muse::disconnect_muse_account,
+                system::set_muse_preferences,
                 system::get_system_preferences,
                 system::save_system_preferences,
                 agent::prompt_refinement::refine_chat_prompt,
+                agent::prompt_refinement::cancel_chat_prompt_refinement,
                 agent::message_prediction::get_chat_prediction,
                 agent::message_prediction::dismiss_chat_prediction,
                 system::test_system_notification,
@@ -611,6 +621,7 @@ pub fn run() {
                 openai_codex::opencode_go::free_models::get_opencode_go_free_models,
                 openai_codex::custom::discovery::lookup_custom_model,
                 openai_codex::set_provider_enabled,
+                openai_codex::display_name::set_provider_display_name,
                 openai_codex::usage::get_provider_usage,
                 openai_codex::usage::set_provider_usage_visibility,
                 openai_codex::usage::set_provider_usage_alert,

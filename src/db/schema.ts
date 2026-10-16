@@ -18,6 +18,7 @@ export const providerAccounts = sqliteTable(
   "provider_accounts",
   {
     alias: text("alias").primaryKey(),
+    displayName: text("display_name"),
     providerKind: text("provider_kind").notNull(),
     accountId: text("account_id").notNull().unique(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -30,6 +31,7 @@ export const providerAccounts = sqliteTable(
     createdAt: integer("created_at").notNull().default(sql`(unixepoch())`),
   },
   (table) => [
+    check("provider_accounts_display_name_check", sql`${table.displayName} IS NULL OR length(trim(${table.displayName})) BETWEEN 1 AND 18`),
     check(
       "provider_accounts_provider_kind_check",
       sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go')`,
@@ -81,6 +83,7 @@ export const mcpServers = sqliteTable("mcp_servers", {
 
 export const webSearchConfig = sqliteTable("web_search_config", {
   id: integer("id").primaryKey(),
+  executor: text("executor", { enum: ["jarvis", "muse"] }).notNull().default("jarvis"),
   inheritChat: integer("inherit_chat", { mode: "boolean" }).notNull().default(true),
   model: text("model").default("gpt-5.6-luna"),
   accountAlias: text("account_alias"),

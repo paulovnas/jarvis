@@ -5,7 +5,11 @@ use super::{
 };
 use crate::{openai_codex::OpenAiCodexState, persistence::AppState, system};
 use serde_json::json;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tauri::Manager;
 use tokio::sync::watch;
 
@@ -19,6 +23,87 @@ Return only the refined prompt, ready to edit and send. No preamble, explanation
 
 fn error(message: impl Into<String>) -> AgentError {
     AgentError::new("prompt_refinement_error", &message.into())
+}
+
+struct Request {
+    cancel: watch::Sender<bool>,
+    started: bool,
+    created: Instant,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct Refinements(Arc<Mutex<HashMap<String, Request>>>);
+
+struct Lease {
+    jobs: Refinements,
+    id: String,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = self.jobs.0.lock() {
+            requests.remove(&self.id);
+        }
+    }
+}
+
+impl Refinements {
+    fn request<'a>(
+        requests: &'a mut HashMap<String, Request>,
+        id: &str,
+    ) -> Result<&'a mut Request, AgentError> {
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        {
+            return Err(error("Identificador de refinamento inválido."));
+        }
+        // Preserve an early STOP if its start IPC has not arrived yet.
+        requests
+            .retain(|_, entry| entry.started || entry.created.elapsed() < Duration::from_secs(120));
+        if !requests.contains_key(id) && requests.len() >= 512 {
+            return Err(error(
+                "Há muitos refinamentos pendentes. Tente novamente em instantes.",
+            ));
+        }
+        Ok(requests.entry(id.to_owned()).or_insert_with(|| Request {
+            cancel: watch::channel(false).0,
+            started: false,
+            created: Instant::now(),
+        }))
+    }
+
+    fn begin(&self, id: &str) -> Result<(Lease, watch::Receiver<bool>), AgentError> {
+        let mut requests = self.0.lock().map_err(|_| AgentError::internal())?;
+        let request = Self::request(&mut requests, id)?;
+        if request.started {
+            return Err(error("Este refinamento já está em andamento."));
+        }
+        request.started = true;
+        Ok((
+            Lease {
+                jobs: self.clone(),
+                id: id.to_owned(),
+            },
+            request.cancel.subscribe(),
+        ))
+    }
+
+    fn cancel(&self, id: &str) -> Result<(), AgentError> {
+        let mut requests = self.0.lock().map_err(|_| AgentError::internal())?;
+        Self::request(&mut requests, id)?.cancel.send_replace(true);
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub fn cancel_chat_prompt_refinement(
+    agent: tauri::State<'_, AgentState>,
+    request_id: String,
+) -> Result<(), AgentError> {
+    agent.refinements.cancel(&request_id)
 }
 
 fn validate_text(text: &str) -> Result<(), AgentError> {
@@ -59,13 +144,17 @@ pub async fn refine_chat_prompt(
     oauth: tauri::State<'_, OpenAiCodexState>,
     prompt: String,
     conversation_id: Option<String>,
+    request_id: Option<String>,
 ) -> Result<String, AgentError> {
     validate_text(&prompt)?;
     let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
     let state = state.inner().clone();
     let oauth = oauth.inner().clone();
     let agent = app.state::<AgentState>().inner().clone();
-    let response = tokio::time::timeout(Duration::from_secs(120), async move {
+    let request_id = request_id.map_or_else(crate::library::new_id, Ok)?;
+    let (_lease, mut signal) = agent.refinements.begin(&request_id)?;
+    let stream_signal = signal.clone();
+    let generation = tokio::time::timeout(Duration::from_secs(120), async move {
         let (options, auth, input) = tauri::async_runtime::spawn_blocking(move || {
             let mut input = json!({"draft":prompt, "conversation":[], "projectKnowledge":null});
             if let Some(id) = conversation_id {
@@ -110,9 +199,8 @@ pub async fn refine_chat_prompt(
         })
         .await
         .map_err(|_| AgentError::storage())??;
-        let session = format!("prompt-refinement:{}", crate::library::new_id()?);
+        let session = format!("prompt-refinement:{request_id}");
         let trace = telemetry::trace(&session, &session);
-        let (_sender, signal) = watch::channel(false);
         provider::stream(
             &auth,
             &session,
@@ -121,13 +209,20 @@ pub async fn refine_chat_prompt(
             vec![json!({"role":"user", "content":input})],
             vec![],
             &trace,
-            signal,
+            stream_signal,
             |_| Ok(()),
         )
         .await
-    })
-    .await
-    .map_err(|_| error("O refinamento excedeu o tempo limite. Seu texto foi mantido."))??;
+    });
+    let response = tokio::select! {
+        biased;
+        _ = async {
+            if !*signal.borrow_and_update() {
+                let _ = signal.changed().await;
+            }
+        } => return Err(error("Refinamento cancelado. Seu texto foi mantido.")),
+        response = generation => response.map_err(|_| error("O refinamento excedeu o tempo limite. Seu texto foi mantido."))??,
+    };
     if !response.tool_calls().is_empty() {
         return Err(error(
             "O modelo não retornou um prompt refinado. Seu texto foi mantido.",
@@ -142,6 +237,47 @@ pub async fn refine_chat_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_one_refinement_keeps_other_chats_running_and_releases_the_job() {
+        let jobs = Refinements::default();
+        let (first, first_signal) = jobs.begin("chat-a").unwrap();
+        let (_second, second_signal) = jobs.begin("chat-b").unwrap();
+        assert!(!*first_signal.borrow());
+        assert!(jobs.begin("chat-a").is_err());
+        jobs.cancel("chat-a").unwrap();
+        assert!(*first_signal.borrow());
+        assert!(!*second_signal.borrow());
+        drop(first);
+        assert!(!jobs.0.lock().unwrap().contains_key("chat-a"));
+    }
+
+    #[test]
+    fn stop_before_the_start_command_prevents_a_late_provider_request() {
+        let jobs = Refinements::default();
+        jobs.cancel("late-start").unwrap();
+        let (_lease, signal) = jobs.begin("late-start").unwrap();
+        assert!(*signal.borrow());
+        for id in ["", "bad id", "bad\0id", &"x".repeat(129)] {
+            assert!(jobs.begin(id).is_err());
+            assert!(jobs.cancel(id).is_err());
+        }
+    }
+
+    #[test]
+    fn abandoned_stop_receipts_expire_and_registry_is_bounded() {
+        let jobs = Refinements::default();
+        jobs.cancel("expired").unwrap();
+        jobs.0.lock().unwrap().get_mut("expired").unwrap().created =
+            Instant::now() - Duration::from_secs(121);
+        let (_lease, signal) = jobs.begin("expired").unwrap();
+        assert!(!*signal.borrow());
+        for i in 1..512 {
+            jobs.cancel(&format!("cancel-{i}")).unwrap();
+        }
+        assert!(jobs.cancel("overflow").is_err());
+        assert_eq!(jobs.0.lock().unwrap().len(), 512);
+    }
 
     #[test]
     fn draft_generation_uses_the_configured_model_and_reasoning_without_agent_side_effects() {

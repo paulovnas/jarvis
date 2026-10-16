@@ -8,6 +8,7 @@ import type { CustomAgent } from "@/core/workflow-catalog";
 import type { ProviderAccount } from "@/core/provider-accounts";
 
 vi.mock("@/hooks/use-claude-runtime", () => ({ useClaudeRuntime: () => ({ data: { installed: false, authenticated: false, version: null, models: [], error: null }, loading: false, error: null, refresh: vi.fn() }) }));
+vi.mock("@/hooks/use-muse-runtime", () => ({ useMuseRuntime: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }) }));
 
 const accounts: ProviderAccount[] = ["primary", "backup"].map(alias => ({ alias, providerKind: "openai-codex", enabled: true, createdAt: 0, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "model", name: "Modelo de teste", reasoningLevels: [], defaultReasoningLevel: null }] }));
 

@@ -1,6 +1,13 @@
 import { expect, it } from "vitest";
-import { aliasSuffix, availableUsageAlertWindows, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining } from "./provider-usage";
+import { accountUsageSchema, aliasSuffix, availableUsageAlertWindows, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining } from "./provider-usage";
 import { shortId } from "./dashboard";
+
+it("preserves optional usage display names and rejects invalid new names without restricting legacy aliases", () => {
+  const usage = { alias: "openai-codex-legacy-account-with-a-long-name", fetchedAt: null, email: null, plan: null, windows: [], error: null, resetCredits: null };
+  expect(accountUsageSchema.parse(usage)).toEqual(usage);
+  expect(accountUsageSchema.parse({ ...usage, displayName: "Conta principal" })).toEqual({ ...usage, displayName: "Conta principal" });
+  expect(accountUsageSchema.safeParse({ ...usage, displayName: "x".repeat(19) }).success).toBe(false);
+});
 
 it("keeps the complete alias suffix and formats only available quota data", () => {
   expect(aliasSuffix("openai-codex-paulo-trabalho")).toBe("paulo-trabalho");
@@ -39,6 +46,23 @@ it("calcula reserva e deficit relativos ao tempo restante sem inventar janelas",
   expect(quotaReserve({ ...window, resetsAt: null }, 0)).toBeNull();
   expect(quotaReserve(window, window.resetsAt)).toBeNull();
   expect(quotaReserve({ ...window, resetsAt: 8 * 86400_000 }, 0)).toBeNull();
+});
+
+it("uses the Go monthly 30-day pacing horizon without changing its reset or assuming other unknown windows", () => {
+  const window = { id: "monthly", label: "Mensal", group: "OpenCode Go", thirdParty: false, durationSeconds: null, remainingPercent: 67, resetsAt: (18 * 24 + 10) * 3600_000 };
+  expect(expectedQuotaRemaining(window, 0)).toBeCloseTo(61.3889);
+  expect(quotaReserve(window, 0)).toBe(6);
+  expect(quotaReserve({ ...window, remainingPercent: 33 }, 0)).toBe(-28);
+  expect(quotaReserve({ ...window, remainingPercent: 50, resetsAt: 15 * 86400_000 }, 0)).toBe(0);
+  expect(expectedQuotaRemaining({ ...window, durationSeconds: 31 * 86400 }, 0)).toBeCloseTo(59.4086);
+  expect(expectedQuotaRemaining({ ...window, group: "Other provider" }, 0)).toBeNull();
+  expect(expectedQuotaRemaining({ ...window, id: "unknown" }, 0)).toBeNull();
+});
+
+it.each([null, 0, -1, 31 * 86400_000, Number.NaN])("hides Go monthly pacing when its reset is unavailable or outside the 30-day horizon: %s", resetsAt => {
+  const window = { id: "monthly", label: "Mensal", group: "OpenCode Go", thirdParty: false, durationSeconds: null, remainingPercent: 67, resetsAt };
+  expect(expectedQuotaRemaining(window, 0)).toBeNull();
+  expect(quotaReserve(window, 0)).toBeNull();
 });
 
 it("derives only alert windows actually returned by the provider", () => {

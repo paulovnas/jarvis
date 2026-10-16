@@ -100,6 +100,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_display_name_overrides_cached_metadata_without_refreshing_credentials() {
+        let home = tempfile::tempdir().unwrap();
+        let state = persistence::AppState::default();
+        let records = state
+            .with_connection(home.path(), |db| {
+                persistence::insert_provider_account(
+                    db,
+                    "openai-codex-legacy-long-alias",
+                    "credential-id",
+                    Some("Nome antigo"),
+                )?;
+                persistence::list_provider_accounts(db)
+            })
+            .unwrap();
+        let account = ProviderAccount::from_record(records[0].clone(), None, Vec::new(), true);
+        remember(home.path(), &records, &[account]);
+        state
+            .with_connection(home.path(), |db| {
+                display_name::update(db, &records[0].alias, "Novo nome")
+            })
+            .unwrap();
+        let cached = list(&state, home.path()).unwrap();
+        assert_eq!(cached[0].alias, records[0].alias);
+        assert_eq!(cached[0].display_name.as_deref(), Some("Novo nome"));
+    }
+
+    #[test]
     fn legacy_model_cache_defaults_to_normal_then_accepts_refreshed_fast_capability() {
         let home = tempfile::tempdir().unwrap();
         let state = persistence::AppState::default();

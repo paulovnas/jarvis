@@ -1,3 +1,4 @@
+import { providerDisplayName } from "@/core/provider-accounts";
 import { useState } from "react";
 import { BellRing } from "lucide-react";
 import { Input } from "@/components/TextInput";
@@ -43,7 +44,7 @@ export function ProviderUsageAlertSettings({ account, saving, onChange }: {
     }
   };
 
-  return <section aria-label={`Alertas de limite de ${account.alias}`} className="rounded-lg border border-border bg-muted/25 p-3 shadow-[inset_0_1px_0_#ffffff0d]">
+  return <section aria-label={`Alertas de limite de ${providerDisplayName(account)}`} className="rounded-lg border border-border bg-muted/25 p-3 shadow-[inset_0_1px_0_#ffffff0d]">
     <div className="flex items-center justify-between gap-3">
       <Label htmlFor={`usage-alert-${account.alias}`} className="flex min-w-0 items-center gap-2 text-xs">
         <BellRing aria-hidden="true" className="size-4 shrink-0 text-onedark-yellow" />
@@ -51,7 +52,7 @@ export function ProviderUsageAlertSettings({ account, saving, onChange }: {
       </Label>
       <Switch
         id={`usage-alert-${account.alias}`}
-        aria-label={`Alertar sobre limites de ${account.alias}`}
+        aria-label={`Alertar sobre limites de ${providerDisplayName(account)}`}
         checked={Boolean(account.usageAlert)}
         disabled={saving || (!account.usageAlert && !defaultWindow)}
         onCheckedChange={enabled => onChange(account.alias, enabled && defaultWindow ? { window: defaultWindow, remainingPercent: Number(threshold) || 20 } : null)}
@@ -73,7 +74,7 @@ export function ProviderUsageAlertSettings({ account, saving, onChange }: {
       <div className="space-y-1.5">
         <Label htmlFor={`usage-alert-threshold-${account.alias}`} className="text-[11px] text-muted-foreground">Avisar quando restar</Label>
         <div className="relative">
-          <Input id={`usage-alert-threshold-${account.alias}`} aria-label={`Porcentagem restante para ${account.alias}`} type="number" min={1} max={100} step={1} inputMode="numeric" value={threshold} disabled={saving} onChange={event => setThreshold(event.target.value)} onBlur={commitThreshold} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="pr-8 font-mono text-xs tabular-nums" />
+          <Input id={`usage-alert-threshold-${account.alias}`} aria-label={`Porcentagem restante para ${providerDisplayName(account)}`} type="number" min={1} max={100} step={1} inputMode="numeric" value={threshold} disabled={saving} onChange={event => setThreshold(event.target.value)} onBlur={commitThreshold} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} className="pr-8 font-mono text-xs tabular-nums" />
           <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-3 flex items-center font-mono text-xs text-muted-foreground">%</span>
         </div>
       </div>

@@ -372,7 +372,7 @@ async fn drive(
     }
 }
 
-async fn finish_live_accept(bridge: &bridge::Bridge<'_>) -> Result<bool, AgentError> {
+pub(super) async fn finish_live_accept(bridge: &bridge::Bridge<'_>) -> Result<bool, AgentError> {
     if !bridge.accepted_live {
         return Ok(false);
     }
@@ -527,12 +527,7 @@ pub(super) async fn control_request(
                 }
                 Some("notifications/initialized" | "ping") => json!({}),
                 Some("tools/list") => {
-                    let mut tools: Vec<Value> = bridge.definitions().await?.iter().map(|definition| json!({"name":definition["name"],"description":definition["description"],"inputSchema":definition["parameters"]})).collect();
-                    if !bridge.clients.instructions().is_empty() {
-                        let name = "call_mcp_tool";
-                        tools.push(json!({"name":name,"description":"Execute an MCP tool or discovery control using the exact name and inputSchema in availableTools from a Jarvis discovery result. Activated eager tools and automatically loaded search results are ready immediately. Tool name, scope and arguments are validated by Jarvis.","inputSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^mcp_"},"arguments":{"type":"object"}},"required":["name","arguments"],"additionalProperties":false}}));
-                    }
-                    json!({"tools":tools})
+                    json!({"tools":mcp_tools(bridge).await?})
                 }
                 Some("tools/call") => {
                     execute_tool(bridge, id, &message["params"], native_tool).await?
@@ -549,6 +544,16 @@ pub(super) async fn control_request(
         }
         _ => Ok(Err("Unsupported Claude control request".into())),
     }
+}
+
+pub(super) async fn mcp_tools(bridge: &mut bridge::Bridge<'_>) -> Result<Vec<Value>, AgentError> {
+    let mut tools: Vec<Value> = bridge.definitions().await?.iter().map(|definition| {
+        json!({"name":definition["name"],"description":definition["description"],"inputSchema":definition["parameters"]})
+    }).collect();
+    if !bridge.clients.instructions().is_empty() {
+        tools.push(json!({"name":"call_mcp_tool","description":"Execute an MCP tool or discovery control using the exact name and inputSchema in availableTools from a Jarvis discovery result. Activated eager tools and automatically loaded search results are ready immediately. Tool name, scope and arguments are validated by Jarvis.","inputSchema":{"type":"object","properties":{"name":{"type":"string","pattern":"^mcp_"},"arguments":{"type":"object"}},"required":["name","arguments"],"additionalProperties":false}}));
+    }
+    Ok(tools)
 }
 
 pub(super) async fn execute_tool(

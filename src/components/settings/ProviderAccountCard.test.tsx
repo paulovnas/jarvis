@@ -28,6 +28,18 @@ const account: ProviderAccount = {
 };
 
 describe("ProviderAccountCard", () => {
+  it("shows and edits the public name while preserving aliases for operations", async () => {
+    const user = userEvent.setup(), onEnabledChange = vi.fn(), onDisplayNameChange = vi.fn();
+    render(<ProviderAccountCard account={{ ...account, displayName: "Minha conta" }} onDisconnect={vi.fn()} onEnabledChange={onEnabledChange} onDisplayNameChange={onDisplayNameChange} />);
+    await user.click(screen.getByRole("button", { name: "Detalhes de Minha conta" }));
+    expect(screen.getByRole("dialog", { name: "Minha conta" })).toBeVisible();
+    const name = screen.getByRole("textbox", { name: "Nome de exibição" });
+    await user.clear(name); await user.type(name, "Equipe 💻");
+    await user.click(screen.getByRole("button", { name: "Salvar nome" }));
+    expect(onDisplayNameChange).toHaveBeenCalledWith(account.alias, "Equipe 💻");
+    await user.click(screen.getByRole("switch", { name: "Ativar Minha conta" }));
+    expect(onEnabledChange).toHaveBeenCalledWith(account.alias, false);
+  });
   it.each(["openai-codex", "opencode-go"] as const)("offers independent quota windows for %s and preserves them when hiding limits", async providerKind => {
     const user = userEvent.setup();
     const onUsageChange = vi.fn();

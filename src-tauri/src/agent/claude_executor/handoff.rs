@@ -89,7 +89,7 @@ pub(in crate::agent) fn history(data: &SessionData) -> Value {
 
 /// Native image blocks are ephemeral transport data. The journal contains only
 /// the scoped attachment reference already owned by Jarvis.
-pub(super) fn content(
+pub(in crate::agent) fn content(
     home: &Path,
     conversation: &str,
     text: String,

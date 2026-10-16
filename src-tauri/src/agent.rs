@@ -37,6 +37,7 @@ pub(crate) mod maintenance;
 pub(crate) mod message_prediction;
 mod model_fallback;
 mod model_instructions;
+mod muse_executor;
 mod parallel_tools;
 mod patch;
 pub(crate) mod processes;
@@ -1331,6 +1332,7 @@ pub struct AgentState {
     loading_sessions: Arc<Mutex<HashSet<String>>>,
     title_generations: Arc<Mutex<HashSet<String>>>,
     predictions: message_prediction::Predictions,
+    refinements: prompt_refinement::Refinements,
     histories: history::HistoryState,
     workflows: workflow::Registry,
     companion_recent: companion::Recent,
@@ -1352,6 +1354,7 @@ impl Default for AgentState {
             loading_sessions: Default::default(),
             title_generations: Default::default(),
             predictions: Default::default(),
+            refinements: Default::default(),
             histories: Default::default(),
             workflows: Default::default(),
             companion_recent: Default::default(),
@@ -1812,7 +1815,7 @@ impl AgentState {
             })
             .collect()
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn tray_running_ids(&self) -> Result<HashSet<String>, AgentError> {
         Ok(self
             .activity()?
@@ -3240,24 +3243,53 @@ fn pending_mcp_intent_resolution(
 ) -> Option<(String, crate::mcp::McpIntent, Vec<String>, usize)> {
     let current = turns.last()?;
     let auxiliary_count = current.turn.auxiliary_messages.len();
+    let restored = |intent: &crate::mcp::McpIntent, source: &[StoredTurn]| {
+        if intent.mode != crate::mcp::McpIntentMode::Explicit
+            || source
+                .last()
+                .is_some_and(|turn| turn.mcp_parent_intent.is_some())
+        {
+            return intent.clone();
+        }
+        let messages = source
+            .iter()
+            .flat_map(|turn| {
+                std::iter::once(turn.turn.user.clone()).chain(
+                    turn.turn
+                        .auxiliary_messages
+                        .iter()
+                        .map(|message| message.content.clone()),
+                )
+            })
+            .collect::<Vec<_>>();
+        crate::mcp::runtime::restored_intent_scope(intent, &messages)
+            .unwrap_or_else(|| intent.clone())
+    };
     if let Some(intent) = &current.mcp_intent {
-        return (current.mcp_intent_auxiliary_count < auxiliary_count).then(|| {
-            (
-                current.turn.id.clone(),
-                intent.clone(),
-                current.turn.auxiliary_messages[current.mcp_intent_auxiliary_count..]
-                    .iter()
-                    .map(|message| message.content.clone())
-                    .collect(),
-                auxiliary_count,
-            )
-        });
+        let inherited = restored(intent, turns);
+        return (current.mcp_intent_auxiliary_count < auxiliary_count || inherited != *intent)
+            .then(|| {
+                (
+                    current.turn.id.clone(),
+                    inherited,
+                    current.turn.auxiliary_messages[current.mcp_intent_auxiliary_count..]
+                        .iter()
+                        .map(|message| message.content.clone())
+                        .collect(),
+                    auxiliary_count,
+                )
+            });
     }
     let previous = turns[..turns.len() - 1]
         .iter()
         .rposition(|turn| turn.mcp_intent.is_some());
     let inherited = previous
-        .and_then(|index| turns[index].mcp_intent.clone())
+        .and_then(|index| {
+            turns[index]
+                .mcp_intent
+                .as_ref()
+                .map(|intent| restored(intent, &turns[..=index]))
+        })
         .unwrap_or_else(|| inherited_mcp_intent.clone());
     let start = previous.map_or(0, |index| index + 1);
     let messages = turns[start..]
@@ -3623,6 +3655,17 @@ fn run_turn_once<'a>(
             return match options.executor {
                 crate::claude::Executor::Claude => {
                     claude_executor::run(
+                        session,
+                        runtime,
+                        signal,
+                        execution,
+                        manual_hooks,
+                        frozen_skills,
+                    )
+                    .await
+                }
+                crate::claude::Executor::Muse => {
+                    muse_executor::run(
                         session,
                         runtime,
                         signal,

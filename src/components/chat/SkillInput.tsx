@@ -2,11 +2,10 @@ import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState, t
 import { invoke } from "@tauri-apps/api/core";
 import { Extension, Node, EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, type Editor, type JSONContent, type NodeViewProps } from "@tiptap/react";
 import { Plugin } from "@tiptap/pm/state";
-import Document from "@tiptap/extension-document";
-import Paragraph from "@tiptap/extension-paragraph";
-import Text from "@tiptap/extension-text";
+import { Fragment, Slice } from "@tiptap/pm/model";
 import HardBreak from "@tiptap/extension-hard-break";
-import { UndoRedo } from "@tiptap/extensions";
+import CodeBlock from "@tiptap/extension-code-block";
+import { MarkdownManager } from "@tiptap/markdown";
 import { BookOpen, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +14,7 @@ import { Hint } from "@/components/ui/hint";
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { Command, CommandItem, CommandList } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
+import { markdownEditorExtensions, markdownNeedsSource } from "@/components/markdown-editor-extensions";
 import { draftText, type ChatDraft, type MessagePart } from "@/core/chat";
 import { skillError, skillsSnapshotSchema, type Skill } from "@/core/skills";
 
@@ -71,34 +71,57 @@ const CleanComposerText = Extension.create({
 
 function inputDocument(draft: ChatDraft): JSONContent {
   const parts = draft.parts?.length ? draft.parts : [{ type: "text" as const, text: draft.content }];
-  const content: JSONContent[] = [];
+  const skills = new Map<string, JSONContent>();
+  let markdown = "";
   for (const part of parts) {
-    if (part.type === "skill") content.push({ type: "skill", attrs: { id: part.id, name: part.name } });
-    else if (part.type === "text") sanitizeComposerText(part.text).split("\n").forEach((text, index) => {
-      if (index) content.push({ type: "hardBreak" });
-      if (text) content.push({ type: "text", text });
-    });
+    if (part.type === "skill") {
+      const token = `JARVISSKILL${crypto.randomUUID().replace(/-/g, "")}TOKEN`;
+      skills.set(token, { type: "skill", attrs: { id: part.id, name: part.name } });
+      markdown += token;
+    } else if (part.type === "text") markdown += sanitizeComposerText(part.text);
   }
-  return { type: "doc", content: [{ type: "paragraph", content }] };
+  if (!markdown) return { type: "doc", content: [{ type: "paragraph" }] };
+  const expand = (node: JSONContent, code = false): JSONContent[] => {
+    if (node.type === "text" && node.text) return node.text.split(code ? /(JARVISSKILL[a-f0-9]+TOKEN)/ : /(JARVISSKILL[a-f0-9]+TOKEN|\n)/).filter(Boolean).map(text =>
+      skills.has(text) ? { ...skills.get(text), marks: node.marks } : (!code && text === "\n" ? { type: "hardBreak" } : { ...node, text }));
+    return [{ ...node, ...(node.content ? { content: node.content.flatMap(child => expand(child, code || node.type === "codeBlock")) } : {}) }];
+  };
+  // Keep coding prompts literal when the visual parser cannot preserve their source.
+  const document = markdownNeedsSource(markdown, composerMarkdown)
+    ? { type: "doc", content: [{ type: "codeBlock", attrs: { source: true }, content: [{ type: "text", text: markdown }] }] }
+    : composerMarkdown.parse(markdown);
+  return expand(document)[0];
 }
 
 function readDraft(editor: Editor): ChatDraft {
   const parts: MessagePart[] = [];
-  const append = (text: string) => {
-    const last = parts[parts.length - 1];
-    if (last?.type === "text") last.text += text;
-    else parts.push({ type: "text", text });
+  const skills = new Map<string, MessagePart>();
+  const replace = (node: JSONContent): JSONContent => {
+    if (node.type === "skill") {
+      const token = `JARVISSKILL${crypto.randomUUID().replace(/-/g, "")}TOKEN`;
+      skills.set(token, { type: "skill", id: String(node.attrs?.id), name: String(node.attrs?.name) });
+      return { type: "text", text: token, marks: node.marks };
+    }
+    return { ...node, ...(node.content ? { content: node.content.map(replace) } : {}) };
   };
-  editor.state.doc.forEach((block, _offset, index) => {
-    if (index) append("\n");
-    block.forEach(node => {
-      if (node.type.name === "skill") parts.push({ type: "skill", id: String(node.attrs.id), name: String(node.attrs.name) });
-      else if (node.type.name === "hardBreak") append("\n");
-      else if (node.text) append(sanitizeComposerText(node.text));
-    });
-  });
+  const markdown = editor.isEmpty ? "" : composerMarkdown.serialize(replace(editor.getJSON()));
+  for (const text of markdown.split(/(JARVISSKILL[a-f0-9]+TOKEN)/).filter(Boolean)) parts.push(skills.get(text) ?? { type: "text", text: sanitizeComposerText(text) });
   return { content: draftText(parts), ...(parts.some(part => part.type === "skill") ? { parts } : {}) };
 }
+
+const composerExtensions = [
+  ...markdownEditorExtensions().map(extension => extension.name === "starterKit" ? extension.configure({ hardBreak: false, codeBlock: false }) : extension),
+  // Existing drafts can contain an explicitly selected skill inside a code fence.
+  CodeBlock.extend({
+    content: "(text|skill)*",
+    addAttributes() { return { ...this.parent?.(), source: { default: false, rendered: false, parseHTML: () => false } }; },
+    renderMarkdown: (node, helpers, context) => node.attrs?.source
+      ? helpers.renderChildren(node.content ?? [])
+      : CodeBlock.config.renderMarkdown?.(node, helpers, context) ?? "",
+  }),
+  HardBreak.extend({ renderMarkdown: () => "\n" }), SkillToken, CleanComposerText,
+];
+const composerMarkdown = new MarkdownManager({ extensions: composerExtensions });
 
 interface Query { from: number; to: number; text: string }
 function slashQuery(editor: Editor): Query | null {
@@ -110,11 +133,19 @@ function slashQuery(editor: Editor): Query | null {
 }
 const origins = { jarvis: "Jarvis", agents: ".agents", project: "Projeto", plugin: "Plugin" };
 const editorProps = {
-  attributes: (state: Editor["state"]) => ({ role: "textbox", "aria-label": "Mensagem", "aria-multiline": "true", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences", "data-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0), "data-placeholder": "Mensagem… / para skills", class: "skill-editor min-h-[84px] max-h-64 w-full overflow-y-auto px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-foreground outline-none" }),
+  attributes: (state: Editor["state"]) => ({ role: "textbox", "aria-label": "Mensagem", "aria-multiline": "true", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences", "data-empty": String(state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0), "data-placeholder": "Mensagem… / para skills", class: "skill-editor markdown-editor-prose min-h-[84px] max-h-64 w-full overflow-y-auto px-5 pt-4 pb-2 text-[14.5px] leading-relaxed text-foreground outline-none" }),
+  transformPastedHTML: (html: string) => sanitizeComposerText(html),
   handlePaste: (view: Editor["view"], event: ClipboardEvent) => {
+    if (event.clipboardData?.getData("text/html") && view.state.selection.$from.parent.type.name !== "codeBlock") return false;
     const text = event.clipboardData?.getData("text/plain");
     if (text === undefined) return false;
-    view.dispatch(view.state.tr.insertText(sanitizeComposerText(text)));
+    if (view.state.selection.$from.parent.type.name === "codeBlock") view.dispatch(view.state.tr.insertText(sanitizeComposerText(text)));
+    else {
+      const content = inputDocument({ content: text }).content ?? [];
+      const nodes = content.map(node => view.state.schema.nodeFromJSON(node));
+      const fragment = Fragment.from(nodes);
+      view.dispatch(view.state.tr.replaceSelection(content.some(node => node.attrs?.source) ? new Slice(fragment, 0, 0) : Slice.maxOpen(fragment)));
+    }
     return true;
   },
   handleTextInput: (view: Editor["view"], from: number, to: number, text: string) => {
@@ -179,7 +210,7 @@ export function SkillInput({ draft, onChange, onSend, disabled, compacting, work
     if (!next) { setCatalog(null); setDismissed(null); setSelected(""); }
   };
   const editor = useEditor({
-    extensions: [Document, Paragraph, Text, HardBreak, UndoRedo, SkillToken, CleanComposerText],
+    extensions: composerExtensions,
     content: initialDocument,
     editable: !disabled,
     editorProps: { ...editorProps, attributes: state => ({ ...editorProps.attributes(state), "data-placeholder": prediction ?? "Mensagem… / para skills", "data-prediction": String(Boolean(prediction)) }) },

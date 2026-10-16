@@ -42,6 +42,7 @@ fn load(state: &AppState, home: &Path) -> Result<Config, AgentError> {
             .map_err(|_| AgentError::storage())?
             .flatten();
         Ok(Config {
+            executor: crate::claude::Executor::Jarvis,
             inherit_chat: false,
             model: alias.as_ref().map(|_| MODEL.into()),
             account_alias: alias,

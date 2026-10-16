@@ -34,6 +34,8 @@ export default defineConfig(async ({ command }) => ({
       },
       output: {
         manualChunks(id: string) {
+          // Keep the shared Markdown engine within the existing chunk budget.
+          if (/\/node_modules\/(?:@tiptap\/pm|prosemirror-[^/]+)\//.test(id)) return "prosemirror";
           if (
             id.includes("/src/components/ui/hint.tsx")
             || id.includes("/src/components/ui/tooltip.tsx")

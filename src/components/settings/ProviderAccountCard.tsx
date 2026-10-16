@@ -9,7 +9,8 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import type { ProviderAccount, ProviderUsageAlert } from "@/core/provider-accounts";
+import { providerDisplayName, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
 import { ProviderUsageWindowSettings } from "./ProviderUsageWindowSettings";
 import { Hint } from "@/components/ui/hint";
@@ -29,10 +30,11 @@ function formatConnectionDate(timestamp: number): string {
   });
 }
 
-export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onUsageChange, onUsageAlertChange, onModelEnabledChange, onRefreshModels, refreshing = false, onReviewAgents, onEdit, onReauthorize, saving = false }: {
+export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, onDisplayNameChange, onUsageChange, onUsageAlertChange, onModelEnabledChange, onRefreshModels, refreshing = false, onReviewAgents, onEdit, onReauthorize, saving = false }: {
   account: ProviderAccount;
   onDisconnect: (alias: string) => void;
   onEnabledChange: (alias: string, enabled: boolean) => void;
+  onDisplayNameChange?: (alias: string, displayName: string) => void;
   onUsageChange?: (alias: string, showUsage: boolean, showThirdPartyUsage: boolean, showFiveHourUsage?: boolean, showWeeklyUsage?: boolean) => void;
   onUsageAlertChange?: (alias: string, alert: ProviderUsageAlert | null) => void;
   onModelEnabledChange?: (alias: string, modelId: string, enabled: boolean) => void;
@@ -44,6 +46,9 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
   onReauthorize?: (account: ProviderAccount) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const displayName = providerDisplayName(account);
   const [references, setReferences] = useState<ProviderReference[] | null>(null);
   const [referenceError, setReferenceError] = useState(false);
   useEffect(() => {
@@ -78,7 +83,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
       <DialogTrigger
         render={<CardHeader />}
         nativeButton={false}
-        aria-label={`Detalhes de ${account.alias}`}
+        aria-label={`Detalhes de ${displayName}`}
         aria-describedby={summaryId}
         className="group settings-row cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       >
@@ -87,7 +92,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <ProviderIcon kind={account.providerKind} className="size-5" />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <Hint content={account.alias} whenTruncated><CardTitle className="min-w-0 truncate font-mono text-sm!">{account.alias}</CardTitle></Hint>
+            <Hint content={displayName} whenTruncated><CardTitle className="min-w-0 truncate text-sm!">{displayName}</CardTitle></Hint>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow" : "border-onedark-green/30 bg-onedark-green/10 text-onedark-green"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
@@ -105,11 +110,23 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex min-w-0 items-center gap-3 pr-6">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><ProviderIcon kind={account.providerKind} className="size-4" /></span>
-            <span className="min-w-0 break-words">{account.alias}</span>
+            <span className="min-w-0 break-words">{displayName}</span>
           </DialogTitle>
         </DialogHeader>
-        <div role="region" aria-label={`Configurações de ${account.alias}`} className="-mx-4 flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
+        <div role="region" aria-label={`Configurações de ${displayName}`} className="-mx-4 flex min-h-0 min-w-0 flex-col gap-4 overflow-x-hidden overflow-y-auto px-4 py-1 wrap-anywhere [scrollbar-gutter:stable]">
+          <form className="space-y-2" onSubmit={event => {
+            event.preventDefault();
+            const name = nameDraft ?? displayName;
+            const error = validateProviderDisplayName(name);
+            setNameError(error);
+            if (!error && !saving) onDisplayNameChange?.(account.alias, name.trim());
+          }}>
+            <ProviderDisplayNameField value={nameDraft ?? displayName} onChange={name => { setNameDraft(name); setNameError(null); }} disabled={saving || !onDisplayNameChange} />
+            {nameError && <p role="alert" className="text-xs text-destructive">{nameError}</p>}
+            <Button type="submit" size="sm" variant="outline" disabled={saving || !onDisplayNameChange || nameDraft === null || nameDraft.trim() === displayName} className="cursor-pointer">Salvar nome</Button>
+          </form>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-3 text-xs">
+            <dt className="text-muted-foreground">Alias interno</dt><dd className="break-all text-right font-mono">{account.alias}</dd>
             {custom ? <><dt className="text-muted-foreground">Endpoint</dt><dd className="text-right">{account.custom ? protocolLabels[account.custom.protocol] : "Indisponível"}</dd><dt className="text-muted-foreground">URL base</dt><dd className="break-all text-right font-mono text-xs">{account.custom?.baseUrl}</dd></> : go ? <><dt className="text-muted-foreground">Provedor</dt><dd className="text-right">OpenCode Go</dd><dt className="text-muted-foreground">Autenticação</dt><dd className="text-right">Chave de API da assinatura</dd></> : <><dt className="text-muted-foreground">E-mail</dt>
             <dd className="break-all text-right">{account.email ?? "Não informado"}</dd>
             <dt className="text-muted-foreground">Tipo de conta</dt>
@@ -120,10 +137,10 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           {!custom && <><Separator /><div className="flex flex-col gap-3">
             <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
               <span aria-hidden="true">Limites na statusbar</span>
-              <Switch aria-label={`Limites de ${account.alias} na statusbar`} checked={account.showUsage !== false} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, show, account.showThirdPartyUsage === true)} className="cursor-pointer" />
+              <Switch aria-label={`Limites de ${displayName} na statusbar`} checked={account.showUsage !== false} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, show, account.showThirdPartyUsage === true)} className="cursor-pointer" />
             </label>
             {account.providerKind !== "antigravity" && <ProviderUsageWindowSettings
-              providerName={account.alias}
+              providerName={displayName}
               showFiveHourUsage={account.showFiveHourUsage}
               showWeeklyUsage={account.showWeeklyUsage}
               disabled={saving || !account.enabled || account.showUsage === false || !onUsageChange}
@@ -131,7 +148,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             />}
             {account.providerKind === "antigravity" && <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
               <span aria-hidden="true">Incluir modelos de terceiros</span>
-              <Switch aria-label={`Incluir modelos de terceiros de ${account.alias}`} checked={account.showThirdPartyUsage === true} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, account.showUsage !== false, show)} className="cursor-pointer" />
+              <Switch aria-label={`Incluir modelos de terceiros de ${displayName}`} checked={account.showThirdPartyUsage === true} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, account.showUsage !== false, show)} className="cursor-pointer" />
             </label>}
           </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
@@ -158,7 +175,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
         </div>
         <DialogFooter className="shrink-0 flex-row flex-wrap items-center justify-between gap-3 sm:justify-between">
           <label className="flex cursor-pointer items-center gap-2 text-xs">
-            <Switch aria-label={`Ativar ${account.alias}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
+            <Switch aria-label={`Ativar ${displayName}`} checked={account.enabled} onCheckedChange={(enabled) => onEnabledChange(account.alias, enabled)} disabled={saving} className="cursor-pointer" />
             <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
           </label>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">

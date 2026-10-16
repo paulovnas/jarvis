@@ -28,7 +28,7 @@ const initial: SystemSnapshot = {
 };
 
 describe("system preferences", () => {
-  it("offers the close behavior only on Windows and saves it independently", async () => {
+  it("offers the close behavior when the native tray is supported and saves it independently", async () => {
     call.mockResolvedValue({ ...initial, traySupported: true });
     const user = userEvent.setup();
     const view = render(<SystemSettings />);

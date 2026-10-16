@@ -2199,7 +2199,7 @@ async fn active_workers_adopt_live_mcp_revocations_and_new_selection_without_rep
         .unwrap()
         .contains("\"mode\":\"disabled\""));
     let selected = crate::mcp::McpIntent {
-        mode: crate::mcp::McpIntentMode::Explicit,
+        mode: crate::mcp::McpIntentMode::OnDemand,
         servers: vec![crate::mcp::McpIntentServer {
             id: "voice-id".into(),
             name: "voicestudio".into(),

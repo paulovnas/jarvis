@@ -1,8 +1,9 @@
-//! Opt-in Windows smoke test: `JARVIS_TRAY_PROBE=1 cargo run --features browser-probe --example browser-probe`.
+//! Opt-in Windows/macOS smoke test: `JARVIS_TRAY_PROBE=1 cargo run --features browser-probe --example browser-probe`.
 //! All preference and library writes belong to a temporary profile.
 use super::*;
 use std::{sync::Arc, time::Duration};
 
+#[cfg(target_os = "windows")]
 fn native_menu_labels(menu: &Menu<tauri::DynRuntime>) -> Result<Vec<String>, String> {
     use tauri::menu::ContextMenu;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -35,6 +36,66 @@ fn native_menu_labels(menu: &Menu<tauri::DynRuntime>) -> Result<Vec<String>, Str
         .collect())
 }
 
+#[cfg(target_os = "macos")]
+fn native_menu_labels(menu: &Menu<tauri::DynRuntime>) -> Result<Vec<String>, String> {
+    menu.items()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|item| match item {
+            tauri::menu::MenuItemKind::MenuItem(item) => item.text().map_err(|e| e.to_string()),
+            tauri::menu::MenuItemKind::Predefined(_) => Ok("---".into()),
+            _ => Err("Unexpected native menu item".into()),
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+async fn check_native_popup(app: &tauri::AppHandle) -> Result<(), String> {
+    use objc2_foundation::{MainThreadMarker, NSRunLoop, NSRunLoopCommonModes, NSTimer};
+    let opened = Arc::new(AtomicBool::new(false));
+    let observed = opened.clone();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let block = block2::RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
+            let visible = handle.tray_by_id(TRAY_ID).is_some_and(|tray| {
+                tray.with_inner_tray_icon(|tray| {
+                    tray.ns_status_item()
+                        .and_then(|item| item.menu(MainThreadMarker::new().unwrap()))
+                        .is_some_and(|menu| {
+                            menu.cancelTracking();
+                            true
+                        })
+                })
+                .unwrap_or(false)
+            });
+            if visible {
+                observed.store(true, Ordering::Release);
+                // NSTimer supplies its live object to the callback on the main run loop.
+                unsafe { timer.as_ref().invalidate() };
+            }
+        });
+        // A native timer runs inside AppKit menu tracking, while winit tasks cannot.
+        let timer = unsafe { NSTimer::timerWithTimeInterval_repeats_block(0.1, true, &block) };
+        unsafe {
+            NSRunLoop::currentRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
+            NSRunLoop::currentRunLoop()
+                .addTimer_forMode(&timer, objc2_app_kit::NSEventTrackingRunLoopMode);
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    act(app, TrayAction::Menu);
+    for _ in 0..50 {
+        if opened.load(Ordering::Acquire)
+            && !app.state::<TrayState>().opening.load(Ordering::Acquire)
+        {
+            println!("macOS native tray popup opened and dismissed");
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err("Opening and dismissing the native tray popup did not complete".into())
+}
+
 async fn check(app: &tauri::AppHandle, preferences: &std::path::Path) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
@@ -44,7 +105,7 @@ async fn check(app: &tauri::AppHandle, preferences: &std::path::Path) -> Result<
         .ok_or("Missing companion fixture")?;
     let tray = app.tray_by_id(TRAY_ID).ok_or("Missing native tray icon")?;
     if tray.rect().map_err(|e| e.to_string())?.is_none() {
-        return Err("Windows did not register the tray icon".into());
+        return Err("The operating system did not register the tray icon".into());
     }
     let menu = build_menu(
         app,
@@ -87,6 +148,8 @@ async fn check(app: &tauri::AppHandle, preferences: &std::path::Path) -> Result<
         return Err(format!("Unexpected native menu labels: {labels:?}"));
     }
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    check_native_popup(app).await?;
     main.close().map_err(|e| e.to_string())?;
     for _ in 0..50 {
         if !main.is_visible().map_err(|e| e.to_string())? {
@@ -181,7 +244,7 @@ pub(crate) fn run() {
                         act(&app, TrayAction::Quit);
                     }
                     Err(error) => {
-                        eprintln!("Windows tray probe failed: {error}");
+                        eprintln!("System tray probe failed: {error}");
                         app.exit(1);
                     }
                 }
@@ -190,9 +253,9 @@ pub(crate) fn run() {
         })
         .on_window_event(crate::desktop::on_window_event)
         .run(context)
-        .expect("Run Windows tray probe");
+        .expect("Run system tray probe");
     if !passed.load(Ordering::Acquire) {
         std::process::exit(1);
     }
-    println!("Windows tray probe passed: native icon, native menu, hide/restore, companion continuity, settings, about, exit preference, explicit Quit");
+    println!("System tray probe passed: native icon, native menu, hide/restore, companion continuity, settings, about, exit preference, explicit Quit");
 }

@@ -101,6 +101,7 @@ mod tests {
             &secrets,
             "openai-codex-personal",
             &credential("old-account", "old-token"),
+            None,
         )
         .unwrap();
         let record = persistence::list_provider_accounts(&connection)
@@ -168,6 +169,7 @@ mod tests {
             &secrets,
             "openai-codex-other",
             &credential("other-account", "other-token"),
+            None,
         )
         .unwrap();
         let error = replace_account(

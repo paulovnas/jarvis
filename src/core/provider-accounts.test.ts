@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountList, enabledModels, mergeModelCatalogRefresh, type ProviderAccount } from "./provider-accounts";
+import { accountList, enabledModels, mergeModelCatalogRefresh, providerDisplayName, validateProviderDisplayName, type ProviderAccount } from "./provider-accounts";
 
 const account: ProviderAccount = {
   alias: "openai-codex-pessoal", providerKind: "openai-codex", enabled: true, createdAt: 1,
@@ -8,6 +8,24 @@ const account: ProviderAccount = {
 };
 
 describe("provider account IPC validation", () => {
+  it("uses a separate display name without changing the legacy routing alias", () => {
+    expect(providerDisplayName(account)).toBe(account.alias);
+    expect(providerDisplayName({ ...account, displayName: null })).toBe(account.alias);
+    const named = { ...account, displayName: "Meu ChatGPT" };
+    expect(accountList([named])).toEqual([named]);
+    expect(providerDisplayName(named)).toBe("Meu ChatGPT");
+    expect(accountList([named])[0].alias).toBe(account.alias);
+  });
+
+  it.each(["", "   ", "a".repeat(19), "x\ny", 1])("rejects invalid custom display names: %j", displayName => {
+    expect(accountList([{ ...account, displayName }])).toEqual([]);
+  });
+
+  it("allows free text and counts Unicode characters consistently with storage", () => {
+    expect(validateProviderDisplayName("  Minha conta 💻  ")).toBeNull();
+    expect(validateProviderDisplayName("💻".repeat(18))).toBeNull();
+    expect(validateProviderDisplayName("💻".repeat(19))).toMatch(/18/);
+  });
   it("preserves per-window visibility choices and reads legacy accounts", () => {
     expect(accountList([account])).toEqual([account]);
     const configured = { ...account, showFiveHourUsage: false, showWeeklyUsage: true };

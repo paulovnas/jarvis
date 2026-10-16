@@ -20,7 +20,7 @@ function contextColor(percent: number | null) {
 
 export function ContextUsage({ context, live, onCompact, compacting = false, disabled = false, external = false, externalProvider = "Claude Code" }: {
   context: ReturnType<typeof conversationContext>; live?: ContextInfo;
-  onCompact?: () => Promise<boolean>; compacting?: boolean; disabled?: boolean; external?: boolean; externalProvider?: "Claude Code" | "Executor removido";
+  onCompact?: () => Promise<boolean>; compacting?: boolean; disabled?: boolean; external?: boolean; externalProvider?: "Claude Code" | "Muse Code" | "Executor removido";
 }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);

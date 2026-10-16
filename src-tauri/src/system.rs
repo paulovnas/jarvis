@@ -210,6 +210,7 @@ pub struct Preferences {
     pub(crate) response_language: ResponseLanguage,
     pub(crate) terminal: TerminalPreferences,
     pub(crate) claude: crate::claude::ProviderPreferences,
+    pub(crate) muse: crate::claude::ProviderPreferences,
     // Old system files may contain the retired CLI settings. Consume them without
     // exposing a provider or carrying its configuration into future saves.
     #[serde(
@@ -244,6 +245,7 @@ impl Default for Preferences {
             response_language: ResponseLanguage::default(),
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            muse: crate::claude::ProviderPreferences::default(),
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             computer_use_mode: crate::agent::computer::ComputerMode::default(),
@@ -262,6 +264,7 @@ impl Preferences {
         }
         self.terminal.validate()?;
         self.claude.validate()?;
+        validate_muse_preferences(&self.muse)?;
         if let Some(choice) = &self.chat_title_model {
             validate_chat_title_model(choice)?;
         }
@@ -525,6 +528,10 @@ impl SystemState {
         Ok(self.preferences()?.claude)
     }
 
+    pub(crate) fn muse_preferences(&self) -> Result<crate::claude::ProviderPreferences, String> {
+        Ok(self.preferences()?.muse)
+    }
+
     pub(crate) fn preferences(&self) -> Result<Preferences, String> {
         let store = self
             .store
@@ -538,7 +545,10 @@ impl SystemState {
             .preferences
             .clone())
     }
-    #[cfg(all(feature = "browser-probe", target_os = "windows"))]
+    #[cfg(all(
+        feature = "browser-probe",
+        any(target_os = "macos", target_os = "windows")
+    ))]
     pub(crate) fn initialize_tray_probe(&self, path: PathBuf) -> Result<(), String> {
         *self
             .store
@@ -581,7 +591,7 @@ impl SystemState {
             };
         Ok(Snapshot {
             preferences,
-            tray_supported: cfg!(target_os = "windows"),
+            tray_supported: cfg!(any(target_os = "macos", target_os = "windows")),
             sleep_inhibited,
             sleep_error,
             notification_error,
@@ -894,6 +904,46 @@ pub(crate) async fn save_claude_provider_preferences(
             .map_err(|error| error.clone())?;
         let mut next = store.preferences.clone();
         next.claude = preferences.clone();
+        store.save(next)?;
+    }
+    state.changed(&app);
+    Ok(preferences)
+}
+
+fn validate_muse_preferences(
+    preferences: &crate::claude::ProviderPreferences,
+) -> Result<(), String> {
+    if preferences.disabled_models.len() > 256 {
+        return Err("Selecione até 256 modelos do Muse Code.".into());
+    }
+    for model in &preferences.disabled_models {
+        crate::muse::validate_selection(model, None)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn set_muse_preferences(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemState>,
+    mut preferences: crate::claude::ProviderPreferences,
+) -> Result<crate::claude::ProviderPreferences, String> {
+    validate_muse_preferences(&preferences)?;
+    preferences.disabled_models.sort();
+    preferences.disabled_models.dedup();
+    let _edit = state.edit.lock().await;
+    {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| "Preferências indisponíveis.")?;
+        let store = store
+            .as_mut()
+            .ok_or("Preferências ainda não carregadas.")?
+            .as_mut()
+            .map_err(|error| error.clone())?;
+        let mut next = store.preferences.clone();
+        next.muse = preferences.clone();
         store.save(next)?;
     }
     state.changed(&app);

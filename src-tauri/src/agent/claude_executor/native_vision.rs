@@ -44,7 +44,7 @@ pub(super) fn receipt(args: &Value) -> String {
     json!({"attachmentIds":args["ids"],"question":args["question"],"status":"images_available","message":"Images were made available to the native executor for visual inspection. This receipt is not an analysis or proof of any conclusion."}).to_string()
 }
 
-pub(super) fn inherit_images(
+pub(in crate::agent) fn inherit_images(
     parts: &mut Vec<skill_input::MessagePart>,
     root_parts: &[skill_input::MessagePart],
 ) {

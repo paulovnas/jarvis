@@ -10,7 +10,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Choice, Field, FieldHelp } from "./CustomProviderFields";
 import { CustomModelEditor } from "./CustomModelEditor";
 import { protocolLabels, supportsModelLookup, validateCustomProvider, type CustomConfig, type CustomModel } from "@/core/custom-provider";
-import type { ProviderAccount } from "@/core/provider-accounts";
+import { validateProviderDisplayName, type ProviderAccount } from "@/core/provider-accounts";
+import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { Hint } from "@/components/ui/hint";
 
 function emptyModel(): CustomModel {
@@ -19,6 +20,7 @@ function emptyModel(): CustomModel {
 export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }: { account?: ProviderAccount; onSaved: (account: ProviderAccount) => void; onCancel: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [alias, setAlias] = useState(account?.alias ?? "");
   const [apiKey, setApiKey] = useState("");
+  const [displayName, setDisplayName] = useState<string | null>(account?.displayName ?? null);
   const [config, setConfig] = useState<CustomConfig>(account?.custom ?? { baseUrl: "", protocol: "openai-completions", authMode: "bearer", tokenField: "max_tokens", replayUnsignedThinking: false, models: [emptyModel()] });
   const [modelKeys, setModelKeys] = useState(() => config.models.map((_, index) => index));
   const nextKey = useRef(modelKeys.length);
@@ -44,9 +46,14 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
       if (invalidIndex >= 0) setExpandedModel(modelKeys[invalidIndex]);
       return;
     }
+    const name = displayName ?? alias;
+    if (!account || displayName !== null) {
+      const nameError = validateProviderDisplayName(name);
+      if (nameError) { setError(nameError); return; }
+    }
     lock.current = true; setSaving(true); setError(null); onBusyChange?.(true);
     try {
-      const result = await invoke<ProviderAccount>("save_custom_provider", { alias, config, apiKey: apiKey || null, editing: !!account });
+      const result = await invoke<ProviderAccount>("save_custom_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), config, apiKey: apiKey || null, editing: !!account });
       setApiKey(""); toast.success("Provedor salvo"); onSaved(result);
     } catch (error) {
       setError(typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : "Não foi possível salvar o provedor.");
@@ -58,6 +65,7 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
         <Field label="Alias completo" help="Nome desta conexão no Jarvis, escolhido por você. Use letras, números e hífens. Depois de salvar, o alias não pode ser alterado." value={alias} disabled={!!account} maxLength={64} placeholder="meu-provedor" autoComplete="off" onChange={e => setAlias(e.target.value)} />
         <Choice label="Endpoint" help="Formato da API oferecido pelo provedor. Confira a documentação dele: Chat Completions, Responses ou Anthropic Messages. No OpenRouter, Chat Completions é a opção mais comum." value={config.protocol} items={Object.entries(protocolLabels).map(([value, label]) => ({ value: value as CustomConfig["protocol"], label }))} onChange={protocol => setConfig(c => ({ ...c, protocol, authMode: "bearer", replayUnsignedThinking: protocol === "anthropic-messages", models: c.models.map(m => ({ ...m, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null })) }))} disabled={saving} />
       </div>
+      <ProviderDisplayNameField value={displayName ?? alias} onChange={setDisplayName} disabled={saving} required={!account} />
       <Field label="URL base" help="Endereço da API, encontrado na documentação do provedor. No OpenRouter: https://openrouter.ai/api/v1. Não inclua a chave de API na URL." value={config.baseUrl} placeholder="https://openrouter.ai/api/v1" autoComplete="off" onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))} />
       <Field label="Chave de API" help="Crie uma chave no painel do provedor. No OpenRouter: openrouter.ai/settings/keys. Ela fica protegida no cofre de credenciais do sistema; ao editar, deixe vazio para manter a chave atual." type="password" value={apiKey} autoComplete="new-password" placeholder={account ? "Manter chave atual" : "Cole sua chave"} onChange={e => setApiKey(e.target.value)} />
       {config.protocol !== "openai-responses" && <Collapsible open={advanced} onOpenChange={setAdvanced}>

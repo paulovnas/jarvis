@@ -54,18 +54,64 @@ describe("user Live request presentation", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("preserves ordinary messages, rich parts and attachment labels", () => {
+  it("preserves ordinary messages, rich parts and attachment labels", async () => {
     render(<UserMessageBubble message={{ ...message, content: "Pedido original", parts: [{ type: "text", text: "Texto com contexto" }], attachments: [{ id: "file", name: "referencia.ts", type: "code", size: "2 KB" }] }} />);
-    expect(screen.getByText("Texto com contexto")).toBeVisible();
+    expect(await screen.findByText("Texto com contexto")).toBeVisible();
     expect(screen.getByText("referencia.ts")).toBeVisible();
     expect(screen.getByText("(2 KB)")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Ver detalhes" })).not.toBeInTheDocument();
   });
 
-  it("keeps older Live messages without a valid payload readable", () => {
+  it("keeps older Live messages without a valid payload readable", async () => {
     const legacy = "Impeccable Live · ação b0338dda\nExecute SOMENTE o pedido atual abaixo como Designer.";
     render(<UserMessageBubble message={{ ...message, content: legacy }} />);
-    expect(screen.getByText(/Execute SOMENTE/)).toBeVisible();
+    expect(await screen.findByText(/Execute SOMENTE/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Ver detalhes" })).not.toBeInTheDocument();
+  });
+});
+
+describe("sent user Markdown", () => {
+  it("renders headings, emphasis, lists and code without changing the saved source", async () => {
+    const content = "OK, implemente **as correções**.\n\n### Escopo\n- **Pagamento:** confira o prazo.\n- Use `src/pdf.ts`.\n\n```ts\nconst prazo = 12;\n```";
+    const sent = Object.freeze({ ...message, content });
+    render(<UserMessageBubble message={sent} />);
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Escopo" })).toBeVisible();
+    expect(screen.getByText("as correções").tagName).toBe("STRONG");
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("Pagamento:").tagName).toBe("STRONG");
+    expect(screen.getByText("src/pdf.ts").tagName).toBe("CODE");
+    expect(screen.getByRole("region", { name: "Código ts" })).toHaveTextContent("const prazo = 12;");
+    expect(screen.getByText("01:12")).toBeVisible();
+    expect(sent.content).toBe(content);
+  });
+
+  it("keeps inline skill chips inside the formatted text and preserves attachment labels", async () => {
+    const parts: NonNullable<ChatMessage["parts"]> = [
+      { type: "text", text: "## Revisão\n\n**Use " },
+      { type: "skill", id: "react", name: "React Expert" },
+      { type: "text", text: " agora**.\n\n- Confira `app.tsx`." },
+    ];
+    const sent = { ...message, content: "Texto técnico original", parts, attachments: [{ id: "file", name: "referencia.ts", type: "code" as const, size: "2 KB" }] };
+    const original = JSON.stringify(sent);
+    render(<UserMessageBubble message={sent} />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Revisão" })).toBeVisible();
+    const skill = screen.getByText("React Expert");
+    expect(skill).toHaveAttribute("data-slot", "badge");
+    expect(skill.closest("strong")).toHaveTextContent("Use React Expert agora");
+    expect(screen.getByRole("listitem")).toHaveTextContent("Confira app.tsx.");
+    expect(screen.getByText("referencia.ts")).toBeVisible();
+    expect(screen.queryByText("Texto técnico original")).not.toBeInTheDocument();
+    expect(JSON.stringify(sent)).toBe(original);
+  });
+
+  it("keeps HTML and unsafe links inert in submitted Markdown", async () => {
+    const content = "### Referência\n\n[Script](javascript:alert%281%29)\n\n<script>alert(1)</script>\n\n![Exemplo](https://example.com/private.png)";
+    const { container } = render(<UserMessageBubble message={{ ...message, content }} />);
+    expect(await screen.findByRole("heading", { name: "Referência" })).toBeVisible();
+    expect(screen.getByText("Script")).toBeVisible();
+    expect(container.querySelector("script, img, a[href^='javascript:']")).toBeNull();
+    expect(screen.getByText("[Imagem: Exemplo]")).toBeVisible();
   });
 });

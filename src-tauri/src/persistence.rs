@@ -133,7 +133,72 @@ const MIGRATIONS: &[Migration] = &[
         version: 30,
         sql: include_str!("../../drizzle/0029_global_conversations.sql"),
     },
+    Migration {
+        version: 31,
+        sql: include_str!("../../drizzle/0030_provider_display_names.sql"),
+    },
+    Migration {
+        version: 32,
+        sql: include_str!("../../drizzle/0031_muse_web_search.sql"),
+    },
 ];
+
+#[test]
+fn display_name_migration_preserves_long_aliases_credentials_and_model_bindings() {
+    let mut db = Connection::open_in_memory().unwrap();
+    for migration in MIGRATIONS.iter().take(30) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    let alias = "openai-codex-legacy-account-with-a-long-alias";
+    db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES (?1,'openai-codex','credential-id')", [alias]).unwrap();
+    db.execute(
+        "INSERT INTO provider_model_exclusions(account_alias,model_id) VALUES (?1,'hidden-model')",
+        [alias],
+    )
+    .unwrap();
+    db.pragma_update(None, "user_version", 30).unwrap();
+    initialize_database(&mut db).unwrap();
+    let legacy = list_provider_accounts(&db).unwrap().remove(0);
+    assert_eq!(legacy.alias, alias);
+    assert_eq!(legacy.account_id, "credential-id");
+    assert_eq!(legacy.display_name, None);
+    crate::openai_codex::display_name::update(&db, alias, " Minha conta 💻 ").unwrap();
+    initialize_database(&mut db).unwrap();
+    let named = list_provider_accounts(&db).unwrap().remove(0);
+    assert_eq!(named.alias, legacy.alias);
+    assert_eq!(named.account_id, legacy.account_id);
+    assert_eq!(named.display_name.as_deref(), Some("Minha conta 💻"));
+    assert_eq!(
+        list_provider_model_exclusions(&db, alias).unwrap(),
+        ["hidden-model"]
+    );
+}
+
+#[test]
+fn muse_search_migration_preserves_the_existing_native_selection() {
+    let mut db = Connection::open_in_memory().unwrap();
+    for migration in MIGRATIONS.iter().take(31) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES('search','openai-codex','credential'); INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES(1,'search','selected-model',0); PRAGMA user_version=31;").unwrap();
+    initialize_database(&mut db).unwrap();
+    let selection: (String, String, String, bool) = db
+        .query_row(
+            "SELECT executor,account_alias,model,inherit_chat FROM web_search_config WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        selection,
+        (
+            "jarvis".into(),
+            "search".into(),
+            "selected-model".into(),
+            false
+        )
+    );
+}
 
 #[test]
 fn usage_window_migration_preserves_existing_provider_visibility() {
@@ -447,6 +512,7 @@ fn read_app_config(connection: &Connection) -> Result<AppConfig, PersistenceErro
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderAccountRecord {
     pub(crate) alias: String,
+    pub(crate) display_name: Option<String>,
     pub(crate) provider_kind: String,
     pub(crate) account_id: String,
     pub(crate) created_at: i64,
@@ -462,6 +528,7 @@ pub(crate) struct ProviderAccountRecord {
 fn provider_account_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderAccountRecord> {
     Ok(ProviderAccountRecord {
         alias: row.get(0)?,
+        display_name: row.get(11)?,
         provider_kind: row.get(1)?,
         account_id: row.get(2)?,
         created_at: row.get(3)?,
@@ -479,7 +546,7 @@ pub(crate) fn list_provider_accounts(
     connection: &Connection,
 ) -> Result<Vec<ProviderAccountRecord>, PersistenceError> {
     let mut statement = connection.prepare(
-        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage
+        "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage, display_name
          FROM provider_accounts
          ORDER BY created_at, alias",
     )?;
@@ -523,10 +590,11 @@ pub(crate) fn insert_provider_account(
     connection: &Connection,
     alias: &str,
     account_id: &str,
+    display_name: Option<&str>,
 ) -> Result<ProviderAccountRecord, PersistenceError> {
     connection.execute(
-        "INSERT INTO provider_accounts (alias, provider_kind, account_id)
-         VALUES (?1, ?3, ?2)",
+        "INSERT INTO provider_accounts (alias, provider_kind, account_id, display_name)
+         VALUES (?1, ?3, ?2, ?4)",
         params![
             alias,
             account_id,
@@ -534,12 +602,13 @@ pub(crate) fn insert_provider_account(
                 "antigravity"
             } else {
                 "openai-codex"
-            }
+            },
+            display_name
         ],
     )?;
     connection
         .query_row(
-            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage
+            "SELECT alias, provider_kind, account_id, created_at, enabled, show_usage, show_third_party_usage, usage_alert_window, usage_alert_threshold, show_five_hour_usage, show_weekly_usage, display_name
              FROM provider_accounts
              WHERE alias = ?1",
             params![alias],
@@ -751,6 +820,16 @@ pub async fn complete_onboarding(
                 .models
                 .iter()
                 .any(|model| status.preferences.allows(&model.id))
+    } else if selected_executor == Some(crate::claude::Executor::Muse) {
+        let status = crate::muse::get_muse_runtime(app.state(), app.state())
+            .await
+            .map_err(PersistenceError::new)?;
+        status.installed
+            && status.authenticated
+            && status
+                .models
+                .iter()
+                .any(|model| status.preferences.allows(&model.id))
     } else {
         false
     };
@@ -844,7 +923,7 @@ mod tests {
                 .unwrap(),
             "openai-codex-old"
         );
-        super::insert_provider_account(&connection, "antigravity-new", "google:123").unwrap();
+        super::insert_provider_account(&connection, "antigravity-new", "google:123", None).unwrap();
         assert_eq!(super::list_provider_accounts(&connection).unwrap().len(), 2);
         assert_eq!(
             connection
@@ -962,7 +1041,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 30);
+        assert_eq!(version, 32);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -1104,7 +1183,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 30);
+        assert_eq!(version, 32);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {
@@ -1122,9 +1201,9 @@ mod tests {
     #[test]
     fn provider_accounts_support_two_aliases_and_reject_duplicate_keys() {
         let connection = in_memory_database();
-        insert_provider_account(&connection, "openai-codex-one", "account-one")
+        insert_provider_account(&connection, "openai-codex-one", "account-one", None)
             .expect("first account");
-        insert_provider_account(&connection, "openai-codex-two", "account-two")
+        insert_provider_account(&connection, "openai-codex-two", "account-two", None)
             .expect("second account");
 
         assert_eq!(
@@ -1133,16 +1212,22 @@ mod tests {
                 .len(),
             2
         );
-        assert!(insert_provider_account(&connection, "openai-codex-one", "account-three").is_err());
-        assert!(insert_provider_account(&connection, "openai-codex-three", "account-two").is_err());
+        assert!(
+            insert_provider_account(&connection, "openai-codex-one", "account-three", None)
+                .is_err()
+        );
+        assert!(
+            insert_provider_account(&connection, "openai-codex-three", "account-two", None)
+                .is_err()
+        );
     }
 
     #[test]
     fn provider_account_delete_is_parameterized_and_schema_has_no_token_columns() {
         let connection = in_memory_database();
-        insert_provider_account(&connection, "openai-codex-one", "account-one")
+        insert_provider_account(&connection, "openai-codex-one", "account-one", None)
             .expect("first account");
-        insert_provider_account(&connection, "openai-codex-two", "account-two")
+        insert_provider_account(&connection, "openai-codex-two", "account-two", None)
             .expect("second account");
 
         delete_provider_account(
@@ -1179,7 +1264,8 @@ mod tests {
                 "usage_alert_window",
                 "usage_alert_threshold",
                 "show_five_hour_usage",
-                "show_weekly_usage"
+                "show_weekly_usage",
+                "display_name"
             ]
         );
         assert_eq!(

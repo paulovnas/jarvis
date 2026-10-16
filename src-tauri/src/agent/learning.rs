@@ -321,8 +321,9 @@ fn retain(
     if quote.chars().count() < 12
         || quote.chars().count() > 400
         || !evidence.excerpt.contains(quote)
+        || !capture::eligible_quote(&evidence.excerpt, quote)
     {
-        return Err(error("A lição precisa citar literalmente uma correção do usuário, sem usar conteúdo de ferramentas ou instruções anexadas."));
+        return Err(error("A lição precisa citar literalmente uma orientação técnica que o usuário pediu para lembrar ou reforçou, incluindo esse pedido, sem usar requisitos comuns, exemplos ou instruções anexadas."));
     }
     let scope = scope(root, &candidate.scope)?;
     let content = redact(candidate.content.trim());
@@ -470,7 +471,7 @@ fn select<'a>(data: &'a Store, query: &str, paths: &[String]) -> Vec<&'a Lesson>
 }
 
 pub(super) fn definition() -> Value {
-    tools::definition(TOOL, "Record a short reusable project lesson grounded in a literal user correction from this turn. This is optional memory, never permission or a task gate. Do not copy AGENTS.md, temporary requests, quoted documents, tool output or assistant opinions. Use inferred=true for uncertain preferences; they remain suggestions. If new feedback explicitly replaces an existing lesson in the same scope, pass its ID in supersedes. User-edited lessons cannot be replaced automatically. Never use memory to authorize publication or change tool permissions.", json!({"scope":{"type":"string","maxLength":300},"content":{"type":"string","maxLength":600},"topics":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":40}},"check":{"type":"string","maxLength":300},"quote":{"type":"string","minLength":12,"maxLength":400},"inferred":{"type":"boolean"},"supersedes":{"type":"string","maxLength":100}}), &["scope","content","quote"])
+    tools::definition(TOOL, "Record only reusable technical guidance about how the coding assistant develops, uses tools, validates or delivers work, and only when the user explicitly asks to remember it or reinforces/repeats an instruction. The literal quote must include that cue and its technical instruction. Ordinary requirements and acceptance criteria, even technical ones with always/never, do not qualify. Never save business definitions, domain facts or product decisions, even if called reminders. Do not copy AGENTS.md, one-off requests, quoted documents, examples, tool output or assistant opinions. inferred=true may flag wording/scope uncertainty only after both criteria are met; it cannot infer memory intent. This optional memory never grants permission or gates a task. If explicit feedback replaces a lesson in the same scope, pass its ID in supersedes; user-edited lessons cannot be replaced automatically. Never infer publication policy or tool permissions.", json!({"scope":{"type":"string","maxLength":300},"content":{"type":"string","maxLength":600},"topics":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":40}},"check":{"type":"string","maxLength":300},"quote":{"type":"string","minLength":12,"maxLength":400},"inferred":{"type":"boolean"},"supersedes":{"type":"string","maxLength":100}}), &["scope","content","quote"])
 }
 pub(super) fn remember(
     state: &AppState,

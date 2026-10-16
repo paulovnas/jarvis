@@ -16,6 +16,15 @@ it("reads sanitized selection and usage data through authenticated RPC", async (
   expect(fetcher.mock.calls.every(call => call[1]?.credentials === "same-origin")).toBe(true);
 });
 
+it("reads Muse executor models and subscription usage without a native account", async () => {
+  const choice = { executor: "muse", account: "", model: "muse-wonder", reasoning: null };
+  const choices = { models: [{ provider: "Muse Code", executor: "muse", models: [{ value: "muse-wonder", label: "Muse Wonder", reasoningLevels: [], defaultReasoningLevel: null }] }], catalog: customCatalog, defaults: { "standard/builder": choice }, overrides: {} };
+  const usage = [{ alias: "Muse Code", providerKind: "muse-code", fetchedAt: null, email: null, plan: null, error: null, resetCredits: null, windows: [] }];
+  const client = new RemoteClient(vi.fn<typeof fetch>().mockImplementation(async (_url, init) => response((JSON.parse(String(init?.body)) as { method: string }).method === "choices" ? choices : usage)));
+  expect(await client.choices("c1")).toEqual(choices);
+  expect(await client.usage()).toEqual(usage);
+});
+
 it("saves a chat model once with the idempotent mutation contract", async () => {
   const choice = { account: "ene", model: "sol", reasoning: "high", fallback: { executor: "claude" as const, account: "", model: "sonnet", reasoning: null } };
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ "standard/builder": choice }));
@@ -51,7 +60,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(
 const response = (data: unknown) => new Response(JSON.stringify({ ok: true, data }), { headers: { "Content-Type": "application/json" } });
 
 it("accepts sanitized OpenCode Go quotas including a monthly anniversary reset", async () => {
-  const usage = [{ alias: "opencode-go-pessoal", providerKind: "opencode-go", fetchedAt: 1, email: null, plan: "go", error: null, resetCredits: null, windows: [
+  const usage = [{ alias: "opencode-go-pessoal", displayName: "Go Pessoal", providerKind: "opencode-go", fetchedAt: 1, email: null, plan: "go", error: null, resetCredits: null, windows: [
     { id: "monthly", label: "Mensal", group: "OpenCode Go", thirdParty: false, durationSeconds: null, remainingPercent: 67, resetsAt: 1_800_000_000_000 },
   ] }];
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(usage));

@@ -1,0 +1,8 @@
+{
+  "usage": {
+    "observedAtMs": 1792094400000,
+    "tier": "example-plan",
+    "window": {"usedPercent": 23, "resetsAtMs": 1792112400000, "windowDurationMins": 300},
+    "weekly": {"usedPercent": 112, "resetsAtMs": 1792699200000}
+  }
+}

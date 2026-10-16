@@ -10,7 +10,7 @@ export type Mode = "plan" | "build";
 
 export type ApprovalMode = "manual" | "yolo";
 
-export type Executor = "jarvis" | "claude" | "unavailable";
+export type Executor = "jarvis" | "claude" | "muse" | "unavailable";
 
 export type ExecutionEffects = { readsFilesystem: boolean, writesFilesystem: boolean, usesNetwork: boolean, controlsProcesses: boolean, destructive: boolean, dynamic: boolean, unknown: boolean, };
 

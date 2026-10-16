@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn only_the_settings_auxiliary_surface_can_save_provider_display_names() {
+    assert!(command_allowed("settings", "set_provider_display_name"));
+    for label in ["about", "companion", "browser-1", "remote", "other"] {
+        assert!(!command_allowed(label, "set_provider_display_name"));
+    }
+}
+
+#[test]
 fn settings_can_read_computer_permissions_without_authorizing_or_controlling_apps() {
     for command in ["get_computer_use_status", "request_computer_permission"] {
         assert!(command_allowed("settings", command));

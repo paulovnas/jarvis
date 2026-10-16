@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn muse_preferences_default_for_old_files_and_validate_models_independently() {
+    let mut preferences: Preferences = serde_json::from_str("{}").unwrap();
+    assert!(preferences.muse.enabled);
+    preferences.muse.disabled_models = vec!["muse-example".into()];
+    let saved = serde_json::to_value(&preferences).unwrap();
+    let restored: Preferences = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored.muse.disabled_models, ["muse-example"]);
+    assert!(restored.claude.disabled_models.is_empty());
+    preferences.muse.disabled_models = vec!["--unsafe".into()];
+    assert!(preferences.validate().is_err());
+}
+
+#[test]
 fn close_behavior_defaults_to_tray_and_persists_exit_without_changing_other_settings() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("system.json");
@@ -19,6 +32,27 @@ fn close_behavior_defaults_to_tray_and_persists_exit_without_changing_other_sett
         "exit"
     );
     assert!(serde_json::from_str::<Preferences>(r#"{"closeBehavior":"unknown"}"#).is_err());
+
+    let mut restored = Store::open(home.path().join("system.json")).unwrap();
+    let mut preferences = restored.preferences.clone();
+    preferences.close_behavior = CloseBehavior::Tray;
+    restored.save(preferences).unwrap();
+    let restored = Store::open(home.path().join("system.json")).unwrap();
+    assert_eq!(restored.preferences.close_behavior, CloseBehavior::Tray);
+    assert!(restored.preferences.notifications);
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn desktop_snapshot_exposes_the_available_tray_and_its_saved_close_preference() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("system.json");
+    fs::write(&path, r#"{"closeBehavior":"exit"}"#).unwrap();
+    let system = SystemState::default();
+    *system.store.lock().unwrap() = Some(Ok(Store::open(path).unwrap()));
+    let snapshot = system.snapshot_with_shells(Vec::new).unwrap();
+    assert!(snapshot.tray_supported);
+    assert_eq!(snapshot.preferences.close_behavior, CloseBehavior::Exit);
 }
 
 #[cfg(windows)]
@@ -362,6 +396,7 @@ fn preferences_restore_all_modes_without_touching_layout() {
             },
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            muse: crate::claude::ProviderPreferences::default(),
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,
@@ -402,6 +437,7 @@ fn unreadable_preferences_are_preserved_and_failed_saves_do_not_change_runtime()
             response_language: ResponseLanguage::Spanish,
             terminal: TerminalPreferences::default(),
             claude: crate::claude::ProviderPreferences::default(),
+            muse: crate::claude::ProviderPreferences::default(),
             _retired_cli_preferences: (),
             browser: crate::agent::browser::BrowserPreferences::default(),
             chat_title_model: None,

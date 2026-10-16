@@ -9,7 +9,7 @@ import { BootstrapResourcesProvider } from "@/components/bootstrap/BootstrapReso
 import { emptyLibrary } from "@/test/library-fixtures";
 import { coreFixture } from "@/test/core-fixtures";
 import { StatusBar } from "./StatusBar";
-import { ProviderUsage } from "./ProviderUsage";
+import { ProviderUsage, WindowBar } from "./ProviderUsage";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("../remote/RemoteAccess", () => ({ RemoteAccess: () => null }));
@@ -19,13 +19,27 @@ const account: ProviderAccount = { alias: "openai-codex-paulo", providerKind: "o
 const report = (alias: string): AccountUsage => ({ alias, fetchedAt: Date.now(), email: account.email, plan: "pro", error: null, resetCredits: { availableCount: 1, expirations: [Date.now() + 86400_000], detailsAvailable: true }, windows: [{ id: "weekly", group: "Codex", thirdParty: false, label: "7d", durationSeconds: 604800, remainingPercent: 36, resetsAt: Date.now() + 60_000 }] });
 beforeEach(() => { call.mockReset().mockImplementation((_command, args) => Promise.resolve(report((args as { alias: string }).alias))); });
 
+it("uses the display name in quota labels while requesting the stable account alias", async () => {
+  const user = userEvent.setup();
+  const selected = { ...account, displayName: "Conta principal" };
+  render(<ProviderUsage account={selected} now={Date.now()} />);
+  const button = await screen.findByRole("button", { name: "Limites de Conta principal" });
+  await waitFor(() => expect(button).toHaveTextContent("36%"));
+  expect(button).toHaveTextContent("Conta principal");
+  expect(button).not.toHaveTextContent(account.alias);
+  expect(call).toHaveBeenCalledWith("get_provider_usage", { alias: account.alias });
+  await user.click(button);
+  const details = await screen.findByRole("dialog", { name: "Limites de Conta principal" });
+  expect(within(details).getByText("OpenAI Codex · Conta principal")).toBeVisible();
+});
+
 it("keeps Go five-hour and weekly quotas in the statusbar and its monthly quota in the details", async () => {
   const user = userEvent.setup();
   const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go" };
   call.mockResolvedValue({ ...report(go.alias), plan: "go", resetCredits: null, windows: [
     { id: "five_hour", group: "OpenCode Go", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 88, resetsAt: Date.now() + 9_000_000 },
     { id: "weekly", group: "OpenCode Go", thirdParty: false, label: "Semanal", durationSeconds: 604_800, remainingPercent: 66, resetsAt: Date.now() + 302_400_000 },
-    { id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: 44, resetsAt: Date.now() + 86400_000 },
+    { id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: 67, resetsAt: Date.now() + (18 * 24 + 10) * 3600_000 },
   ] });
   render(<StatusBar accounts={[go]} />);
   const button = await screen.findByRole("button", { name: `Limites de ${go.alias}` });
@@ -34,13 +48,36 @@ it("keeps Go five-hour and weekly quotas in the statusbar and its monthly quota 
   expect(button).toHaveTextContent("5h88%");
   expect(button).toHaveTextContent("Semanal66%");
   expect(button).not.toHaveTextContent("Mensal");
-  expect(button).not.toHaveTextContent("44%");
+  expect(button).not.toHaveTextContent("67%");
   await user.click(button);
   const details = await screen.findByRole("dialog", { name: `Limites de ${go.alias}` });
-  expect(within(details).getByText("OpenCode Go · pessoal")).toBeVisible();
+  expect(within(details).getByText(`OpenCode Go · ${go.alias}`)).toBeVisible();
   expect(within(details).getByRole("progressbar", { name: "OpenCode Go 5h restante" })).toHaveAttribute("aria-valuenow", "88");
   expect(within(details).getByRole("progressbar", { name: "OpenCode Go Semanal restante" })).toHaveAttribute("aria-valuenow", "66");
-  expect(within(details).getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", "44");
+  expect(within(details).getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", "67");
+  const marker = within(details).getByRole("img", { name: "Restante esperado: 61%" });
+  expect(marker).toBeVisible();
+  expect(parseFloat(marker.style.left)).toBeCloseTo(61.3889, 2);
+  expect(within(details).getByText("6% em reserva")).toBeVisible();
+});
+
+it.each([
+  { remaining: 33, resetsAt: 15 * 86400_000, stale: false, expected: "17% em déficit" },
+  { remaining: 50, resetsAt: 15 * 86400_000, stale: false, expected: "No ritmo da janela" },
+  { remaining: 67, resetsAt: null, stale: false, expected: null },
+  { remaining: 67, resetsAt: 0, stale: false, expected: null },
+  { remaining: 67, resetsAt: -1, stale: false, expected: null },
+  { remaining: 67, resetsAt: 15 * 86400_000, stale: true, expected: null },
+])("renders the shared monthly bar with safe pace labels: $expected", ({ remaining, resetsAt, stale, expected }) => {
+  render(<WindowBar window={{ id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: remaining, resetsAt }} now={0} stale={stale} />);
+  expect(screen.getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", String(remaining));
+  if (expected) {
+    expect(screen.getByText(expected)).toBeVisible();
+    expect(screen.getByRole("img", { name: "Restante esperado: 50%" })).toBeVisible();
+  } else {
+    expect(screen.queryByText(/% em (reserva|déficit)|No ritmo da janela/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
+  }
 });
 
 it.each(["openai-codex", "opencode-go", "claude-code"])("keeps hidden windows in the %s popover and supports an icon-only quota summary", async providerKind => {
@@ -167,7 +204,7 @@ it("ignores a late response after hiding an account and isolates failed accounts
   const other = { ...account, alias: "openai-codex-offline" };
   const { rerender } = render(<StatusBar accounts={[account, other]} />);
   expect(await screen.findByLabelText("Limites desatualizados")).toBeInTheDocument();
-  expect(screen.getByLabelText("Carregando limites de paulo")).toBeInTheDocument();
+  expect(screen.getByLabelText(`Carregando limites de ${account.alias}`)).toBeInTheDocument();
   rerender(<StatusBar accounts={[{ ...account, showUsage: false }, other]} />);
   await act(async () => resolve(report(account.alias)));
   expect(screen.queryByRole("button", { name: `Limites de ${account.alias}` })).not.toBeInTheDocument();

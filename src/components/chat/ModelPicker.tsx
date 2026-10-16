@@ -2,7 +2,6 @@ import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import { executorOf, fastModeUnavailable, FAST_USAGE_NOTICE, supportsFastMode, type ExecutionSelection } from "@/core/executors";
 import type { ProviderAccount, ProviderModel } from "@/core/provider-accounts";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import { aliasSuffix } from "@/core/provider-usage";
 import { reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Hint } from "@/components/ui/hint";
@@ -15,7 +14,8 @@ export interface ModelOptionDef extends Pick<ProviderModel, "reasoningLevels" | 
 
 export interface ProviderModelGroup {
   provider: string;
-  executor?: "claude";
+  displayName?: string | null;
+  executor?: "claude" | "muse";
   providerKind?: ProviderAccount["providerKind"];
   modelsStale?: boolean;
   models: ModelOptionDef[];
@@ -32,7 +32,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
   const fastRequested = selection?.serviceTier === "priority";
   const fastUnavailable = fastRequested && fastModeUnavailable(currentGroup?.providerKind, currentModelDef, executorOf(selection), currentGroup?.modelsStale);
   const displayModelLabel = currentModelDef ? `${currentModelDef.label}${reasoning ? ` · ${reasoningLabel(reasoning)}` : ""}` : selection ? `${selection.model.split("/").pop()} · Indisponível` : onClear ? clearLabel : modelGroups.some(group => group.models.length) ? "Escolher modelo" : "Nenhum modelo conectado";
-  const providerLabel = showProviderIdentity && currentGroup ? aliasSuffix(currentGroup.provider) : null;
+  const providerLabel = showProviderIdentity && currentGroup ? currentGroup.displayName ?? currentGroup.provider : null;
   const displayLabel = `${providerLabel ? `${providerLabel} · ${displayModelLabel}` : displayModelLabel}${fastRequested ? fastUnavailable ? " · Fast indisponível" : " · Fast" : ""}`;
   const select = (group: ProviderModelGroup, model: ModelOptionDef, reasoning: string | null) => onSelect({ ...(group.executor ? { executor: group.executor } : {}), model: model.value, reasoning, ...(fastRequested && supportsFastMode(group.providerKind, model, group.executor) ? { serviceTier: "priority" as const } : {}) });
   return (<DropdownMenu>
@@ -42,7 +42,7 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                 disabled={disabled}
                 className={`composer-model flex h-7.5 max-w-full cursor-pointer items-center gap-1 rounded-md px-2 font-mono text-[10px] font-medium shadow-none transition-colors focus-visible:ring-1 focus-visible:ring-ring ${invalid || fastUnavailable ? "border border-destructive bg-destructive/10 text-destructive hover:bg-destructive/15" : "border-0 bg-transparent text-foreground hover:bg-secondary hover:text-foreground"}`}
               >
-                {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
+                {providerLabel && <ProviderIcon kind={currentGroup?.executor === "claude" ? "claude-code" : currentGroup?.executor === "muse" ? "muse-code" : currentGroup?.providerKind ?? "custom"} className="size-3.5 text-onedark-cyan" />}
                 <Hint content={showProviderIdentity ? displayLabel : selection?.model} whenTruncated><span className="min-w-0 truncate">{displayLabel}</span></Hint>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </DropdownMenuTrigger>
@@ -74,8 +74,8 @@ export function ModelPicker({ modelGroups, selection, onSelect, onClear, clearLa
                   modelGroups.map((group) => (
                     <DropdownMenuSub key={group.provider}>
                         <DropdownMenuSubTrigger className="cursor-pointer gap-2 py-2 font-mono text-xs text-onedark-cyan">
-                          <ProviderIcon kind={group.executor === "claude" ? "claude-code" : group.providerKind ?? "custom"} className="size-4" />
-                          {group.provider}
+                          <ProviderIcon kind={group.executor === "claude" ? "claude-code" : group.executor === "muse" ? "muse-code" : group.providerKind ?? "custom"} className="size-4" />
+                          {group.displayName ?? group.provider}
                         </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[min(480px,70vh)] min-w-[220px] overflow-y-auto border-border bg-card p-1.5 text-foreground">
                         {!group.models.length && <DropdownMenuGroup><DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">{group.emptyMessage ?? "Nenhum modelo disponível."}</DropdownMenuLabel></DropdownMenuGroup>}

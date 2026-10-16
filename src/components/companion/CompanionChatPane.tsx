@@ -75,6 +75,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     if (!active) return;
     let alive = true;
     let version = 0;
+    let modelVersion = 0;
     let timer: number | undefined;
     let inFlight = false;
     let dirty = false;
@@ -103,9 +104,10 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
       if (currentConversation.current === event.payload.conversationId) schedule();
     });
     const refreshModels = () => {
-      void invoke("get_companion_models").then(value => { if (alive) { setModels(companionModelsSchema.parse(value)); setModelsLoaded(true); } }).catch(cause => { if (alive) setError(errorMessage(cause)); });
+      const request = ++modelVersion;
+      void invoke("get_companion_models").then(value => { if (alive && request === modelVersion) { setModels(companionModelsSchema.parse(value)); setModelsLoaded(true); } }).catch(cause => { if (alive && request === modelVersion) setError(errorMessage(cause)); });
     };
-    const providerSubscriptions = Promise.all(["system:changed", "provider-model-bindings:changed"].map(name => listen(name, () => { if (alive) { refreshModels(); schedule(); } })));
+    const providerSubscriptions = Promise.all(["system:changed", "provider-model-bindings:changed", "muse-runtime:changed"].map(name => listen(name, () => { if (alive) { refreshModels(); schedule(); } })));
     void subscription.then(() => { if (alive) void refresh(); }).catch(cause => { if (alive) { setError(errorMessage(cause)); setLoading(false); } });
     void invoke("get_companion_conversations").then(value => { if (alive) setConversations(companionConversationsSchema.parse(value)); }).catch(cause => { if (alive) setError(errorMessage(cause)); });
     refreshModels();

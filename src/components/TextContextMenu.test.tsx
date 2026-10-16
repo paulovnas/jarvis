@@ -25,7 +25,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("ClipboardEvent", class extends Event {
     clipboardData: DataTransfer | null;
-    constructor(type: string, options: ClipboardEventInit) { super(type, options); this.clipboardData = options.clipboardData ?? null; }
+    constructor(type: string, options: ClipboardEventInit = {}) { super(type, options); this.clipboardData = options.clipboardData ?? null; }
   });
 });
 afterEach(() => { window.getSelection()?.removeAllRanges(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });

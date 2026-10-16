@@ -34,6 +34,16 @@ describe("execution choices", () => {
     expect(modelProblem(choice, [])).toBeNull();
     expect(resolveChatModel([{ itemKey: "chat:c1", source: { ...choice, executor: "jarvis" }, target: { account: "other", model: "other", reasoning: null } }], "c1", choice)).toEqual(choice);
   });
+  it("preserves the official Muse executor across saved chat and workflow selections", () => {
+    const saved = { executor: "muse", account: "", model: "muse-wonder", reasoning: "high" };
+    const choice = modelChoiceSchema.parse(saved);
+    expect(choice).toEqual(saved);
+    expect(turnOptionsSchema.parse({ ...saved, mode: "build", approvalMode: "yolo" })).toMatchObject(saved);
+    expect(executionChoice(executionSelection(choice)!)).toEqual(saved);
+    expect(executionLabel(choice)).toBe("Muse Code / muse-wonder");
+    expect(modelProblem(choice, [])).toBeNull();
+    expect(executorSchema.parse("meta-api")).toBe("unavailable");
+  });
   it("preserves a retired executor in history while requiring an explicit supported replacement", () => {
     const legacy = { executor: "agy", account: "", model: "gemini-3.8-flash-high", reasoning: "max" };
     const saved = modelChoiceSchema.parse(legacy);

@@ -52,11 +52,11 @@ it("groups the fourteen immutable model profiles by flow and offers useful role-
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
 
-it("identifica o provedor escolhido pelo sufixo ao lado do modelo", () => {
+it("identifica o provedor legado pelo alias completo ao lado do modelo", () => {
   vi.mocked(useAgentModels).mockReturnValue({ data: { "planned/planner": { account: "openai-codex-personal", model: "gpt-5.6-sol", reasoning: "high" } }, error: null, saving: false, save, refresh: vi.fn() });
   render(<AgentSettings accounts={accounts} />);
   const group = screen.getByRole("region", { name: "Agentes do fluxo Planejado" });
-  expect(within(group).getByText("personal")).toBeVisible();
+  expect(within(group).getByText(accounts[0].alias)).toBeVisible();
   expect(within(group).getByRole("button", { name: "Modelo de Planejador no fluxo Planejado" })).toHaveTextContent("GPT 5.6 Sol");
 });
 

@@ -24,6 +24,44 @@ async function renderComposer(element: React.ReactElement) {
 
 describe("Explicit skill input", () => {
   beforeEach(() => { vi.mocked(invoke).mockReset().mockResolvedValue(snapshot); });
+  it("renders Markdown visually without a toolbar and keeps rich paste as Markdown", async () => {
+    const onChange = vi.fn();
+    render(<SkillInput draft={{ content: "# Título\n\nSeção **Fluxo de pagamento** antes de **Condições gerais**." }} onChange={onChange} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    expect(within(field).getByRole("heading", { name: "Título", level: 1 })).toBeVisible();
+    expect(within(field).getByText("Fluxo de pagamento").tagName).toBe("STRONG");
+    expect(screen.queryByRole("tab", { name: "Código" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Negrito" })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(field);
+    await user.keyboard("{Control>}a{/Control}{Backspace}");
+    fireEvent.paste(field, { clipboardData: { getData: (type: string) => type === "text/html" ? "<p>Texto <strong>colado</strong></p>" : type === "text/plain" ? "Texto colado" : "", files: [] } });
+    expect(within(field).getByText("colado").tagName).toBe("STRONG");
+    expect(onChange).toHaveBeenLastCalledWith({ content: "Texto **colado**" });
+  });
+  it.each([
+    '<div class="price">Total</div>',
+    '<script>window.promptSource = "preserve";</script>',
+    "---\ntitle: Pedido\n---\n\n# Pedido",
+    "Texto[^nota]\n\n[^nota]: Preserve esta referência",
+  ])("preserves literal source when pasting and restoring %s", async content => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const inputRef = createRef<{ focus: () => void }>();
+    const renderInput = (draft: ChatDraft) => <SkillInput ref={inputRef} draft={draft} onChange={onChange} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>;
+    const { rerender } = render(renderInput({ content: "" }));
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.click(field);
+    await user.paste(content);
+    expect(field.textContent).toBe(content);
+    expect(onChange).toHaveBeenLastCalledWith({ content });
+    rerender(renderInput({ content: "" }));
+    rerender(renderInput({ content }));
+    expect(field.textContent).toBe(content);
+    act(() => inputRef.current?.focus());
+    await user.keyboard(" revisado");
+    expect(onChange).toHaveBeenLastCalledWith({ content: `${content} revisado` });
+  });
   it("bloqueia e libera a edição sem alterar o rascunho", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -43,6 +81,56 @@ describe("Explicit skill input", () => {
     act(() => { inputRef.current?.focus(); });
     await user.keyboard(" claro");
     expect(onChange).toHaveBeenLastCalledWith({ content: "Meu pedido claro" });
+  });
+  it("applies heading input rules and preserves formatted text around explicit skills", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const inputRef = createRef<{ focus: () => void }>();
+    const renderInput = (draft: ChatDraft) => <SkillInput ref={inputRef} draft={draft} onChange={onChange} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>;
+    const { rerender } = render(renderInput({ content: "" }));
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    await user.type(field, "# Título");
+    expect(within(field).getByRole("heading", { name: "Título", level: 1 })).toBeVisible();
+    expect(onChange).toHaveBeenLastCalledWith({ content: "# Título" });
+    rerender(renderInput({ content: "**Revise** /react-expert o código", parts: [{ type: "text", text: "**Revise** " }, skillParts[0], { type: "text", text: " o código" }] }));
+    expect(within(field).getByText("Revise").tagName).toBe("STRONG");
+    expect(await within(field).findByRole("button", { name: "Remover skill react-expert" })).toBeVisible();
+    act(() => inputRef.current?.focus());
+    await user.keyboard(" agora");
+    expect(onChange).toHaveBeenLastCalledWith({ content: "**Revise** /react-expert o código agora", parts: [{ type: "text", text: "**Revise** " }, skillParts[0], { type: "text", text: " o código agora" }] });
+  });
+  it("keeps an existing explicit skill inside fenced code when editing the draft", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const inputRef = createRef<{ focus: () => void }>();
+    render(<SkillInput ref={inputRef} draft={{ content: "```text\n/react-expert\n```", parts: [{ type: "text", text: "```text\n" }, skillParts[0], { type: "text", text: "\n```" }] }} onChange={onChange} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    expect(await within(field).findByRole("button", { name: "Remover skill react-expert" })).toBeVisible();
+    expect(field.querySelector("pre")).not.toBeNull();
+    act(() => inputRef.current?.focus());
+    await user.keyboard(" ajustado");
+    expect(onChange).toHaveBeenLastCalledWith({ content: "```text\n/react-expert ajustado\n```", parts: [{ type: "text", text: "```text\n" }, skillParts[0], { type: "text", text: " ajustado\n```" }] });
+    expect(field.textContent).not.toContain("JARVISSKILL");
+  });
+  it("preserves explicit skills and subsequent literal paste inside source drafts", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const inputRef = createRef<{ focus: () => void }>();
+    const prefix = '<div data-total="price">Total</div>\n';
+    render(<SkillInput ref={inputRef} draft={{ content: `${prefix}/react-expert`, parts: [{ type: "text", text: prefix }, skillParts[0]] }} onChange={onChange} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    expect(await within(field).findByRole("button", { name: "Remover skill react-expert" })).toBeVisible();
+    act(() => inputRef.current?.focus());
+    await user.paste("\n**literal**\n# literal");
+    expect(onChange).toHaveBeenLastCalledWith({ content: `${prefix}/react-expert\n**literal**\n# literal`, parts: [{ type: "text", text: prefix }, skillParts[0], { type: "text", text: "\n**literal**\n# literal" }] });
+    expect(field.querySelector("strong, h1, script")).toBeNull();
+  });
+  it("preserves Markdown marks on an existing explicit skill", async () => {
+    render(<SkillInput draft={{ content: "**/react-expert**", parts: [{ type: "text", text: "**" }, skillParts[0], { type: "text", text: "**" }] }} onChange={vi.fn()} onSend={vi.fn()} disabled={false} compacting={false} working={false}>{null}</SkillInput>);
+    const field = screen.getByRole("textbox", { name: "Mensagem" });
+    const token = await within(field).findByRole("button", { name: "Remover skill react-expert" });
+    expect(token.closest("strong")).not.toBeNull();
+    expect(field.textContent).not.toContain("JARVISSKILL");
   });
   it("permite selecionar uma skill de plugin sem impedir o carregamento das demais", async () => {
     const plugin = { ...react, id: "firebase-plugin", name: "firebase@firebase:deploy", origin: "plugin", managed: true };

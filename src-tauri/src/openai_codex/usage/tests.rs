@@ -97,9 +97,11 @@ fn usage_preferences_migrate_and_remain_isolated_by_alias() {
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let first =
-        crate::persistence::insert_provider_account(&connection, "openai-codex-a", "one").unwrap();
+        crate::persistence::insert_provider_account(&connection, "openai-codex-a", "one", None)
+            .unwrap();
     let second =
-        crate::persistence::insert_provider_account(&connection, "antigravity-b", "two").unwrap();
+        crate::persistence::insert_provider_account(&connection, "antigravity-b", "two", None)
+            .unwrap();
     assert!(first.show_usage);
     assert!(first.show_five_hour_usage);
     assert!(first.show_weekly_usage);
@@ -181,7 +183,8 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let account =
-        crate::persistence::insert_provider_account(&connection, "openai-codex-a", "one").unwrap();
+        crate::persistence::insert_provider_account(&connection, "openai-codex-a", "one", None)
+            .unwrap();
     save_alert(
         &connection,
         &account.alias,
@@ -191,7 +194,7 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
         }),
     )
     .unwrap();
-    let record = crate::persistence::list_provider_accounts(&connection)
+    let mut record = crate::persistence::list_provider_accounts(&connection)
         .unwrap()
         .remove(0);
     assert_eq!(record.usage_alert_window.as_deref(), Some("weekly"));
@@ -227,6 +230,11 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
     };
     let notices = alert_notices(&record, &usage, 1_500);
     assert_eq!(notices.len(), 1);
+    assert!(notices[0].body.starts_with(&record.alias));
+    record.display_name = Some("Minha conta".into());
+    assert!(alert_notices(&record, &usage, 1_500)[0]
+        .body
+        .starts_with("Minha conta ·"));
     assert!(notices[0].body.contains("7d: restam 20%"));
     assert_eq!(notices[0].window_id, "codex/secondary_window");
     let runtime = UsageCache::default();
@@ -298,7 +306,8 @@ fn concurrent_refreshes_choose_the_most_depleted_bucket_and_notify_once() {
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let account =
-        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one").unwrap();
+        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one", None)
+            .unwrap();
     save_alert(
         &connection,
         &account.alias,
@@ -368,7 +377,8 @@ fn antigravity_alerts_respect_third_party_visibility_and_ignore_stale_data() {
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let account =
-        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one").unwrap();
+        crate::persistence::insert_provider_account(&connection, "antigravity-a", "one", None)
+            .unwrap();
     save_alert(
         &connection,
         &account.alias,
@@ -491,6 +501,7 @@ fn account_usage_accepts_go_aliases_and_returns_the_account_snapshot() {
                     connection,
                     "opencode-go-pessoal",
                     "opencode-go:fixture-account",
+                    None,
                 )?;
                 connection
                     .execute(
@@ -658,6 +669,7 @@ fn go_usage_alerts_save_and_identify_the_subscription_provider() {
         &connection,
         "opencode-go-personal",
         "opaque-account",
+        None,
     )
     .unwrap();
     connection
@@ -698,5 +710,7 @@ fn go_usage_alerts_save_and_identify_the_subscription_provider() {
     let notices = alert_notices(&record, &usage, 1_500);
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].title, "Limite do OpenCode Go");
-    assert!(notices[0].body.starts_with("personal · OpenCode Go · 5h"));
+    assert!(notices[0]
+        .body
+        .starts_with("opencode-go-personal · OpenCode Go · 5h"));
 }

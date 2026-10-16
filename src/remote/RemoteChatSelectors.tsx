@@ -15,7 +15,6 @@ import { executionChoice, executionSelection, executorOf, sameExecutionTarget, s
 import { defaultReasoning, reasoningLabel, selectableReasoningLevels } from "@/core/reasoning";
 import type { ModelChoice } from "@/core/provider-references";
 import type { FlowSelection, WorkflowCatalog } from "@/core/workflow-catalog";
-import { aliasSuffix } from "@/core/provider-usage";
 import { cn } from "@/lib/utils";
 import { RemoteProviderIcon } from "./RemoteProviderIcon";
 
@@ -94,7 +93,7 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
         <FlowIcon data-icon="inline-start" /><span className="truncate">{currentFlow?.title ?? "Opção indisponível"}</span><ChevronDown data-icon="inline-end" />
       </Button>
       <Button type="button" variant="ghost" size="sm" disabled={unavailable} aria-label="Selecionar modelo de IA" aria-invalid={Boolean(modelProblem) || fastUnavailable || !current.model || undefined} className={cn("h-11 min-w-0 flex-1 cursor-pointer justify-start font-mono", (modelProblem || fastUnavailable || !current.model) && "border border-destructive text-destructive")} onClick={() => { setDraft(choice); setSlot("primary"); setPanel("model"); }}>
-        {current.group && <RemoteProviderIcon kind={current.group.executor === "claude" ? "claude-code" : current.group.providerKind ?? "custom"} />}
+        {current.group && <RemoteProviderIcon kind={current.group.executor === "claude" ? "claude-code" : current.group.executor === "muse" ? "muse-code" : current.group.providerKind ?? "custom"} />}
         <span className="truncate">{current.model?.label ?? "Selecionar modelo"}{choice?.serviceTier === "priority" ? fastUnavailable ? " · Fast indisponível" : " · Fast" : ""}</span><ChevronDown data-icon="inline-end" />
       </Button>
     </div>
@@ -123,7 +122,7 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
                 <ToggleGroupItem value="primary" className="min-h-11 flex-1 cursor-pointer">Principal</ToggleGroupItem>
                 <ToggleGroupItem value="secondary" disabled={!draft} className="min-h-11 flex-1 cursor-pointer">Secundário</ToggleGroupItem>
               </ToggleGroup>
-              <FieldLabel className="min-w-0 truncate font-mono text-xs">{active.model ? `${aliasSuffix(active.group?.provider ?? "")} · ${active.model.label}${activeChoice?.serviceTier === "priority" ? " · Fast" : ""}` : slot === "secondary" ? "Nenhum modelo secundário" : "Escolha um modelo"}</FieldLabel>
+              <FieldLabel className="min-w-0 truncate font-mono text-xs">{active.model ? `${active.group?.displayName ?? active.group?.provider ?? ""} · ${active.model.label}${activeChoice?.serviceTier === "priority" ? " · Fast" : ""}` : slot === "secondary" ? "Nenhum modelo secundário" : "Escolha um modelo"}</FieldLabel>
             </Field>
           </FieldGroup>
           <Command key={slot} label="Buscar modelo" className="h-auto! w-full rounded-none!">
@@ -132,9 +131,9 @@ export function RemoteChatSelectors({ catalog, modelGroups, flow, choice, modelP
               {modelProblem && <Alert variant="destructive" className="my-2"><AlertDescription>{modelProblem}</AlertDescription></Alert>}
               <CommandEmpty>Nenhum modelo encontrado.</CommandEmpty>
               {slot === "secondary" && <CommandGroup><CommandItem value="none" disabled={unavailable} data-checked={!draft?.fallback} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => current ? { ...current, fallback: null } : current)}>Nenhum</CommandItem></CommandGroup>}
-              {modelGroups.map(group => <CommandGroup key={`${group.executor ?? "jarvis"}:${group.provider}`} heading={group.provider}>
-                {group.models.map(model => <CommandItem key={model.value} aria-label={`${group.provider} · ${model.label}`} value={`${group.executor ?? "jarvis"} ${model.value}`} keywords={[group.provider, model.label]} disabled={unavailable} data-checked={active.group === group && active.model?.value === model.value} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => selectModelChoice(current, executionChoice({ executor: group.executor, model: model.value, reasoning: defaultReasoning(model), ...(activeChoice?.serviceTier === "priority" && supportsFastMode(group.providerKind, model, group.executor) ? { serviceTier: "priority" } : {}) }), slot))}>
-                  <RemoteProviderIcon kind={group.executor === "claude" ? "claude-code" : group.providerKind ?? "custom"} /><span className="min-w-0 flex-1 truncate">{model.label}</span>
+              {modelGroups.map(group => <CommandGroup key={`${group.executor ?? "jarvis"}:${group.provider}`} heading={group.displayName ?? group.provider}>
+                {group.models.map(model => <CommandItem key={model.value} aria-label={`${group.displayName ?? group.provider} · ${model.label}`} value={`${group.executor ?? "jarvis"} ${model.value}`} keywords={[group.displayName ?? group.provider, group.provider, model.label]} disabled={unavailable} data-checked={active.group === group && active.model?.value === model.value} className="min-h-11 cursor-pointer" onSelect={() => setDraft(current => selectModelChoice(current, executionChoice({ executor: group.executor, model: model.value, reasoning: defaultReasoning(model), ...(activeChoice?.serviceTier === "priority" && supportsFastMode(group.providerKind, model, group.executor) ? { serviceTier: "priority" } : {}) }), slot))}>
+                  <RemoteProviderIcon kind={group.executor === "claude" ? "claude-code" : group.executor === "muse" ? "muse-code" : group.providerKind ?? "custom"} /><span className="min-w-0 flex-1 truncate">{model.label}</span>
                 </CommandItem>)}
               </CommandGroup>)}
             </CommandList>

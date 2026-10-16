@@ -35,6 +35,7 @@ fn inheritance_uses_each_executing_agents_model_and_explicit_choices_stay_fixed(
         Some("gemini-3.8-flash")
     );
     let explicit = Config {
+        executor: crate::claude::Executor::Jarvis,
         inherit_chat: false,
         account_alias: Some("search".into()),
         model: Some("gpt-5.6-luna".into()),
@@ -51,7 +52,8 @@ fn inheritance_uses_each_executing_agents_model_and_explicit_choices_stay_fixed(
         Config {
             inherit_chat: false,
             account_alias: None,
-            model: None
+            model: None,
+            ..Config::default()
         }
         .resolve(&child)
         .account_alias,
@@ -79,6 +81,7 @@ fn default_inherited_selection_and_disconnect_are_persistent() {
         Some("openai-codex-search".into()),
         Some("gpt-5.6-luna".into()),
         false,
+        crate::claude::Executor::Jarvis,
     )
     .unwrap();
     crate::persistence::initialize_database(&mut db).unwrap();
@@ -105,9 +108,41 @@ fn default_inherited_selection_and_disconnect_are_persistent() {
         Config {
             inherit_chat: false,
             account_alias: Some("openai-codex-search".into()),
-            model: Some("gpt-5.6-luna".into())
+            model: Some("gpt-5.6-luna".into()),
+            ..Config::default()
         }
     );
+}
+
+#[test]
+fn muse_search_has_no_api_account_and_native_or_off_selection_clears_its_executor() {
+    let mut db = database();
+    let muse = crate::claude::Executor::Muse;
+    let selected = save_config(&mut db, None, Some("muse-example".into()), false, muse).unwrap();
+    assert_eq!(read_config(&db).unwrap(), selected);
+    assert!(selected.account_alias.is_none());
+    assert!(save_config(
+        &mut db,
+        Some("openai-codex-search".into()),
+        Some("muse-example".into()),
+        false,
+        muse
+    )
+    .is_err());
+    assert_eq!(read_config(&db).unwrap(), selected);
+    let mut chat = options("other", "other-model");
+    assert_eq!(selected.resolve(&chat).executor, muse);
+    chat.executor = muse;
+    chat.account.clear();
+    chat.model = "muse-from-chat".into();
+    assert_eq!(Config::default().resolve(&chat).executor, muse);
+    assert_eq!(
+        Config::default().resolve(&chat).model.as_deref(),
+        Some("muse-from-chat")
+    );
+    let off = save_config(&mut db, None, None, false, crate::claude::Executor::Jarvis).unwrap();
+    assert_eq!(off.executor, crate::claude::Executor::Jarvis);
+    assert_eq!(read_config(&db).unwrap(), off);
 }
 
 #[test]
@@ -118,26 +153,29 @@ fn invalid_accounts_do_not_replace_selection_and_off_is_explicit() {
         Some("openai-codex-search".into()),
         Some("gpt-5.6-luna".into()),
         false,
+        crate::claude::Executor::Jarvis,
     )
     .unwrap();
     assert!(save_config(
         &mut db,
         Some("missing' OR 1 = 1 --".into()),
         Some("gpt-5.6-luna".into()),
-        false
+        false,
+        crate::claude::Executor::Jarvis
     )
     .is_err());
     assert_eq!(
         read_config(&db).unwrap().account_alias.as_deref(),
         Some("openai-codex-search")
     );
-    save_config(&mut db, None, None, false).unwrap();
+    save_config(&mut db, None, None, false, crate::claude::Executor::Jarvis).unwrap();
     assert_eq!(
         read_config(&db).unwrap(),
         Config {
             inherit_chat: false,
             account_alias: None,
-            model: None
+            model: None,
+            ..Config::default()
         }
     );
 }
@@ -191,7 +229,9 @@ async fn disabled_search_never_resolves_credentials_or_uses_the_chat_account() {
     ));
     let state = AppState::default();
     state
-        .with_connection(&home, |db| save_config(db, None, None, false))
+        .with_connection(&home, |db| {
+            save_config(db, None, None, false, crate::claude::Executor::Jarvis)
+        })
         .unwrap();
     let options = options("chat", "gpt-5.6-sol");
     let (_send, signal) = watch::channel(false);

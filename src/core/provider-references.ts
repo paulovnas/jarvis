@@ -1,3 +1,4 @@
+import { providerDisplayName } from "./provider-accounts";
 import { z } from "zod";
 import { modelChoiceSchema } from "./workflow-catalog";
 import { enabledModels, type ProviderAccount, type ProviderModel } from "./provider-accounts";
@@ -42,11 +43,11 @@ function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], ki
   if (executorOf(choice) !== "jarvis") return null;
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;
-  if (!account.enabled) return `O provedor ${choice.account} está desativado. Ative-o ou escolha outro.`;
+  if (!account.enabled) return `O provedor ${providerDisplayName(account)} está desativado. Ative-o ou escolha outro.`;
   if (choice.serviceTier === "priority" && fastModeUnavailable(account.providerKind, account.models.find(model => model.id === choice.model), choice.executor, kind !== "image_generation" && account.modelsStale)) return "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo.";
   // A local/offline catalog cannot prove that a configured model was removed.
   if (kind !== "image_generation" && account.modelsStale && !account.disabledModels?.includes(choice.model)) return null;
-  if (kind !== "image_generation" && !account.modelsAvailable) return `Os modelos de ${choice.account} estão indisponíveis. Revise a conexão do provedor.`;
+  if (kind !== "image_generation" && !account.modelsAvailable) return `Os modelos de ${providerDisplayName(account)} estão indisponíveis. Revise a conexão do provedor.`;
   const model = compatibleModels(account, kind).find(model => model.id === choice.model);
   if (!model) return `O modelo ${choice.model || "configurado"} não está disponível para este item. Escolha outro modelo.`;
   if (choice.reasoning && !model.reasoningLevels.includes(choice.reasoning)) return "O nível de raciocínio configurado não está disponível neste modelo. Revise a seleção.";

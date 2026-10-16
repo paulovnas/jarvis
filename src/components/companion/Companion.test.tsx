@@ -1137,22 +1137,24 @@ describe("Desktop companion", () => {
     await waitFor(() => expect(count()).toBe(3));
     expect(call.mock.calls.filter(([command]) => command === "get_companion_usage").slice(-1)[0]).toEqual(["get_companion_usage", { refresh: true }]);
     const panel = screen.getByRole("tabpanel", { name: "Limites" });
-    expect(within(panel).getByText("pessoal")).toBeVisible();
+    expect(within(panel).getByText(account.alias)).toBeVisible();
   });
 
-  it("identifies providers with icons while preserving shortened and custom aliases", async () => {
+  it("identifies providers with icons, display names and complete legacy aliases", async () => {
     const providers = [
-      { alias: "openai-codex-pessoal", providerKind: "openai-codex", label: "pessoal", name: "OpenAI Codex" },
-      { alias: "antigravity-pessoal", providerKind: "antigravity", label: "pessoal", name: "Antigravity" },
-      { alias: "opencode-go-pessoal", providerKind: "opencode-go", label: "pessoal", name: "OpenCode Go" },
+      { alias: "openai-codex-pessoal", displayName: "Conta principal", providerKind: "openai-codex", label: "Conta principal", name: "OpenAI Codex" },
+      { alias: "antigravity-pessoal", providerKind: "antigravity", label: "antigravity-pessoal", name: "Antigravity" },
+      { alias: "opencode-go-pessoal", providerKind: "opencode-go", label: "opencode-go-pessoal", name: "OpenCode Go" },
       { alias: "Claude Code", providerKind: "claude-code", label: "Claude Code", name: "Claude Code" },
+      { alias: "Muse Code", providerKind: "muse-code", label: "Muse Code", name: "Muse Code" },
       { alias: "conta do trabalho", providerKind: "antigravity", label: "conta do trabalho", name: "Antigravity" },
+      { alias: "antigravity-legacy-account-with-a-long-name", providerKind: "antigravity", label: "antigravity-legacy-account-with-a-long-name", name: "Antigravity" },
     ];
-    accounts = providers.map(provider => ({ ...account, alias: provider.alias, providerKind: provider.providerKind }));
+    accounts = providers.map(provider => ({ ...account, alias: provider.alias, displayName: provider.displayName, providerKind: provider.providerKind }));
     const user = await expanded();
     await user.click(screen.getByRole("tab", { name: "Limites" }));
     for (const provider of providers) {
-      const section = await screen.findByRole("region", { name: `Limites de ${provider.alias}` });
+      const section = await screen.findByRole("region", { name: `Limites de ${provider.displayName ?? provider.alias}` });
       expect(within(section).getByRole("img", { name: provider.name })).toBeVisible();
       expect(within(section).getByText(provider.label)).toBeVisible();
     }
@@ -1206,6 +1208,19 @@ describe("Desktop companion", () => {
       expect(within(panel).queryByText(/% em (reserva|déficit)|No ritmo da janela/)).not.toBeInTheDocument();
       expect(within(panel).queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
     }
+  });
+
+  it.each([
+    { remaining: 67, expected: "6% em reserva" },
+    { remaining: 33, expected: "28% em déficit" },
+  ])("shows Go monthly 30-day pacing in the island: $expected", async ({ remaining, expected }) => {
+    accounts = [{ ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go", fetchedAt: Date.now(), windows: [{ id: "monthly", group: "OpenCode Go", thirdParty: false, label: "Mensal", durationSeconds: null, remainingPercent: remaining, resetsAt: Date.now() + (18 * 24 + 10) * 3600_000 }] }];
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    const section = await screen.findByRole("region", { name: "Limites de opencode-go-pessoal" });
+    expect(within(section).getByRole("progressbar", { name: "OpenCode Go Mensal restante" })).toHaveAttribute("aria-valuenow", String(remaining));
+    expect(within(section).getByRole("img", { name: "Restante esperado: 61%" })).toBeVisible();
+    expect(within(section).getByText(expected)).toBeVisible();
   });
 
   it("preserves cached limits but hides pace estimates after a failed refresh", async () => {

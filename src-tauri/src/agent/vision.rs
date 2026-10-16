@@ -59,6 +59,7 @@ pub(super) fn load(state: &AppState, home: &Path) -> Result<Config, AgentError> 
                         None
                     };
                     Ok(Config {
+                        executor: crate::claude::Executor::Jarvis,
                         inherit_chat: row.get(2)?,
                         account_alias,
                         model,
@@ -130,6 +131,7 @@ pub async fn set_vision_config(
                 inherit_chat,
                 account_alias,
                 model,
+                ..Config::default()
             },
         )
     })
@@ -338,6 +340,7 @@ mod tests {
                 inherit_chat: false,
                 account_alias: None,
                 model: None,
+                ..Config::default()
             },
         )
         .unwrap();
@@ -398,6 +401,7 @@ mod tests {
             inherit_chat: false,
             account_alias: Some(alias),
             model: Some(model),
+            ..Config::default()
         };
         save(&state, &home, selected.clone()).unwrap();
         let conversation = crate::library::new_id().unwrap();

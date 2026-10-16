@@ -1,11 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, Extension, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import { Plugin } from "@tiptap/pm/state";
-import StarterKit from "@tiptap/starter-kit";
-import { Markdown } from "@tiptap/markdown";
-import { TableKit } from "@tiptap/extension-table";
-import { TaskItem, TaskList } from "@tiptap/extension-list";
-import Image from "@tiptap/extension-image";
+import { markdownEditorExtensions, markdownNeedsSource } from "./markdown-editor-extensions";
 import { Bold, Code, CodeXml, Heading2, Italic, List, ListOrdered, Quote, Redo2, Strikethrough, Undo2, WrapText } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -41,21 +37,11 @@ const formats = [
   { name: "codeBlock", label: "Bloco de código", Icon: CodeXml, run: (editor: Editor) => editor.chain().focus().toggleCodeBlock().run() },
 ];
 
-function needsSource(markdown: string, editor: Editor | null): boolean {
-  if (/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(markdown)) return true;
-  let unsupported = false;
-  editor?.markdown?.instance.walkTokens(editor.markdown.instance.lexer(markdown), token => {
-    if (token.type === "html" || (token.type === "def" && token.raw.startsWith("[^"))) unsupported = true;
-  });
-  return unsupported;
-}
-
 export function MarkdownEditor({ id, label, value, onChange, disabled = false, readOnly = false, maxLength, placeholder, spellCheck = false, className, contentClassName }: Props) {
   const [mode, setMode] = useState("editor");
   const lastValue = useRef(value);
   const extensions = useMemo(() => [
-    StarterKit.configure({ underline: false, link: { openOnClick: false }, trailingNode: false }),
-    Markdown, TableKit, TaskList, TaskItem.configure({ nested: true, a11y: { checkboxLabel: node => `Concluir: ${node.textContent || "item sem texto"}` } }), Image,
+    ...markdownEditorExtensions(),
     Extension.create({
       name: "markdownLimit",
       addProseMirrorPlugins() {
@@ -75,9 +61,10 @@ export function MarkdownEditor({ id, label, value, onChange, disabled = false, r
     editorProps: {
       attributes: { id: id ?? "", role: "textbox", "aria-label": label, "aria-multiline": "true", class: cn("markdown-editor-prose", bodyClass), spellcheck: String(spellCheck), autocorrect: spellCheck ? "on" : "off", autocapitalize: spellCheck ? "sentences" : "off", "data-placeholder": placeholder ?? "Escreva em Markdown…" },
       handlePaste: (view, event) => {
+        if (event.clipboardData?.getData("text/html") && !editor?.isActive("codeBlock")) return false;
         const text = event.clipboardData?.getData("text/plain");
         if (text === undefined) return false;
-        if (editor?.isActive("codeBlock") || needsSource(text, editor)) view.dispatch(view.state.tr.insertText(text));
+        if (editor?.isActive("codeBlock") || markdownNeedsSource(text, editor?.markdown)) view.dispatch(view.state.tr.insertText(text));
         else editor?.commands.insertContent(text, { contentType: "markdown" });
         return true;
       },
@@ -88,7 +75,7 @@ export function MarkdownEditor({ id, label, value, onChange, disabled = false, r
       onChange?.(next);
     },
   });
-  const sourceOnly = needsSource(value, editor);
+  const sourceOnly = markdownNeedsSource(value, editor?.markdown);
   const editable = !disabled && !readOnly && !sourceOnly;
   const state = useEditorState({ editor, selector: ({ editor }) => ({
     active: formats.map(format => editor?.isActive(format.name) ?? false),

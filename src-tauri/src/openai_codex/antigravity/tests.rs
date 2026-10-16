@@ -133,15 +133,26 @@ fn exchange_discovers_google_identity_and_project_then_commits_and_disconnects()
     let mut connection = rusqlite::Connection::open_in_memory().unwrap();
     crate::persistence::initialize_database(&mut connection).unwrap();
     let secrets = InMemorySecretStore::default();
-    let account =
-        commit_provider_account(&connection, &secrets, "antigravity-pessoal", &credential).unwrap();
+    let account = commit_provider_account(
+        &connection,
+        &secrets,
+        "antigravity-pessoal",
+        &credential,
+        None,
+    )
+    .unwrap();
     assert_eq!(account.provider_kind, "antigravity");
     let ipc = serde_json::to_string(&account).unwrap();
     assert!(!ipc.contains("test-access"));
     assert!(!ipc.contains("project-123"));
-    assert!(
-        commit_provider_account(&connection, &secrets, "antigravity-outra", &credential).is_err()
-    );
+    assert!(commit_provider_account(
+        &connection,
+        &secrets,
+        "antigravity-outra",
+        &credential,
+        None
+    )
+    .is_err());
     disconnect_provider_account(&connection, &secrets, "antigravity-pessoal").unwrap();
     assert!(secrets.load("antigravity-pessoal").is_err());
 }
