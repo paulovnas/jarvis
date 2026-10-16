@@ -60,6 +60,21 @@ it("opens web links normally and keeps unsafe or relative destinations inert", a
   expect(screen.getByText("Script")).toBeInTheDocument();
 });
 
+it("preserves the full destination of long links while keyboard activation remains available", async () => {
+  const user = userEvent.setup();
+  const url = `https://example.com/${"long-path-".repeat(35)}`;
+  const path = `C:/Users/Paulo/${"long-directory/".repeat(20)}report.md`;
+  render(<ChatMarkdown content={`[${url}](${url})\n\n[${path}](${path})`} />);
+  const web = screen.getByRole("button", { name: url });
+  const file = screen.getByRole("button", { name: path });
+  web.focus();
+  await user.keyboard("{Enter}");
+  expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
+  file.focus();
+  await user.keyboard("{Enter}");
+  expect(revealItemInDir).toHaveBeenCalledExactlyOnceWith(path);
+});
+
 it("reports a file manager failure without opening the artifact as a URL", async () => {
   vi.mocked(revealItemInDir).mockRejectedValue(new Error("file not found"));
   const user = userEvent.setup();

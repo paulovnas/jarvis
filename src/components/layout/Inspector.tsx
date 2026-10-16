@@ -55,7 +55,7 @@ function ActivitySection({ title, icon, count, children }: { title: string; icon
   </Collapsible>;
 }
 
-export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace, designer, onSelectSection }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController; designer?: DesignerSession; onSelectSection?: (section: InspectorSection) => void }) {
+export function Inspector({ library, chat, workflow, accounts = [], onCompact, onOpenKanban, compacting = false, pending = false, files: fileWorkspace, designer, onSelectSection, collapsed }: { library: LibrarySnapshot | null; chat?: ChatSnapshot | null; workflow?: WorkflowController; accounts?: ProviderAccount[]; onCompact?: () => Promise<boolean>; onOpenKanban?: (projectId: string) => void; compacting?: boolean; pending?: boolean; files?: ProjectFilesController; designer?: DesignerSession; onSelectSection?: (section: InspectorSection) => void; collapsed?: boolean }) {
   const { layout, updateLayout } = useDesktopLayout();
   const selectedChat = chat?.conversationId === library?.selection.conversationId ? chat : null;
   const [explorerVisited, setExplorerVisited] = useState(layout.inspectorTab === "explorer");
@@ -78,7 +78,7 @@ export function Inspector({ library, chat, workflow, accounts = [], onCompact, o
   const section = !global && (layout.inspectorTab === "explorer" || layout.inspectorTab === "github" || layout.inspectorTab === "designer") ? layout.inspectorTab : "activities";
   const selectSection = (value: InspectorSection) => { if (value === "github") setGithubVisited(true); if (value === "explorer") setExplorerVisited(true); if (onSelectSection) onSelectSection(value); else updateLayout({ inspectorTab: value }); };
   return <aside aria-label="Inspector" className="native-inspector flex h-full min-h-0 flex-col bg-sidebar">
-    <InspectorNavigation section={section} collapsed={layout.inspectorCollapsed} global={global} onSelect={selectSection} />
+    <InspectorNavigation section={section} collapsed={collapsed ?? layout.inspectorCollapsed} global={global} onSelect={selectSection} />
     <div className="flex h-full min-h-0 flex-col">
       <div hidden={section !== "activities"} className={`min-h-0 flex-1 flex-col ${section === "activities" ? "flex" : "hidden"}`}>
     <div className="min-h-0 flex-1">

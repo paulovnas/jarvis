@@ -37,9 +37,9 @@ const markdownComponents: Components = {
   },
   a: ({ href, children }) => {
     const path = localFilePath(href ?? "");
-    if (path) return <Button variant="link" className="h-auto max-w-full cursor-pointer whitespace-normal px-0 text-left text-sm" title={`Mostrar na pasta: ${path}`} onClick={() => { void revealItemInDir(path).catch(() => toast.error("Não foi possível mostrar o arquivo na pasta. Ele pode ter sido movido ou removido.")); }}><File aria-hidden="true" />{children}</Button>;
+    if (path) return <Button variant="link" className="h-auto min-w-0 max-w-full cursor-pointer whitespace-normal px-0 text-left text-sm [overflow-wrap:anywhere]" title={`Mostrar na pasta: ${path}`} onClick={() => { void revealItemInDir(path).catch(() => toast.error("Não foi possível mostrar o arquivo na pasta. Ele pode ter sido movido ou removido.")); }}><File aria-hidden="true" />{children}</Button>;
     return /^https?:\/\//i.test(href ?? "")
-      ? <Button variant="link" className="h-auto cursor-pointer px-0 text-sm" onClick={() => { if (href) void openUrl(href).catch(() => toast.error("Não foi possível abrir o link")); }}>{children}</Button>
+      ? <Button variant="link" className="h-auto min-w-0 max-w-full cursor-pointer whitespace-normal px-0 text-left text-sm [overflow-wrap:anywhere]" onClick={() => { if (href) void openUrl(href).catch(() => toast.error("Não foi possível abrir o link")); }}>{children}</Button>
       : <span>{children}</span>;
   },
   img: ({ alt }) => <span className="text-muted-foreground">[Imagem: {alt || "sem descrição"}]</span>,

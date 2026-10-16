@@ -31,9 +31,14 @@ export function rememberTerminalPanel(layout: DesktopLayout, key: string, update
   return { terminalPanels: { ...layout.terminalPanels, [key]: { ...DEFAULT_TERMINAL_PANEL, ...layout.terminalPanels[key], ...update } } };
 }
 
-export function visiblePanels(layout: DesktopLayout, dashboard: boolean) {
-  const sidebar = layout.sidebarCollapsed ? 0 : layout.panels["home-sidebar-panel"] ?? 20;
-  const inspector = dashboard || layout.inspectorCollapsed ? 0 : layout.panels["home-inspector-panel"] ?? 24;
+export function visiblePanels(layout: DesktopLayout, dashboard: boolean, windowWidth = Infinity, preferred: "sidebar" | "inspector" = "inspector") {
+  let sidebar = layout.sidebarCollapsed ? 0 : layout.panels["home-sidebar-panel"] ?? 20;
+  let inspector = dashboard || layout.inspectorCollapsed ? 0 : layout.panels["home-inspector-panel"] ?? 24;
+  // Reserve 220px + 360px + 280px for content, plus 32px of gutters.
+  if (windowWidth < 892 && sidebar > 0 && inspector > 0) {
+    if (preferred === "sidebar") inspector = 0;
+    else sidebar = 0;
+  }
   return { "home-sidebar-panel": sidebar, "home-main-panel": 100 - sidebar - inspector, ...(!dashboard ? { "home-inspector-panel": inspector } : {}) };
 }
 

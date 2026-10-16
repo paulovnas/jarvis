@@ -37,6 +37,40 @@ async function openProjectDetails(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Home shell", () => {
+  it("keeps navigation available in a narrow empty workspace without reserving an inspector", async () => {
+    vi.stubGlobal("innerWidth", 768);
+    const snapshot = populatedLibrary();
+    snapshot.projects = [];
+    snapshot.conversations = [];
+    snapshot.selection.projectId = null;
+    snapshot.selection.conversationId = null;
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) => command === "get_library_snapshot" ? Promise.resolve(snapshot) : original(command, args, options));
+    render(<Home />);
+    expect(await screen.findByText("Selecione a pasta do projeto para começar a trabalhar.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Recolher barra lateral" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Inspector" })).toBeDisabled();
+  });
+
+  it("preserves the draft and model controls through portrait and landscape window resizes", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    const field = await screen.findByRole("textbox", { name: "Mensagem" });
+    field.focus();
+    await user.paste("Meu rascunho continua disponível ao redimensionar a janela.");
+    for (const width of [768, 600, 1440, 768]) {
+      vi.stubGlobal("innerWidth", width);
+      act(() => window.dispatchEvent(new Event("resize")));
+      expect(field).toHaveTextContent("Meu rascunho continua disponível ao redimensionar a janela.");
+      expect(screen.getByRole("button", { name: "Enviar mensagem" })).toBeInTheDocument();
+    }
+    screen.getByRole("button", { name: "Selecionar modelo de IA" }).focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("menu")).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(invokeMock.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+  });
+
   it("moves navigation into the titlebar and closes the current panel before opening another", async () => {
     const user = userEvent.setup();
     render(<Home />);

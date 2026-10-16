@@ -158,7 +158,7 @@ export function App() {
 
       case "home":
         return (
-          <main className="flex min-h-0 flex-1">
+          <main className="flex min-h-0 min-w-0 flex-1">
             <Suspense fallback={<HomeSkeleton />}>
               <BootstrapResourcesProvider initial={bootstrap.resources}>
                 <CoreGate><DesktopLayoutProvider><LazyHome /><InstalledReleaseDialog /></DesktopLayoutProvider></CoreGate>

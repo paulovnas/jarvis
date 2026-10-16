@@ -429,7 +429,7 @@ fn fit_bounds(
         })
         .or_else(|| screens.first())?;
     let width = (if bounds.width.is_finite() {
-        bounds.width.clamp(1024.0, 10000.0)
+        bounds.width.clamp(600.0, 10000.0)
     } else {
         1360.0
     } * screen.scale) as u32;
@@ -620,6 +620,36 @@ pub async fn save_desktop_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portrait_window_width_survives_restore_and_display_scaling() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let minimum = config["app"]["windows"][0]["minWidth"].as_f64().unwrap();
+        assert_eq!(minimum, 600.0);
+        for scale in [1.0, 1.25, 1.5] {
+            let screen = Screen {
+                x: 0,
+                y: 0,
+                width: (1080.0 * scale) as u32,
+                height: (1920.0 * scale) as u32,
+                scale,
+            };
+            for width in [320.0, 600.0, 768.0] {
+                let (_, size) = fit_bounds(
+                    Bounds {
+                        x: 0,
+                        y: 0,
+                        width,
+                        height: 900.0,
+                    },
+                    &[screen],
+                )
+                .unwrap();
+                assert_eq!(size.width, (width.max(minimum) * scale) as u32);
+            }
+        }
+    }
 
     #[test]
     fn companion_position_survives_main_layout_edits_and_restart() {
