@@ -27,6 +27,7 @@ function respond(request) {
   if (!Object.hasOwn(request, "id")) return null;
   let result;
   if (request.method === "initialize") {
+    if (process.env.HANG_INITIALIZE === "1") return null;
     result = { protocolVersion: "2024-11-05", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "jarvis-fixture", version: "1" } };
   } else if (request.method === "tools/list") {
     result = { tools: listedTools() };

@@ -1212,9 +1212,6 @@ impl TurnClients {
                 ..Self::default()
             };
             clients
-                .refresh_intent(mcp, state, home, intent, signal)
-                .await?;
-            clients
                 .definitions_with(mcp, state, home, false, |_| true)
                 .await;
             return Ok(clients);
@@ -1372,7 +1369,7 @@ impl TurnClients {
         // revocation checks. This does not call any integration tool.
         self.definitions_with(mcp, state, home, false, |_| true)
             .await;
-        if !requested.is_empty() || intent.mode == McpIntentMode::Explicit {
+        if intent.mode == McpIntentMode::Explicit {
             if requested.is_empty() {
                 return Err(coded_error(
                     "mcp_requested_unavailable",
@@ -1428,7 +1425,7 @@ impl TurnClients {
 
     pub fn instructions(&self) -> String {
         const ERROR_GUIDANCE: &str = " Failed calls return a JSON error envelope. Never retry automatically. retryable permits one deliberate retry: change the fields listed in validationErrors instead of repeating invalid arguments unchanged. When outcomeUncertain is true, do not repeat the action; verify its state with a read-only operation first. connectionRecovered reports whether this same MCP was reconnected.";
-        const CURRENT_CATALOG: &str = " MCP activation and loaded schemas belong to the current user turn. The current tool catalog is authoritative; a historical tool name does not mean its server is active or its schema is callable. Use mcp_activate, mcp_search_tools and mcp_load_tool only when offered by the current catalog, then follow the updated schemas before calling an integration.";
+        const CURRENT_CATALOG: &str = " MCP activation and loaded schemas belong to the current user turn. The current tool catalog is authoritative; a historical tool name does not mean its server is active or its schema is callable. Activate an integration only when the current task needs it, never just because it was preferred earlier. Use mcp_activate, mcp_search_tools and mcp_load_tool only when offered by the current catalog, then follow the updated schemas before calling an integration.";
         let catalog_guidance = if self.deferred_tools.is_empty() {
             ""
         } else {

@@ -80,6 +80,29 @@ impl Fixture {
     fn local(&self, name: &str) -> Server {
         self.local_with_request_timeout(name, 2000)
     }
+    async fn activate(
+        &self,
+        clients: &mut runtime::TurnClients,
+        name: &str,
+        signal: watch::Receiver<bool>,
+    ) {
+        clients
+            .execute(
+                &self.mcp,
+                &self.state,
+                &self.home,
+                "mcp_activate",
+                &json!({"server":name}),
+                false,
+                signal,
+            )
+            .await
+            .unwrap();
+        // The next model step receives the catalog produced by activation.
+        clients
+            .definitions(&self.mcp, &self.state, &self.home, false)
+            .await;
+    }
     fn single_tool(&self, name: &str, original: &str) -> Server {
         let script = self.home.join("single-tool.mjs");
         fs::write(
@@ -570,6 +593,9 @@ async fn ordinary_mcp_selection_keeps_other_servers_discoverable() {
     )
     .await
     .unwrap();
+    assert!(!f.home.join("starts").exists());
+    f.activate(&mut clients, "gemini-notebook-mcp", signal.clone())
+        .await;
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     let activate = definitions
         .iter()
@@ -736,10 +762,18 @@ async fn selecting_one_mcp_preserves_an_exclusion_in_the_same_message() {
     assert_eq!(intent.excluded_servers[0].id, monday.id);
     let (_sender, signal) = watch::channel(false);
     let mut clients = runtime::TurnClients::discover_for_intent(
-        &f.mcp, &f.state, &f.home, &f.home, &intent, signal,
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &intent,
+        signal.clone(),
     )
     .await
     .unwrap();
+    assert!(!f.home.join("starts").exists());
+    f.activate(&mut clients, "gemini-notebook-mcp", signal.clone())
+        .await;
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     let activate = definitions
         .iter()
@@ -1196,6 +1230,8 @@ async fn mcp_catalog_feedback_never_exposes_hidden_or_revoked_schemas() {
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "large-catalog", signal.clone())
+        .await;
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     assert!(clients
         .unavailable_tool_feedback("mcp_invented", &json!({}), &definitions)
@@ -1353,6 +1389,8 @@ async fn read_only_calls_overlap_on_the_same_mcp_peer_without_exposing_mutations
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "parallel-docs", signal.clone())
+        .await;
     clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     let name = runtime::wire_name(&server, "lookup");
     assert!(clients.parallel_ready(&name));
@@ -1651,6 +1689,104 @@ fn keychain_cleanup_failure_does_not_block_mcp_removal() {
 }
 
 #[tokio::test]
+async fn inherited_mcp_timeout_does_not_block_implementation_or_another_mcp() {
+    let f = Fixture::new();
+    let raw = json!({"gemini-notebook-mcp": {
+        "type":"local", "command":["node", fixture_script()], "timeout":1000,
+        "environment":{"HANG_INITIALIZE":"1", "SERVER_NAME":"gemini-notebook-mcp",
+            "STARTS_FILE":f.home.join("starts"), "CALLS_FILE":f.home.join("calls")}
+    }})
+    .to_string();
+    let notebook = f.mcp.save(&f.state, &f.home, None, &raw).unwrap().remove(0);
+    let monday = f.local("monday-api-mcp");
+    let inherited = McpIntent {
+        servers: vec![McpIntentServer {
+            id: notebook.id.clone(),
+            name: notebook.name.clone(),
+        }],
+        ..McpIntent::default()
+    };
+    let intent = runtime::resolve_user_intent(
+        &f.mcp, &f.state, &f.home, &inherited,
+        &["Vamos implementar o primeiro épico. Corrija a rolagem do layout e preserve a evidência da aba Live.".into()],
+    ).await.unwrap();
+    assert_eq!(intent, inherited);
+    f.secrets.loads.store(0, Ordering::Relaxed);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &intent,
+        signal.clone(),
+    )
+    .await
+    .expect("an inherited optional MCP must not gate the model or implementation tools");
+    assert!(!f.home.join("starts").exists());
+    assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 0);
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal.clone())
+        .await
+        .unwrap();
+    assert!(!f.home.join("starts").exists());
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(
+        definitions[0]["parameters"]["properties"]["server"]["enum"],
+        json!([notebook.name, monday.name])
+    );
+
+    let failure = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_activate",
+            &json!({"server":notebook.name}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(failure.code, "mcp_requested_unavailable");
+    assert!(failure.message.contains("tempo limite"));
+    assert!(!f.home.join("calls").exists());
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    f.activate(&mut clients, &monday.name, signal.clone()).await;
+    let lookup = runtime::wire_name(&monday, "lookup");
+    let output = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &lookup,
+            &json!({"query":"implementation scope"}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(output.contains("implementation scope"));
+    let starts = fs::read_to_string(f.home.join("starts")).unwrap();
+    assert_eq!(starts, "gemini-notebook-mcp\nmonday-api-mcp\n");
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal)
+        .await
+        .unwrap();
+    assert_eq!(fs::read_to_string(f.home.join("starts")).unwrap(), starts);
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "lookup\n"
+    );
+    let after = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(after.iter().any(|definition| definition["name"] == lookup));
+    assert!(after
+        .iter()
+        .any(|definition| definition["name"] == "mcp_activate"));
+}
+
+#[tokio::test]
 async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
     let f = Fixture::new();
     let case = explicit_mcp_evaluation_case();
@@ -1670,6 +1806,8 @@ async fn harness_evaluation_explicit_mcp_connects_only_the_named_server() {
     )
     .await
     .unwrap();
+    f.activate(&mut clients, &notebook.name, signal.clone())
+        .await;
     assert_eq!(f.secrets.loads.load(Ordering::Relaxed), 1);
     let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     assert_eq!(definitions.len(), 3);
@@ -1867,6 +2005,7 @@ async fn harness_evaluation_invalid_mcp_arguments_are_precise_and_recoverable() 
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "docs", signal.clone()).await;
     let lookup = runtime::wire_name(&server, "lookup");
 
     let invalid = clients
@@ -2158,6 +2297,8 @@ async fn deferred_catalog_controls_fail_closed_and_preserve_plan_read_only_scope
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "large-catalog", signal.clone())
+        .await;
 
     let plan = clients.definitions(&f.mcp, &f.state, &f.home, true).await;
     assert_eq!(plan.len(), 2);
@@ -2389,6 +2530,8 @@ async fn loaded_deferred_tool_survives_reconnection_when_its_schema_still_exists
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "large-catalog", signal.clone())
+        .await;
     clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     let lookup = runtime::wire_name(&server, "lookup");
     let search: Value = serde_json::from_str(
@@ -2476,6 +2619,8 @@ async fn catalog_refresh_evicts_loaded_tools_that_the_server_removed() {
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "large-catalog", signal.clone())
+        .await;
     clients.definitions(&f.mcp, &f.state, &f.home, false).await;
     let removed = runtime::wire_name(&server, "catalog_tool_37");
     clients
@@ -2577,12 +2722,11 @@ async fn harness_evaluation_mcp_intent_survives_continuations_and_accepts_user_c
     assert!(definitions
         .iter()
         .any(|definition| definition["name"] == "mcp_activate"));
-    assert!(definitions
-        .iter()
-        .any(|definition| definition["description"]
-            .as_str()
-            .unwrap()
-            .contains("gemini-notebook-mcp")));
+    assert_eq!(
+        definitions[0]["parameters"]["properties"]["server"]["enum"],
+        json!([database.name, notebook.name])
+    );
+    assert!(!f.home.join("starts").exists());
 
     let changed = runtime::resolve_user_intent(
         &f.mcp,
@@ -2685,6 +2829,8 @@ async fn long_mirrored_mcp_descriptions_remain_complete_and_redacted_for_indexin
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "monday-fixture", signal.clone())
+        .await;
     let output = clients
         .execute(
             &f.mcp,
@@ -2743,6 +2889,7 @@ async fn request_timeout_is_independent_from_the_short_startup_timeout() {
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "slow", signal.clone()).await;
     let lookup = runtime::wire_name(&server, "lookup");
     let output = clients
         .execute(
@@ -2779,6 +2926,8 @@ async fn harness_evaluation_timeout_reconnects_only_the_requested_mcp_without_re
     )
     .await
     .unwrap();
+    f.activate(&mut clients, &notebook.name, signal.clone())
+        .await;
     let lookup = runtime::wire_name(&notebook, "lookup");
 
     let timeout = clients
@@ -2869,6 +3018,7 @@ async fn harness_evaluation_preserves_structured_mcp_server_errors_without_recon
     )
     .await
     .unwrap();
+    f.activate(&mut clients, &server.name, signal.clone()).await;
     let lookup = runtime::wire_name(&server, "lookup");
 
     let failure = clients
@@ -2917,10 +3067,11 @@ async fn mutating_timeout_is_uncertain_and_is_never_replayed_during_reconnection
         &f.home,
         &f.home,
         "Use o MCP writer para realizar a operação.",
-        signal,
+        signal.clone(),
     )
     .await
     .unwrap();
+    f.activate(&mut clients, "writer", signal.clone()).await;
     let mutation = runtime::wire_name(&server, "mutate");
 
     let timeout = clients
@@ -2964,7 +3115,7 @@ async fn unavailable_explicit_mcp_fails_before_any_alternative_is_connected() {
         &f.state,
         &f.home,
         &f.home,
-        "Preciso que use o MCP Gemini Notebook.",
+        "Use somente o MCP Gemini Notebook.",
         signal,
     )
     .await
