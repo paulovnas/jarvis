@@ -91,7 +91,7 @@ it("derives only alert windows actually returned by the provider", () => {
 it("keeps partial rolling recovery separate from renewal and pacing", () => {
   const rolling = { id: "five_hour", label: "5h", group: "Charm Hyper", thirdParty: false, durationSeconds: 18_000, remainingPercent: 40, resetsAt: null, nextRecoveryAt: 9_000_000 };
   expect(usageWindowSchema.parse(rolling)).toEqual(rolling);
-  expect(usageWindowSchema.parse({ ...rolling, nextRecoveryAt: undefined }).nextRecoveryAt).toBeNull();
+  expect(usageWindowSchema.parse({ ...rolling, nextRecoveryAt: undefined }).nextRecoveryAt).toBeUndefined();
   expect(expectedQuotaRemaining(rolling, 0)).toBeNull();
   expect(quotaReserve(rolling, 0)).toBeNull();
   expect(expectedQuotaRemaining({ ...rolling, resetsAt: 9_000_000 }, 0)).toBeNull();

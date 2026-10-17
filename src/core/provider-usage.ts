@@ -6,7 +6,7 @@ export const usageWindowSchema = z.object({
   durationSeconds: z.number().positive().nullable(),
   remainingPercent: z.number().min(0).max(100).nullable(),
   resetsAt: z.number().nullable(),
-  nextRecoveryAt: z.number().finite().nonnegative().nullable().default(null),
+  nextRecoveryAt: z.number().finite().nonnegative().nullable().optional(),
 });
 export const accountUsageSchema = z.object({
   alias: z.string(), fetchedAt: z.number().nullable(), email: z.string().nullable(), plan: z.string().nullable(),
@@ -15,8 +15,8 @@ export const accountUsageSchema = z.object({
   creditBalance: z.number().finite().nonnegative().nullable().optional(),
   resetCredits: z.object({ availableCount: z.number().int().nonnegative(), expirations: z.array(z.number().nullable()), detailsAvailable: z.boolean() }).nullable(),
 });
-export type AccountUsage = z.input<typeof accountUsageSchema>;
-export type UsageWindow = z.input<typeof usageWindowSchema>;
+export type AccountUsage = z.infer<typeof accountUsageSchema>;
+export type UsageWindow = z.infer<typeof usageWindowSchema>;
 export type UsageAlertWindow = "five_hour" | "weekly";
 
 export function availableUsageAlertWindows(windows: UsageWindow[], includeThirdParty: boolean): UsageAlertWindow[] {
