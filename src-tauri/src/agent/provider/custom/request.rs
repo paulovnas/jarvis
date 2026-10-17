@@ -237,6 +237,7 @@ pub(super) fn body(
             email: None,
             plan_type: None,
             project_id: None,
+            hyper_panel: None,
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: Some(config.clone()),
@@ -396,6 +397,27 @@ pub(super) fn body_with_capabilities(
         }
     }
     cache_breakpoints(config, model, &mut body)?;
+    let remaining = model
+        .context_window
+        .saturating_sub(crate::agent::compaction::estimate(&body))
+        .saturating_sub(64);
+    let minimum = body["thinking"]["budget_tokens"]
+        .as_u64()
+        .map_or(1_024.min(model.max_output_tokens), |budget| {
+            budget.saturating_add(1)
+        });
+    if remaining < minimum {
+        return Err(super::super::overflow_error());
+    }
+    let output_field = match config.protocol {
+        Protocol::OpenaiResponses => "max_output_tokens",
+        Protocol::OpenaiCompletions if config.token_field == TokenField::MaxCompletionTokens => {
+            "max_completion_tokens"
+        }
+        _ => "max_tokens",
+    };
+    // Preserve catalog limits while fitting this request, as OMP does for compatible APIs.
+    body[output_field] = json!(model.max_output_tokens.min(remaining));
     Ok(body)
 }
 

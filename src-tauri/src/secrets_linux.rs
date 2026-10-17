@@ -124,7 +124,13 @@ mod tests {
         mcp.delete(&key).unwrap();
         assert_eq!(load("mcp-secrets", &key), Err(VaultError::NotFound));
 
-        for prefix in ["openai-codex", "antigravity", "custom", "opencode-go"] {
+        for prefix in [
+            "openai-codex",
+            "antigravity",
+            "custom",
+            "opencode-go",
+            "charm-hyper",
+        ] {
             let alias = format!("{prefix}-{key}");
             let credential = CodexCredential::new(
                 "synthetic-token",

@@ -28,7 +28,7 @@ pub(crate) struct Status {
     pub message: String,
 }
 
-pub(super) fn retryable(error: &AgentError) -> bool {
+pub(in crate::agent) fn retryable(error: &AgentError) -> bool {
     if error.provider_metadata.as_ref().is_some_and(|metadata| {
         metadata.protocol_reason
             == Some(crate::diagnostics::ProviderProtocolReason::RequestProjection)

@@ -5,6 +5,30 @@ async fn query(graft: &Graft, signal: &watch::Receiver<bool>, name: &str, args: 
 }
 
 #[test]
+fn configured_repositories_are_normalized_deduplicated_and_order_independent() {
+    assert_eq!(
+        normalized_repositories(&["frontend/".into(), "./backend".into(), "frontend".into()])
+            .unwrap(),
+        vec!["backend", "frontend"]
+    );
+    assert_eq!(normalized_repositories(&[]).unwrap(), vec!["."]);
+    assert_eq!(normalized_repositories(&["./".into()]).unwrap(), vec!["."]);
+}
+
+#[test]
+fn configured_repositories_cannot_expand_the_project_scope() {
+    for path in [
+        "../outside",
+        "/outside",
+        "C:\\outside",
+        "frontend/../../outside",
+        "",
+    ] {
+        assert!(normalized_repositories(&[path.into()]).is_err(), "{path}");
+    }
+}
+
+#[test]
 fn receipts_do_not_claim_missing_stale_or_partial_graphs_are_reused() {
     use super::super::activity::Status;
     assert_eq!(
@@ -17,6 +41,11 @@ fn receipts_do_not_claim_missing_stale_or_partial_graphs_are_reused() {
     );
     assert_eq!(
         receipt(&json!({"freshness":{"current":true},"coverage":{"partial":true}})).0,
+        Status::Issues
+    );
+    assert_eq!(
+        receipt(&json!({"freshness":{"current":false,"missing":true},"coverage":{"partial":true}}))
+            .0,
         Status::Issues
     );
     assert_eq!(
@@ -143,14 +172,14 @@ async fn projectless_chat_spawns_nothing_and_cancelled_open_propagates() {
     assert!(inactive.take_activity().is_empty());
     let (_sender, cancelled) = watch::channel(true);
     assert_eq!(
-        Graft::open(Path::new("/missing"), Path::new("/missing"), cancelled)
+        Graft::open(Path::new("/missing"), Path::new("/missing"), &[], cancelled)
             .await
             .err()
             .unwrap()
             .code,
         "cancelled"
     );
-    let missing = Graft::open(Path::new("/missing"), Path::new("/missing"), signal)
+    let missing = Graft::open(Path::new("/missing"), Path::new("/missing"), &[], signal)
         .await
         .unwrap();
     assert!(missing.definitions().is_empty());
@@ -184,7 +213,7 @@ async fn native_graft_installation_and_structural_lifecycle() {
     )
     .unwrap();
     let (_sender, signal) = watch::channel(false);
-    let graft = Graft::open(home.path(), &root, signal.clone())
+    let graft = Graft::open(home.path(), &root, &[], signal.clone())
         .await
         .unwrap();
     let cold = query(&graft, &signal, "graft_repo_map", json!({})).await;

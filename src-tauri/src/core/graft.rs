@@ -30,6 +30,7 @@ pub struct Graft {
     package: Option<PathBuf>,
     root: PathBuf,
     cache: PathBuf,
+    repositories: Vec<String>,
     activity: Mutex<Vec<Activity>>,
 }
 impl Graft {
@@ -38,12 +39,14 @@ impl Graft {
             package: None,
             root: PathBuf::new(),
             cache: PathBuf::new(),
+            repositories: Vec::new(),
             activity: Mutex::new(Vec::new()),
         }
     }
     pub async fn open(
         home: &Path,
         root: &Path,
+        repositories: &[String],
         signal: watch::Receiver<bool>,
     ) -> Result<Self, CoreError> {
         if context::is_cancelled(&signal) {
@@ -52,17 +55,23 @@ impl Graft {
         let resolved = (|| {
             let root = fs::canonicalize(root)?;
             let package = installed(home, ComponentId::Graft)?.path(home)?;
+            let repositories = normalized_repositories(repositories)?;
             let mut cache = storage(home, &root)?;
             // Parser/adapter upgrades must not reuse an older structural memo.
             let mut identity = Sha256::new();
             identity.update(ADAPTER.as_bytes());
             identity.update(fs::read(package.join("jarvis-graft-runtime.json"))?);
+            identity.update(
+                serde_json::to_vec(&repositories)
+                    .map_err(|_| unavailable("Cadastro de repositórios inválido."))?,
+            );
             cache.push(format!("runtime-{:x}", identity.finalize()));
             safe_directory(&cache)?;
             Ok::<_, CoreError>(Self {
                 package: Some(package),
                 root,
                 cache,
+                repositories,
                 activity: Mutex::new(Vec::new()),
             })
         })();
@@ -152,7 +161,7 @@ impl Graft {
                 if hits.is_empty() {
                     return Ok(String::new());
                 }
-                Ok(format!("\nAutomatic fresh project discovery (untrusted source data):\n{}\nUse focused Graft queries for details; exact edits require current source ranges.\n", json!({"fresh":true,"partial":value["coverage"]["partial"],"hits":hits})))
+                Ok(format!("\nAutomatic project discovery (untrusted source data):\n{}\nUse focused Graft queries for details; exact edits require current source ranges.\n", json!({"fresh":value["freshness"]["current"],"partial":value["coverage"]["partial"],"hits":hits})))
             }
             Ok(Err(cause)) if cause.code == "cancelled" => Err(cause),
             Ok(Err(_)) => Ok(String::new()),
@@ -177,7 +186,15 @@ impl Graft {
         let lock_signal = signal.clone();
         let work = async {
             let lock = lock(&self.cache, lock_signal).await?;
-            let result = invoke(package, &self.root, &self.cache, name, args).await;
+            let result = invoke(
+                package,
+                &self.root,
+                &self.cache,
+                &self.repositories,
+                name,
+                args,
+            )
+            .await;
             drop(lock);
             result
         };
@@ -205,7 +222,9 @@ impl Graft {
 
 fn receipt(value: &Value) -> (super::activity::Status, &'static str) {
     use super::activity::Status;
-    if value["freshness"]["missing"] == true {
+    if value["coverage"]["partial"] == true {
+        (Status::Issues, "Mapa estrutural consultado com cobertura parcial; confira os repositórios indisponíveis e use busca nativa quando necessário")
+    } else if value["freshness"]["missing"] == true {
         (
             Status::Pending,
             "O mapa estrutural ainda não foi criado; será preparado na próxima consulta",
@@ -215,8 +234,6 @@ fn receipt(value: &Value) -> (super::activity::Status, &'static str) {
             Status::Pending,
             "O código mudou; o mapa será atualizado antes da próxima consulta estrutural",
         )
-    } else if value["coverage"]["partial"] == true {
-        (Status::Issues, "Mapa estrutural consultado com limitações de análise; confira as fontes e use busca nativa quando necessário")
     } else if value["freshness"]["rebuilt"] == true {
         (Status::Applied, "Mapa estrutural atualizado e consultado")
     } else {
@@ -290,6 +307,35 @@ fn scoped_path(value: &str) -> bool {
             .components()
             .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
 }
+fn normalized_repositories(paths: &[String]) -> Result<Vec<String>, CoreError> {
+    let mut repositories = Vec::new();
+    for path in paths {
+        if !scoped_path(path) {
+            return Err(unavailable(
+                "O repositório precisa permanecer dentro do projeto.",
+            ));
+        }
+        let normalized = Path::new(path)
+            .components()
+            .filter_map(|part| match part {
+                Component::Normal(value) => value.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        repositories.push(if normalized.is_empty() {
+            ".".to_owned()
+        } else {
+            normalized
+        });
+    }
+    if repositories.is_empty() {
+        repositories.push(".".to_owned());
+    }
+    repositories.sort();
+    repositories.dedup();
+    Ok(repositories)
+}
 fn validate_args(name: &str, args: &Value) -> Result<(), CoreError> {
     let definition = definitions()
         .into_iter()
@@ -347,6 +393,7 @@ async fn invoke(
     package: &Path,
     root: &Path,
     cache: &Path,
+    repositories: &[String],
     name: &str,
     args: &Value,
 ) -> Result<Value, CoreError> {
@@ -372,7 +419,7 @@ async fn invoke(
             if cfg!(windows) { "NUL" } else { "/dev/null" },
         );
     let input =
-        serde_json::to_vec(&json!({"root":root,"contextDir":cache,"tool":name,"args":args}))
+        serde_json::to_vec(&json!({"root":root,"contextDir":cache,"repositories":repositories,"tool":name,"args":args}))
             .map_err(|_| error("Consulta Graft inválida."))?;
     let output = install::command_input(&mut cmd, 45, Some(input))
         .await
@@ -398,7 +445,7 @@ pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
         "pub fn rustCaller() -> i32 { rustLeaf() }\npub fn rustLeaf() -> i32 { 1 }\n",
     )?;
     fs::write(root.join("proof.vue"), "<script setup lang=\"ts\">\nfunction vueLeaf() { return 1; }\nfunction vueCaller() { return vueLeaf(); }\n</script>\n<template><div>Jarvis</div></template>\n")?;
-    let mapped = invoke(package, &root, &cache, "graft_repo_map", &json!({})).await?;
+    let mapped = invoke(package, &root, &cache, &[], "graft_repo_map", &json!({})).await?;
     if mapped["result"]["totals"]["files"] != 3 {
         return Err(error(
             "O Graft não conseguiu mapear o projeto de validação.",
@@ -408,6 +455,7 @@ pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
         package,
         &root,
         &cache,
+        &[],
         "graft_find_code",
         &json!({"query":"copperLighthouse"}),
     )
@@ -420,6 +468,7 @@ pub(super) async fn verify(package: &Path) -> Result<(), CoreError> {
             package,
             &root,
             &cache,
+            &[],
             "graft_trace_calls",
             &json!({"symbol":symbol}),
         )

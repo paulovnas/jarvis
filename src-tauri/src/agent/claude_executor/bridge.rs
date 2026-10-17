@@ -96,7 +96,17 @@ impl<'a> Bridge<'a> {
         {
             crate::core::graft::Graft::inactive()
         } else {
-            crate::core::graft::Graft::open(home, &session.root, signal.clone()).await?
+            let repositories = if owner.global() {
+                Vec::new()
+            } else {
+                crate::library::repositories::configured_paths(
+                    runtime.state,
+                    home,
+                    owner.project_id()?,
+                )?
+            };
+            crate::core::graft::Graft::open(home, &session.root, &repositories, signal.clone())
+                .await?
         };
         let user = session
             .data

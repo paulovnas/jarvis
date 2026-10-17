@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { enabledModels, type ProviderAccount } from "@/core/provider-accounts";
+import type { ProviderAccount } from "@/core/provider-accounts";
 import { webSearchConfigSchema } from "@/core/web-search";
-import { modelProblem } from "@/core/provider-references";
+import { compatibleModels, modelProblem } from "@/core/provider-references";
 import { useModelProblemNotice } from "@/hooks/use-provider-references";
 import { museModels } from "@/core/executors";
 import { useMuseRuntime } from "@/hooks/use-muse-runtime";
@@ -38,13 +38,12 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
     }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; mounted.current = false; };
   }, [kind, retry]);
-  const supports = (provider: ProviderAccount, model: string) => provider.providerKind === "custom" ? kind === "vision" && provider.custom?.models.some(item => item.id === model && item.supportsImages) : kind === "vision" ? /^(gpt-|gemini-|claude|o3|o4)/.test(model) : provider.providerKind === "openai-codex" || model.startsWith("gemini-");
-  const compatible = accounts.filter(account => account.enabled && (imageGeneration ? account.providerKind === "antigravity" : enabledModels(account).some(model => supports(account, model.id))));
+  const compatible = accounts.filter(account => compatibleModels(account, kind).length > 0);
   const selected = compatible.find(account => account.alias === config.accountAlias);
   const museSelected = kind === "web_search" && config.executor === "muse" && !config.inheritChat;
   const museCatalog = museModels(muse.data).map(model => ({ id: model.value, name: model.label }));
   const museAvailable = Boolean(muse.data?.installed && muse.data.authenticated && museCatalog.length && !muse.error && !muse.data.error);
-  const models = museSelected ? museCatalog : imageGeneration ? [imageModel] : selected ? enabledModels(selected).filter(model => supports(selected, model.id)) : [];
+  const models = museSelected ? museCatalog : imageGeneration ? [imageModel] : selected ? compatibleModels(selected, kind) : [];
   const unavailable = !museSelected && config.accountAlias !== null && !selected;
   const museProblem = muse.error ?? (muse.data?.preferences?.enabled === false ? "Ative o Muse Code em Configurações → Provedores." : !muse.data?.installed ? "Instale o Muse Code em Configurações → Provedores." : !muse.data.authenticated ? "Conecte sua assinatura Muse Code em Configurações → Provedores." : muse.data.error ?? (!museCatalog.some(model => model.id === config.model) ? "O modelo de busca do Muse Code está indisponível. Selecione outro modelo." : null));
   const problem = loading || error || config.inheritChat ? null : museSelected ? muse.loading ? null : museProblem : config.accountAlias ? modelProblem({ account: config.accountAlias, model: imageGeneration ? imageModel.id : config.model ?? "", reasoning: null }, accounts, kind) : null;
@@ -72,7 +71,7 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange 
           if (value === OFF || value === INHERIT) { void save({ executor: "jarvis", accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
           if (value === MUSE) { if (museAvailable) void save({ executor: "muse", accountAlias: null, model: museCatalog[0].id, inheritChat: false }); return; }
           const account = compatible.find(item => item.alias === value);
-          const model = imageGeneration ? imageModel : account && enabledModels(account).find(item => supports(account, item.id));
+          const model = imageGeneration ? imageModel : account && compatibleModels(account, kind)[0];
           if (!model) { toast.error("Nenhum modelo disponível nesta conta."); return; }
           void save({ executor: "jarvis", accountAlias: value, model: model.id, inheritChat: false });
         }}>

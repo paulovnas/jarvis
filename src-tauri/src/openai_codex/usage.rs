@@ -29,6 +29,8 @@ pub struct UsageWindow {
     pub(crate) duration_seconds: Option<f64>,
     pub(crate) remaining_percent: Option<f64>,
     pub(crate) resets_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) next_recovery_at: Option<i64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +48,7 @@ pub struct AccountUsage {
     pub(crate) plan: Option<String>,
     pub(crate) windows: Vec<UsageWindow>,
     pub(crate) reset_credits: Option<ResetCredits>,
+    pub(crate) credit_balance: Option<f64>,
     pub(crate) error: Option<String>,
 }
 
@@ -83,6 +86,7 @@ fn alert_notices(
     let provider = match record.provider_kind.as_str() {
         "antigravity" => "Antigravity",
         "opencode-go" => "OpenCode Go",
+        "charm-hyper" => "Charm Hyper",
         _ => "OpenAI Codex",
     };
     let alias = record.display_name.as_deref().unwrap_or(&record.alias);
@@ -96,7 +100,10 @@ fn alert_notices(
                 && window
                     .remaining_percent
                     .is_some_and(|remaining| remaining <= f64::from(alert.remaining_percent))
-                && window.resets_at.is_some_and(|reset| reset > now)
+                && window
+                    .resets_at
+                    .or(window.next_recovery_at)
+                    .is_some_and(|reset| reset > now)
                 && (record.provider_kind != "openai-codex" || window.group == "Codex")
                 && (!window.third_party || record.show_third_party_usage)
         })
@@ -339,6 +346,14 @@ impl OpenAiCodexState {
                 &record.alias,
             );
         }
+        if record.provider_kind == "charm-hyper" {
+            return super::charm_hyper::credential(
+                state,
+                home,
+                self.manager.secret_store.as_ref(),
+                &record.alias,
+            );
+        }
         let mut credential = self.manager.secret_store.load(&record.alias).map_err(|_| {
             ProviderError::new(
                 "credential_missing",
@@ -376,7 +391,7 @@ impl OpenAiCodexState {
                     && record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go"
+                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
                     )
             })
             .ok_or_else(unavailable)?;
@@ -397,6 +412,7 @@ impl OpenAiCodexState {
             plan: None,
             windows: vec![],
             reset_credits: None,
+            credit_balance: None,
             error: None,
         };
         let result = (|| {
@@ -410,7 +426,13 @@ impl OpenAiCodexState {
                 .build()
                 .map_err(|_| unavailable())?;
             let now = current_time_millis()?;
-            if record.provider_kind == "antigravity" {
+            if record.provider_kind == "charm-hyper" {
+                usage.credit_balance = Some(super::charm_hyper::credits(
+                    &client,
+                    super::charm_hyper::BASE_URL,
+                    &credential.access,
+                )?);
+            } else if record.provider_kind == "antigravity" {
                 google(&client, &antigravity::ENDPOINTS, &credential, &mut usage)?;
             } else if record.provider_kind == "opencode-go" {
                 usage.windows = go::fetch_windows(
@@ -448,7 +470,7 @@ pub async fn get_provider_usage(
     let query_oauth = oauth.clone();
     let query_state = state.clone();
     let query_home = home.clone();
-    let (usage, record) = tauri::async_runtime::spawn_blocking(move || {
+    let (mut usage, record) = tauri::async_runtime::spawn_blocking(move || {
         let usage = query_oauth.account_usage(&query_state, &query_home, &alias)?;
         let record = query_state
             .list_provider_accounts(&query_home)
@@ -460,6 +482,24 @@ pub async fn get_provider_usage(
     })
     .await
     .map_err(|_| ProviderError::internal())??;
+    if record.provider_kind == "charm-hyper" {
+        let result = match super::charm_hyper::panel::usage(
+            &app,
+            &state,
+            &home,
+            &oauth,
+            &record.alias,
+        )
+        .await
+        {
+            Ok(Some(data)) => super::charm_hyper::quotas::apply(&data, &mut usage),
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            usage.error = Some(error.message);
+        }
+    }
     let now = current_time_millis()?;
     if crate::system::notifications_enabled(&app) {
         if let Some(notice) = claim_alert_notice(&oauth.manager.usage_cache, &record, &usage, now)?
@@ -539,7 +579,7 @@ pub(super) fn save_alert(
         .map_err(|_| ProviderError::database())?;
     let changed = transaction
         .execute(
-            "UPDATE provider_accounts SET usage_alert_window=?2, usage_alert_threshold=?3 WHERE alias=?1 AND provider_kind IN ('openai-codex', 'antigravity', 'opencode-go')",
+            "UPDATE provider_accounts SET usage_alert_window=?2, usage_alert_threshold=?3 WHERE alias=?1 AND provider_kind IN ('openai-codex', 'antigravity', 'opencode-go', 'charm-hyper')",
             rusqlite::params![alias, window, threshold],
         )
         .map_err(|_| ProviderError::database())?;

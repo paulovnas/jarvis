@@ -13,8 +13,9 @@ export const reasoningLabels = {
   budget: "Thinking · orçamento de tokens",
   adaptive: "Thinking · adaptativo",
 } as const;
+export const customModelIdSchema = z.string().min(1).max(200).refine(id => id.trim().length > 0 && [...id].every(char => { const code = char.charCodeAt(0); return code >= 32 && (code < 127 || code > 159); }), "Informe o ID literal, sem caracteres de controle.");
 export const customModelSchema = z.object({
-  id: z.string().min(1).max(200).regex(/^\S+$/),
+  id: customModelIdSchema,
   name: z.string().trim().min(1).max(120),
   contextWindow: z.number().int().min(4096).max(100_000_000),
   maxOutputTokens: z.number().int().positive().max(10_000_000),
@@ -34,6 +35,26 @@ export const customConfigSchema = z.object({
 });
 export type CustomConfig = z.infer<typeof customConfigSchema>;
 export type CustomModel = z.infer<typeof customModelSchema>;
+export const customCatalogModelSchema = z.object({
+  id: customModelIdSchema,
+  name: z.string().min(1).max(120),
+  contextWindow: z.number().nullable(),
+  maxOutputTokens: z.number().nullable(),
+  supportsTools: z.boolean().nullable(),
+  supportsImages: z.boolean().nullable(),
+  reasoningLevels: z.array(z.object({ value: customModelSchema.shape.reasoningLevels.element, display: z.string().min(1).max(120) })).default([]),
+  defaultReasoningLevel: z.string().nullable().default(null),
+});
+export const customCatalogSchema = z.object({ models: z.array(customCatalogModelSchema).max(10_000) });
+export type CustomCatalogModel = z.infer<typeof customCatalogModelSchema>;
+export function normalizeCustomBaseUrl(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    if (url.pathname.replace(/\/+$/, "")) return baseUrl;
+    url.pathname = "/v1";
+    return url.toString();
+  } catch { return baseUrl; }
+}
 export const discoveredModelSchema = z.object({ model: customModelSchema, sourceUrl: z.string().url(), tokenField: z.enum(["max_tokens", "max_completion_tokens"]) });
 export function supportsModelLookup(baseUrl: string): boolean {
   try {
@@ -53,7 +74,6 @@ export function validateCustomProvider(alias: string, config: CustomConfig, apiK
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password || url.search || url.hash) return "Use HTTPS (HTTP apenas local), sem credenciais ou parâmetros na URL.";
   if (new Set(config.models.map(m => m.id)).size !== config.models.length) return "Os IDs dos modelos precisam ser únicos.";
   for (const model of config.models) {
-    if (model.maxOutputTokens >= model.contextWindow) return `${model.name}: a saída deve ser menor que a janela de contexto.`;
     if (!reasoningFormats(config.protocol).includes(model.reasoning)) return `${model.name}: formato de raciocínio incompatível com o endpoint.`;
     if (model.reasoning !== "none" && (!model.reasoningLevels.length || !model.defaultReasoningLevel || !model.reasoningLevels.includes(model.defaultReasoningLevel))) return `${model.name}: informe os níveis aceitos e selecione o padrão.`;
     if (new Set(model.reasoningLevels).size !== model.reasoningLevels.length) return `${model.name}: remova níveis repetidos.`;

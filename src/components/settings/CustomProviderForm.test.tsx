@@ -7,6 +7,37 @@ import { customAccountFixture } from "@/test/custom-provider-fixtures";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => { invoke.mockReset(); });
+it("salva modelos importados com IDs literais e preserva as configurações existentes", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture(); const onSaved = vi.fn();
+  invoke.mockImplementation((command: string) => Promise.resolve(command === "discover_custom_models" ? { models: [{ id: "Opus 5.5", name: "Opus", contextWindow: 32000, maxOutputTokens: 2000, supportsTools: true, supportsImages: false }] } : account));
+  render(<CustomProviderForm account={account} onSaved={onSaved} onCancel={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Descobrir modelos" }));
+  await user.click(await screen.findByRole("button", { name: /Importar modelos selecionados/ }));
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ apiKey: null, config: expect.objectContaining({ models: [account.custom!.models[0], expect.objectContaining({ id: "Opus 5.5", supportsTools: true })] }) }));
+});
+it("importa no cadastro inicial substituindo somente a linha vazia", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture();
+  invoke.mockImplementation((command: string) => Promise.resolve(command === "discover_custom_models" ? { models: [{ id: "Opus 5.5", name: "Opus", contextWindow: 32000, maxOutputTokens: 2000, supportsTools: true, supportsImages: false }] } : account));
+  render(<CustomProviderForm onSaved={vi.fn()} onCancel={vi.fn()} />);
+  for (const [label, value] of [["Alias completo", "gateway"], ["URL base", "https://gateway.example"], ["Chave de API", "synthetic-key"]]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  await user.click(screen.getByRole("button", { name: "Descobrir modelos" }));
+  await user.click(await screen.findByRole("button", { name: /Importar modelos selecionados/ }));
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ config: expect.objectContaining({ models: [expect.objectContaining({ id: "Opus 5.5" })] }) })));
+});
+it("preserva a raiz sem versão de provedores existentes e completa novas raízes", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture(); account.custom!.baseUrl = "https://legacy.example";
+  invoke.mockResolvedValue(account);
+  render(<CustomProviderForm account={account} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  fireEvent.blur(screen.getByLabelText("URL base"));
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ config: expect.objectContaining({ baseUrl: "https://legacy.example" }) }));
+  fireEvent.change(screen.getByLabelText("URL base"), { target: { value: "https://new.example" } });
+  fireEvent.blur(screen.getByLabelText("URL base"));
+  expect(screen.getByLabelText("URL base")).toHaveValue("https://new.example/v1");
+});
 it("preserva a edição quando o cofre Linux está bloqueado e permite tentar novamente", async () => {
   const user = userEvent.setup(); const account = customAccountFixture(); const onSaved = vi.fn();
   invoke.mockRejectedValueOnce({ code: "secret_store", message: "Desbloqueie o cofre de credenciais do Linux e tente novamente." }).mockResolvedValue(account);
@@ -140,7 +171,7 @@ it("abre configuração manual com ajuda quando o catálogo não encontra o mode
   expect(await screen.findByRole("alert", {}, { timeout: 1000 })).toHaveTextContent("Modelo não encontrado");
   expect(screen.getByLabelText("Contexto (tokens) · modelo 1")).toHaveValue(64000);
   await user.hover(screen.getByRole("button", { name: "Ajuda: Contexto (tokens) · modelo 1" }));
-  expect(await screen.findByText(/Total que cabe na conversa/, {}, { timeout: 1000 })).toHaveTextContent("context_length");
+  expect(await screen.findByText(/Limite de contexto informado pela API/, {}, { timeout: 1000 })).toHaveTextContent("context_length");
   fireEvent.change(screen.getByLabelText("Contexto (tokens) · modelo 1"), { target: { value: "100000" } });
   expect(screen.getByLabelText("Saída máxima (tokens) · modelo 1")).toBeVisible();
 });

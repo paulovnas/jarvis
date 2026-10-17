@@ -195,7 +195,7 @@ describe("Home shell", () => {
     expect(screen.queryByRole("dialog", { name: "Configurações" })).not.toBeInTheDocument();
     expect(field).toHaveTextContent("Continue daqui");
   });
-  it.each(["openai-codex", "opencode-go"])("reloads %s models from the composer without reconnecting the account", async providerKind => {
+  it.each(["openai-codex", "opencode-go", "charm-hyper"])("reloads %s models from the composer without reconnecting the account", async providerKind => {
     const user = userEvent.setup();
     const account: ProviderAccount = { alias: `${providerKind}-pessoal`, providerKind, enabled: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "old", name: "Antigo", reasoningLevels: [], defaultReasoningLevel: null }] };
     accountsMock.mockResolvedValueOnce([account]).mockResolvedValueOnce([{ ...account, models: [{ id: "gpt-6-sol", name: "GPT 6 Sol", reasoningLevels: ["high"], defaultReasoningLevel: "high" }] }]);

@@ -2,6 +2,46 @@ use super::*;
 use crate::openai_codex::InMemorySecretStore;
 use crate::persistence;
 
+#[test]
+fn literal_model_ids_round_trip_for_all_protocols_without_sanitizing() {
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        let mut value = config(protocol);
+        value.models[0].id = "Opus 5.5".into();
+        value.models.push(Model {
+            id: "opus 5.5".into(),
+            ..value.models[0].clone()
+        });
+        assert!(value.validate().is_ok());
+        let decoded: Config =
+            serde_json::from_value(serde_json::to_value(&value).unwrap()).unwrap();
+        assert_eq!(decoded.catalog()[0].id, "Opus 5.5");
+        for id in ["", "   ", "model\nname", "model\tname", "model\0name"] {
+            value.models[0].id = id.into();
+            assert!(value.validate().is_err());
+        }
+    }
+}
+
+#[test]
+fn saved_bare_inference_roots_keep_their_original_routes_for_all_protocols() {
+    for (protocol, route) in [
+        (Protocol::OpenaiCompletions, "chat/completions"),
+        (Protocol::OpenaiResponses, "responses"),
+        (Protocol::AnthropicMessages, "messages"),
+    ] {
+        let mut value = config(protocol);
+        value.base_url = "https://gateway.example/".into();
+        assert_eq!(
+            value.endpoint().unwrap().as_str(),
+            format!("https://gateway.example/{route}")
+        );
+    }
+}
+
 pub(crate) fn config(protocol: Protocol) -> Config {
     Config {
         base_url: "https://gateway.example/v1".into(),
@@ -45,7 +85,7 @@ fn config_requires_explicit_limits_unique_models_and_protocol_specific_reasoning
         (0, 1),
         (4095, 1),
         (64_000, 0),
-        (64_000, 64_000),
+        (64_000, 10_000_001),
         (100_000_001, 4000),
     ] {
         let mut bad = valid.clone();
@@ -66,6 +106,25 @@ fn config_requires_explicit_limits_unique_models_and_protocol_specific_reasoning
     assert!(thinking.validate().is_ok());
     thinking.models[0].thinking_budget = Some(4000);
     assert!(thinking.validate().is_err());
+}
+
+#[test]
+fn independent_input_and_output_limits_are_preserved_for_all_protocols() {
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        for output in [512_000, 600_000] {
+            let mut value = config(protocol);
+            value.models[0].context_window = 512_000;
+            value.models[0].max_output_tokens = output;
+            value.validate().unwrap();
+            let decoded: Config =
+                serde_json::from_value(serde_json::to_value(&value).unwrap()).unwrap();
+            assert_eq!(decoded.models[0].max_output_tokens, output);
+        }
+    }
 }
 #[test]
 fn endpoint_keeps_gateway_paths_and_rejects_credentials_or_wrong_protocol() {
@@ -249,7 +308,8 @@ fn custom_inference_uses_offline_catalog_and_never_refreshes_api_keys() {
     let home = tempfile::tempdir().unwrap();
     let state = AppState::default();
     let store = Arc::new(InMemorySecretStore::default());
-    let initial = config(Protocol::OpenaiCompletions);
+    let mut initial = config(Protocol::OpenaiCompletions);
+    initial.models[0].id = "Opus 5.5".into();
     let alias = "Gateway";
     state
         .with_connection(home.path(), |db| {

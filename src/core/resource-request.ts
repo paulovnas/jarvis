@@ -21,6 +21,7 @@ const deadlines = {
   check_skill_updates: 120_000,
   test_mcp_server: 100_000,
   lookup_custom_model: 30_000,
+  discover_custom_models: 30_000,
 } as const;
 
 export class ResourceTimeoutError extends Error {

@@ -172,6 +172,7 @@ it.each([undefined, false])("keeps saved Fast neutral until current OpenAI capab
 it.each([
   { providerKind: "custom", executor: undefined },
   { providerKind: "opencode-go", executor: undefined },
+  { providerKind: "charm-hyper", executor: undefined },
   { providerKind: "openai-codex", executor: "claude" as const },
 ])("reports incompatible saved Fast even with a stale $providerKind catalog and $executor executor", ({ providerKind, executor }) => {
   const group = { ...fastGroups[0], providerKind, executor, modelsStale: true };

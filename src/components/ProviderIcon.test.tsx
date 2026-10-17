@@ -3,6 +3,14 @@ import { expect, it } from "vitest";
 import { ProviderIcon } from "./ProviderIcon";
 import openCodeMark from "../../public/provider-opencode-go.svg?raw";
 
+it("identifies Charm Hyper without falling back to the OpenAI mark", () => {
+  const { container } = render(<ProviderIcon kind="charm-hyper" className="size-4 text-primary" />);
+  expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");
+  expect(container.firstElementChild).toHaveClass("size-4", "text-primary");
+  expect(container.querySelector("svg")).toBeInTheDocument();
+  expect(container.firstElementChild).not.toHaveAttribute("style");
+});
+
 it("loads OpenCode branding with the same compact size and inherited color as other providers", () => {
   const { container } = render(<ProviderIcon kind="opencode-go" className="size-4 text-primary" />);
   expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");

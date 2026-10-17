@@ -1,5 +1,104 @@
 use super::*;
 
+#[test]
+fn literal_model_ids_are_sent_unchanged_in_every_custom_request_body() {
+    for protocol in [
+        Protocol::OpenaiResponses,
+        Protocol::OpenaiCompletions,
+        Protocol::AnthropicMessages,
+    ] {
+        let mut config = config(protocol);
+        for id in ["Opus 5.5", "GPT-5.6", "vendor/Meu Modelo-4.7"] {
+            config.models[0].id = id.into();
+            let mut options = options();
+            options.model = id.into();
+            let body =
+                request::body(&config, &config.models[0], &options, "", history(), vec![]).unwrap();
+            assert_eq!(body["model"], id);
+        }
+    }
+}
+
+#[test]
+fn independent_output_maxima_fit_each_request_without_changing_catalog_limits() {
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        let mut config = config(protocol);
+        config.models[0].context_window = 512_000;
+        config.models[0].max_output_tokens = 512_000;
+        let tools = vec![tool()];
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options(),
+            "Instructions",
+            history(),
+            tools,
+        )
+        .unwrap();
+        let field = if protocol == Protocol::OpenaiResponses {
+            "max_output_tokens"
+        } else {
+            "max_tokens"
+        };
+        let output = body[field].as_u64().unwrap();
+        assert!(output > 400_000 && output < 512_000);
+        assert!(output + crate::agent::compaction::estimate(&body) + 64 <= 512_000);
+        assert_eq!(config.models[0].max_output_tokens, 512_000);
+    }
+    let mut config = config(Protocol::AnthropicMessages);
+    config.models[0].context_window = 4096;
+    config.models[0].reasoning = Reasoning::Budget;
+    config.models[0].reasoning_levels = vec!["on".into()];
+    config.models[0].default_reasoning_level = Some("on".into());
+    config.models[0].thinking_budget = Some(3500);
+    let error = request::body(
+        &config,
+        &config.models[0],
+        &options(),
+        &"x".repeat(3000),
+        history(),
+        vec![tool()],
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "context_overflow");
+}
+
+#[test]
+fn output_fitting_counts_image_parts_without_treating_binary_base64_as_text() {
+    let data = "A".repeat(2 * 1024 * 1024);
+    for protocol in [
+        Protocol::OpenaiCompletions,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        let config = config(protocol);
+        let input = vec![
+            json!({"role":"user","content":[{"type":"input_image","image_url":format!("data:image/png;base64,{data}")},{"type":"input_text","text":"Describe this image"}]}),
+        ];
+        let body = request::body(
+            &config,
+            &config.models[0],
+            &options(),
+            "Instructions",
+            input,
+            vec![],
+        )
+        .unwrap();
+        let field = if protocol == Protocol::OpenaiResponses {
+            "max_output_tokens"
+        } else {
+            "max_tokens"
+        };
+        assert_eq!(body[field], 4000);
+        assert!(crate::agent::compaction::estimate(&body) < 5000);
+        assert!(body.to_string().contains(&data));
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod go_live;
 

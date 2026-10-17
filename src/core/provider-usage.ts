@@ -6,28 +6,31 @@ export const usageWindowSchema = z.object({
   durationSeconds: z.number().positive().nullable(),
   remainingPercent: z.number().min(0).max(100).nullable(),
   resetsAt: z.number().nullable(),
+  nextRecoveryAt: z.number().finite().nonnegative().nullable().default(null),
 });
 export const accountUsageSchema = z.object({
   alias: z.string(), fetchedAt: z.number().nullable(), email: z.string().nullable(), plan: z.string().nullable(),
   displayName: z.string().refine(value => validateProviderDisplayName(value) === null).nullable().optional(),
   windows: z.array(usageWindowSchema), error: z.string().nullable(),
+  creditBalance: z.number().finite().nonnegative().nullable().optional(),
   resetCredits: z.object({ availableCount: z.number().int().nonnegative(), expirations: z.array(z.number().nullable()), detailsAvailable: z.boolean() }).nullable(),
 });
-export type AccountUsage = z.infer<typeof accountUsageSchema>;
-export type UsageWindow = z.infer<typeof usageWindowSchema>;
+export type AccountUsage = z.input<typeof accountUsageSchema>;
+export type UsageWindow = z.input<typeof usageWindowSchema>;
 export type UsageAlertWindow = "five_hour" | "weekly";
 
 export function availableUsageAlertWindows(windows: UsageWindow[], includeThirdParty: boolean): UsageAlertWindow[] {
   const available = new Set<UsageAlertWindow>();
   for (const window of windows) {
-    if ((window.thirdParty && !includeThirdParty) || window.remainingPercent === null || window.resetsAt === null) continue;
+    const event = window.resetsAt ?? window.nextRecoveryAt;
+    if ((window.thirdParty && !includeThirdParty) || window.remainingPercent === null || event == null || !Number.isFinite(event) || event <= 0) continue;
     if (window.durationSeconds === 18_000) available.add("five_hour");
     if (window.durationSeconds === 604_800) available.add("weekly");
   }
   const order: UsageAlertWindow[] = ["five_hour", "weekly"];
   return order.filter(window => available.has(window));
 }
-export function aliasSuffix(alias: string) { return alias.replace(/^(openai-codex|antigravity|opencode-go)-/, ""); }
+export function aliasSuffix(alias: string) { return alias.replace(/^(openai-codex|antigravity|opencode-go|charm-hyper)-/, ""); }
 export function planLabel(plan: string | null | undefined, accountType: string) {
   if (plan) {
     const value = plan.toLowerCase();
@@ -55,7 +58,7 @@ export function expectedQuotaRemaining(window: UsageWindow, now: number): number
   const { remainingPercent, resetsAt } = window;
   // shortcut: Go monthly pacing uses a 30-day estimate; use provider cycle bounds when available.
   const durationSeconds = window.durationSeconds ?? (window.id === "monthly" && window.group === "OpenCode Go" ? 30 * 86_400 : null);
-  if (remainingPercent === null || durationSeconds === null || resetsAt === null) return null;
+  if (remainingPercent === null || durationSeconds === null || resetsAt === null || window.nextRecoveryAt != null) return null;
   const remaining = resetsAt - now, duration = durationSeconds * 1000;
   if (![remainingPercent, remaining, duration].every(Number.isFinite) || duration <= 0 || remaining <= 0 || remaining > duration) return null;
   return remaining / duration * 100;

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { accountUsageSchema, aliasSuffix, availableUsageAlertWindows, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining } from "./provider-usage";
+import { accountUsageSchema, aliasSuffix, availableUsageAlertWindows, planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, usageWindowSchema } from "./provider-usage";
 import { shortId } from "./dashboard";
 
 it("preserves optional usage display names and rejects invalid new names without restricting legacy aliases", () => {
@@ -7,6 +7,17 @@ it("preserves optional usage display names and rejects invalid new names without
   expect(accountUsageSchema.parse(usage)).toEqual(usage);
   expect(accountUsageSchema.parse({ ...usage, displayName: "Conta principal" })).toEqual({ ...usage, displayName: "Conta principal" });
   expect(accountUsageSchema.safeParse({ ...usage, displayName: "x".repeat(19) }).success).toBe(false);
+});
+
+it("accepts a reported Hypercredits balance without creating quota windows", () => {
+  const usage = { alias: "charm-hyper-pessoal", fetchedAt: 1, email: null, plan: null, windows: [], error: null, resetCredits: null };
+  for (const creditBalance of [0, 173, 12.5, null]) {
+    expect(accountUsageSchema.parse({ ...usage, creditBalance })).toEqual({ ...usage, creditBalance });
+  }
+  for (const creditBalance of [-1, Number.NaN, Infinity, "173"]) {
+    expect(accountUsageSchema.safeParse({ ...usage, creditBalance }).success).toBe(false);
+  }
+  expect(aliasSuffix(usage.alias)).toBe("pessoal");
 });
 
 it("keeps the complete alias suffix and formats only available quota data", () => {
@@ -75,4 +86,19 @@ it("derives only alert windows actually returned by the provider", () => {
   ], false)).toEqual(["five_hour", "weekly"]);
   expect(availableUsageAlertWindows([{ ...base, id: "third", durationSeconds: 18_000, thirdParty: true }], false)).toEqual([]);
   expect(availableUsageAlertWindows([{ ...base, id: "third", durationSeconds: 18_000, thirdParty: true }], true)).toEqual(["five_hour"]);
+});
+
+it("keeps partial rolling recovery separate from renewal and pacing", () => {
+  const rolling = { id: "five_hour", label: "5h", group: "Charm Hyper", thirdParty: false, durationSeconds: 18_000, remainingPercent: 40, resetsAt: null, nextRecoveryAt: 9_000_000 };
+  expect(usageWindowSchema.parse(rolling)).toEqual(rolling);
+  expect(usageWindowSchema.parse({ ...rolling, nextRecoveryAt: undefined }).nextRecoveryAt).toBeNull();
+  expect(expectedQuotaRemaining(rolling, 0)).toBeNull();
+  expect(quotaReserve(rolling, 0)).toBeNull();
+  expect(expectedQuotaRemaining({ ...rolling, resetsAt: 9_000_000 }, 0)).toBeNull();
+  expect(availableUsageAlertWindows([rolling], false)).toEqual(["five_hour"]);
+  expect(availableUsageAlertWindows([{ ...rolling, nextRecoveryAt: null }], false)).toEqual([]);
+  expect(availableUsageAlertWindows([{ ...rolling, nextRecoveryAt: 0 }], false)).toEqual([]);
+  expect(availableUsageAlertWindows([{ ...rolling, nextRecoveryAt: Number.NaN }], false)).toEqual([]);
+  expect(availableUsageAlertWindows([{ ...rolling, durationSeconds: 3600 }], false)).toEqual([]);
+  expect(availableUsageAlertWindows([{ ...rolling, remainingPercent: null }], false)).toEqual([]);
 });

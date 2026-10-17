@@ -66,6 +66,13 @@ pub(super) fn list(
         .map_err(|_| ProviderError::database())?
         .into_iter()
         .map(|record| {
+            if record.provider_kind == "charm-hyper" {
+                return attach_model_exclusions(
+                    state,
+                    home,
+                    charm_hyper::account(state, home, record)?,
+                );
+            }
             if record.provider_kind == "opencode-go" {
                 return attach_model_exclusions(
                     state,

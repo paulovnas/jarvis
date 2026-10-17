@@ -24,7 +24,7 @@ const beadsResultSchema = z.object({ issues: z.array(z.object({
 })) });
 const modelSettingsSchema = z.record(z.string(), modelChoiceSchema);
 export const remoteChoicesSchema = z.object({ models: companionModelsSchema, catalog: workflowCatalogSchema, defaults: modelSettingsSchema, overrides: modelSettingsSchema });
-export const remoteUsageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code", "muse-code", "opencode-go"]) }));
+export const remoteUsageSchema = z.array(accountUsageSchema.extend({ providerKind: z.enum(["openai-codex", "antigravity", "claude-code", "muse-code", "opencode-go", "charm-hyper"]) }));
 export type RemoteSession = z.infer<typeof sessionSchema>;
 export type RemoteRuntime = z.infer<typeof runtimeSchema>;
 export interface RemoteLibrary { library: LibrarySnapshot; runtime: RemoteRuntime[]; discoveringAttention?: boolean; attentionDiscoveryFailed?: boolean }

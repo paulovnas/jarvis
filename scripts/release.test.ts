@@ -152,6 +152,10 @@ it("uses the current launcher to select a validated release source without repea
   const native = readFileSync(path.join(process.cwd(), ".github/workflows/native-validation.yml"), "utf8");
   for (const required of ["src-tauri/**", "bun.lock", "package.json", "macos-15", "windows-2022", "ubuntu-24.04", "bun scripts/native-validation.ts", "needs.changes.outputs.required == 'true'", "check-linux-keyring.sh"]) expect(native).toContain(required);
   expect(native).toContain("--lib -- system:: secrets::");
+  expect(native).toContain("openai_codex::charm_hyper::");
+  expect(native).toContain("CMAKE_POLICY_DEFAULT_CMP0091=NEW");
+  expect(native).toContain("CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded");
+  expect(native).toContain("cargo clean --manifest-path src-tauri/Cargo.toml --package whisper-rs-sys");
   expect(native).toContain("bun run build:extension");
   expect(native).toContain("github.event_name == 'pull_request' && github.ref || github.sha");
   expect(native).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");

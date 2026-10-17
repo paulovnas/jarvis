@@ -1145,6 +1145,7 @@ describe("Desktop companion", () => {
       { alias: "openai-codex-pessoal", displayName: "Conta principal", providerKind: "openai-codex", label: "Conta principal", name: "OpenAI Codex" },
       { alias: "antigravity-pessoal", providerKind: "antigravity", label: "antigravity-pessoal", name: "Antigravity" },
       { alias: "opencode-go-pessoal", providerKind: "opencode-go", label: "opencode-go-pessoal", name: "OpenCode Go" },
+      { alias: "charm-hyper-pessoal", displayName: "Meu Hyper", providerKind: "charm-hyper", label: "Meu Hyper", name: "Charm Hyper" },
       { alias: "Claude Code", providerKind: "claude-code", label: "Claude Code", name: "Claude Code" },
       { alias: "Muse Code", providerKind: "muse-code", label: "Muse Code", name: "Muse Code" },
       { alias: "conta do trabalho", providerKind: "antigravity", label: "conta do trabalho", name: "Antigravity" },
@@ -1158,6 +1159,18 @@ describe("Desktop companion", () => {
       expect(within(section).getByRole("img", { name: provider.name })).toBeVisible();
       expect(within(section).getByText(provider.label)).toBeVisible();
     }
+  });
+
+  it("shows the reported Hypercredits balance without creating time-window quotas", async () => {
+    accounts = [{ ...account, alias: "charm-hyper-pessoal", displayName: "Meu Hyper", providerKind: "charm-hyper", creditBalance: 173, windows: [], resetCredits: null }];
+    const user = await expanded();
+    await user.click(screen.getByRole("tab", { name: "Limites" }));
+    const section = await screen.findByRole("region", { name: "Limites de Meu Hyper" });
+    expect(within(section).getByRole("img", { name: "Charm Hyper" })).toBeVisible();
+    expect(within(section).getByText("Hypercredits")).toBeVisible();
+    expect(within(section).getByText("173")).toBeVisible();
+    expect(within(section).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(section).queryByText("Nenhuma janela informada.")).not.toBeInTheDocument();
   });
 
   it("keeps both periods, resets and quota pace readable for multiple providers", async () => {

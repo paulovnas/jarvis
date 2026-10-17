@@ -19,6 +19,32 @@ const account: ProviderAccount = { alias: "openai-codex-paulo", providerKind: "o
 const report = (alias: string): AccountUsage => ({ alias, fetchedAt: Date.now(), email: account.email, plan: "pro", error: null, resetCredits: { availableCount: 1, expirations: [Date.now() + 86400_000], detailsAvailable: true }, windows: [{ id: "weekly", group: "Codex", thirdParty: false, label: "7d", durationSeconds: 604800, remainingPercent: 36, resetsAt: Date.now() + 60_000 }] });
 beforeEach(() => { call.mockReset().mockImplementation((_command, args) => Promise.resolve(report((args as { alias: string }).alias))); });
 
+it.each([0, 173.5])("shows %s Hypercredits separately without inventing quota windows", async creditBalance => {
+  const user = userEvent.setup();
+  const hyper = { ...account, alias: "charm-hyper-pessoal", displayName: "Meu Hyper", providerKind: "charm-hyper" };
+  call.mockResolvedValue({ ...report(hyper.alias), email: null, plan: null, creditBalance, windows: [], resetCredits: null });
+  render(<ProviderUsage account={hyper} now={Date.now()} />);
+  const button = screen.getByRole("button", { name: "Limites de Meu Hyper" });
+  await waitFor(() => expect(button).toHaveTextContent(`${creditBalance.toLocaleString("pt-BR")} Hypercredits`));
+  expect(button).not.toHaveTextContent("%");
+  expect(call).toHaveBeenCalledWith("get_provider_usage", { alias: hyper.alias });
+  await user.click(button);
+  const details = await screen.findByRole("dialog", { name: "Limites de Meu Hyper" });
+  expect(within(details).getByText("Charm Hyper · Meu Hyper")).toBeVisible();
+  expect(within(details).getByText("Hypercredits")).toBeVisible();
+  expect(within(details).queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(within(details).queryByText("Nenhuma janela informada.")).not.toBeInTheDocument();
+  expect(within(details).queryByText(/em reserva|em déficit/)).not.toBeInTheDocument();
+});
+
+it("shows rolling Hyper capacity recovery without calling it a renewal or pacing it", () => {
+  render(<WindowBar window={{ id: "five_hour", group: "Charm Hyper", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 40, resetsAt: null, nextRecoveryAt: 9_000_000 }} now={0} stale={false} />);
+  expect(screen.getByRole("progressbar", { name: "Charm Hyper 5h restante" })).toHaveAttribute("aria-valuenow", "40");
+  expect(screen.getByText("Capacidade volta em 2h 30m")).toBeVisible();
+  expect(screen.queryByText(/Renova|Reset|em reserva|em déficit|No ritmo/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
+});
+
 it("uses the display name in quota labels while requesting the stable account alias", async () => {
   const user = userEvent.setup();
   const selected = { ...account, displayName: "Conta principal" };
@@ -80,10 +106,10 @@ it.each([
   }
 });
 
-it.each(["openai-codex", "opencode-go", "claude-code"])("keeps hidden windows in the %s popover and supports an icon-only quota summary", async providerKind => {
+it.each(["openai-codex", "opencode-go", "charm-hyper", "claude-code"])("keeps hidden windows in the %s popover and supports an icon-only quota summary", async providerKind => {
   const user = userEvent.setup();
   const selected = { ...account, providerKind, showFiveHourUsage: false, showWeeklyUsage: true };
-  const group = providerKind === "openai-codex" ? "Codex" : providerKind === "opencode-go" ? "OpenCode Go" : "Claude Code";
+  const group = providerKind === "openai-codex" ? "Codex" : providerKind === "opencode-go" ? "OpenCode Go" : providerKind === "charm-hyper" ? "Charm Hyper" : "Claude Code";
   call.mockImplementation(command => Promise.resolve(command === "get_opencode_go_free_models" ? [] : { ...report(selected.alias), windows: [
     { id: "five_hour", group, thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 88, resetsAt: Date.now() + 9_000_000 },
     { id: "weekly", group, thirdParty: false, label: "7d", durationSeconds: 604_800, remainingPercent: 66, resetsAt: Date.now() + 302_400_000 },

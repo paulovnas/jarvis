@@ -42,12 +42,7 @@ fn validate_target(base_url: &str, model_id: &str) -> Result<(), ProviderError> 
     {
         return Err(error("A busca automática está disponível para o OpenRouter. Para este provedor, use Configurar manualmente."));
     }
-    if model_id.is_empty()
-        || model_id.len() > 200
-        || model_id
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control())
-    {
+    if !super::valid_model_id(model_id) {
         return Err(error("Copie o ID exato da página do modelo no OpenRouter."));
     }
     Ok(())

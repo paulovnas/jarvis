@@ -208,7 +208,7 @@ export function Home() {
         supportsFast: model.supportsFast === true,
       })),
     }));
-  const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity" || account.providerKind === "opencode-go"));
+  const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity" || account.providerKind === "opencode-go" || account.providerKind === "charm-hyper"));
 
   if (emptyWorkspace) {
     return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground">{leftToggle}<InspectorNavigation section="activities" collapsed disabled onSelect={selectInspector} /><div className="flex min-h-0 flex-1 gap-2 px-2 pb-2"><div inert={sidebarCollapsed} aria-hidden={sidebarCollapsed} className={`shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "w-0" : "w-64"}`}><div id="workspace-panel-content" className="h-full w-64 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div></div><EmptyWorkspace workspace={emptyWorkspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;

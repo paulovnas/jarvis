@@ -2077,6 +2077,7 @@ fn unavailable(alias: String, message: String) -> AccountUsage {
         plan: None,
         windows: vec![],
         reset_credits: None,
+        credit_balance: None,
         error: Some(message),
     }
 }
@@ -2093,7 +2094,7 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
                     && account.show_usage
                     && matches!(
                         account.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go"
+                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
                     )
             }) {
                 let app = app.clone();
@@ -2279,6 +2280,7 @@ mod tests {
                 duration_seconds: Some(604_800.0),
                 remaining_percent: Some(78.0),
                 resets_at: Some(302_401_000),
+                next_recovery_at: None,
             });
             let mut expected = serde_json::to_value(&usage).unwrap();
             expected["providerKind"] = provider_kind.into();

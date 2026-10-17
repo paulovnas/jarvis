@@ -60,6 +60,7 @@ pub(super) fn codex_windows(data: &Value, now: i64) -> Vec<UsageWindow> {
                 remaining_percent: number(&value["used_percent"])
                     .map(|used| (100.0 - used).clamp(0.0, 100.0)),
                 resets_at,
+                next_recovery_at: None,
             });
         }
     };
@@ -179,6 +180,7 @@ pub(super) fn google_summary(data: &Value) -> Vec<UsageWindow> {
             duration_seconds,
             remaining_percent: remaining(bucket),
             resets_at: timestamp(&bucket["resetTime"]),
+            next_recovery_at: None,
         });
     };
     let groups = data["groups"].as_array().filter(|groups| {
@@ -232,6 +234,7 @@ pub(super) fn google_models(data: &Value) -> Vec<UsageWindow> {
                     duration_seconds,
                     remaining_percent: remaining(value),
                     resets_at: timestamp(&value["resetTime"]),
+                    next_recovery_at: None,
                 });
             }
         };

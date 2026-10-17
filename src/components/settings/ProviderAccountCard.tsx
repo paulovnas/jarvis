@@ -9,7 +9,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { providerDisplayName, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { providerDisplayName, providerKindLabels, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { ProviderUsageAlertSettings } from "./ProviderUsageAlertSettings";
 import { ProviderUsageWindowSettings } from "./ProviderUsageWindowSettings";
@@ -60,7 +60,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
     return () => { active = false; };
   }, [open]);
   const custom = account.providerKind === "custom";
-  const go = account.providerKind === "opencode-go";
+  const keyProvider = account.providerKind === "opencode-go" || account.providerKind === "charm-hyper";
   const summaryId = useId();
   const activeModels = enabledModels(account);
   const activeModelIds = new Set(activeModels.map(model => model.id));
@@ -99,7 +99,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
                 {!account.enabled ? "Desativada" : account.modelsAvailable ? custom ? "Configurada" : "Conectada" : "Indisponível"}
               </Badge>
             <CardDescription id={summaryId} className="text-xs">
-              {custom ? "Custom" : go ? "OpenCode Go" : account.providerKind === "antigravity" ? "Antigravity" : "OpenAI Codex"} · {modelSummary}
+              {providerKindLabels[account.providerKind] ?? account.providerKind} · {modelSummary}
             </CardDescription>
             </div>
           </div>
@@ -127,7 +127,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </form>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-3 text-xs">
             <dt className="text-muted-foreground">Alias interno</dt><dd className="break-all text-right font-mono">{account.alias}</dd>
-            {custom ? <><dt className="text-muted-foreground">Endpoint</dt><dd className="text-right">{account.custom ? protocolLabels[account.custom.protocol] : "Indisponível"}</dd><dt className="text-muted-foreground">URL base</dt><dd className="break-all text-right font-mono text-xs">{account.custom?.baseUrl}</dd></> : go ? <><dt className="text-muted-foreground">Provedor</dt><dd className="text-right">OpenCode Go</dd><dt className="text-muted-foreground">Autenticação</dt><dd className="text-right">Chave de API da assinatura</dd></> : <><dt className="text-muted-foreground">E-mail</dt>
+            {custom ? <><dt className="text-muted-foreground">Endpoint</dt><dd className="text-right">{account.custom ? protocolLabels[account.custom.protocol] : "Indisponível"}</dd><dt className="text-muted-foreground">URL base</dt><dd className="break-all text-right font-mono text-xs">{account.custom?.baseUrl}</dd></> : keyProvider ? <><dt className="text-muted-foreground">Provedor</dt><dd className="text-right">{providerKindLabels[account.providerKind]}</dd><dt className="text-muted-foreground">Autenticação</dt><dd className="text-right">{account.providerKind === "opencode-go" ? "Chave de API da assinatura" : "Chave de API"}</dd></> : <><dt className="text-muted-foreground">E-mail</dt>
             <dd className="break-all text-right">{account.email ?? "Não informado"}</dd>
             <dt className="text-muted-foreground">Tipo de conta</dt>
             <dd className="text-right">{ACCOUNT_TYPE_LABELS[account.accountType]}</dd></>}
@@ -140,6 +140,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
               <Switch aria-label={`Limites de ${displayName} na statusbar`} checked={account.showUsage !== false} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, show, account.showThirdPartyUsage === true)} className="cursor-pointer" />
             </label>
             {account.providerKind !== "antigravity" && <ProviderUsageWindowSettings
+              accountAlias={account.providerKind === "charm-hyper" ? account.alias : undefined}
               providerName={displayName}
               showFiveHourUsage={account.showFiveHourUsage}
               showWeeklyUsage={account.showWeeklyUsage}
@@ -179,8 +180,8 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <span aria-hidden="true">{account.enabled ? "Ativada" : "Desativada"}</span>
           </label>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {!custom && !go && onReauthorize && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onReauthorize(account); }}><RefreshCw aria-hidden="true" data-icon="inline-start" />Re-autorizar</Button>}
-          {(custom || go) && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />{go ? "Atualizar chave" : "Editar"}</Button>}
+          {!custom && !keyProvider && onReauthorize && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onReauthorize(account); }}><RefreshCw aria-hidden="true" data-icon="inline-start" />Re-autorizar</Button>}
+          {(custom || keyProvider) && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />{keyProvider ? "Atualizar chave" : "Editar"}</Button>}
           <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
             <Unplug aria-hidden="true" data-icon="inline-start" />
             Desconectar

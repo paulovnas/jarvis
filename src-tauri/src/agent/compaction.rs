@@ -85,7 +85,18 @@ fn raw(data: &SessionData) -> Vec<Value> {
 }
 
 // Replay signatures are opaque provider data, not their literal byte-size in tokens.
+fn image_part(value: &Value) -> bool {
+    match value["type"].as_str() {
+        Some("input_image" | "image_url") => value.get("image_url").is_some(),
+        Some("image") => value.get("source").is_some() || value.get("data").is_some(),
+        _ => false,
+    }
+}
+
 fn visible(value: &Value) -> Value {
+    if image_part(value) {
+        return json!({"type":"image","content":"[image omitted from text summary]"});
+    }
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -102,7 +113,19 @@ fn visible(value: &Value) -> Value {
     }
 }
 pub(super) fn estimate(value: &Value) -> u64 {
-    visible(value).to_string().len().div_ceil(3) as u64
+    fn images(value: &Value) -> u64 {
+        if image_part(value) {
+            return 1;
+        }
+        match value {
+            Value::Array(items) => items.iter().map(images).sum(),
+            Value::Object(map) => map.values().map(images).sum(),
+            _ => 0,
+        }
+    }
+    // shortcut: reserve 4096 tokens per normalized image until providers report image budgets.
+    (visible(value).to_string().len().div_ceil(3) as u64)
+        .saturating_add(images(value).saturating_mul(4096))
 }
 
 pub(super) fn input(data: &SessionData) -> Vec<Value> {
@@ -464,6 +487,22 @@ fn summary_options(credential: &CodexCredential, options: &TurnOptions) -> TurnO
     summary
 }
 
+fn summary_credential(credential: &CodexCredential, model_id: &str) -> CodexCredential {
+    let mut credential = credential.clone();
+    if let Some(model) = credential
+        .custom
+        .as_mut()
+        .and_then(|config| config.models.iter_mut().find(|model| model.id == model_id))
+    {
+        model.max_output_tokens = model.max_output_tokens.min(DEFAULT_RESERVE_TOKENS).max(
+            model
+                .thinking_budget
+                .map_or(1, |budget| budget.saturating_add(1)),
+        );
+    }
+    credential
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn ensure(
     session: &Session,
@@ -500,18 +539,13 @@ pub(super) async fn ensure(
         super::telemetry::CompactionReason::AutomaticThreshold
     };
     let started = std::time::Instant::now();
-    // Custom output limits are explicit and can exceed the catalog reserve.
-    let overhead = overhead.saturating_add(
-        credential
-            .custom
-            .as_ref()
-            .and_then(|config| config.models.iter().find(|model| model.id == options.model))
-            .map_or(0, |model| model.max_output_tokens),
-    );
+    // Catalog maxima are not occupied context; each request fits its output to the prompt.
+    let summary_credential = summary_credential(credential, &options.model);
     let summary_options = summary_options(credential, options);
     let summary_signal = signal.clone();
     let mut first = true;
     let result = ensure_with(session, overhead, force, signal, |prompt| {
+        let credential = &summary_credential;
         let signal = summary_signal.clone();
         let options = &summary_options;
         let request_trace = trace.clone();
@@ -875,6 +909,90 @@ mod tests {
         let end = portion_end(history, &[7, history.len()], 7, 6);
         assert!(history.is_char_boundary(end));
         assert_eq!(&history[7..end], "🦀");
+    }
+
+    #[test]
+    fn summaries_omit_image_binary_without_hiding_image_metadata_records() {
+        let record = json!({"type":"image","id":"asset-1","path":"src/logo.png"});
+        assert_eq!(visible(&record), record);
+        let pixels = json!({"type":"input_image","image_url":format!("data:image/png;base64,{}", "A".repeat(1024 * 1024))});
+        assert!(estimate(&pixels) < 4200);
+        assert!(!visible(&pixels).to_string().contains("base64"));
+        assert_eq!(
+            pixels["image_url"].as_str().unwrap().len(),
+            1024 * 1024 + 22
+        );
+    }
+
+    #[tokio::test]
+    async fn advertised_output_maximum_does_not_block_a_small_hyper_turn() {
+        use crate::openai_codex::custom::{
+            AuthMode, Config, Model, Protocol, Reasoning, TokenField,
+        };
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session
+            .update(true, |data| {
+                let turn = data.turns.last_mut().unwrap();
+                turn.turn.context_window = Some(512_000);
+                turn.wire = vec![json!({"role":"user","content":"Implement this change"})];
+            })
+            .unwrap();
+        let options = session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .turn
+            .options
+            .clone();
+        let mut credential =
+            CodexCredential::new("fixture", "", i64::MAX, "charm-hyper:fixture", None, None);
+        credential.custom = Some(Config {
+            base_url: crate::openai_codex::charm_hyper::BASE_URL.into(),
+            protocol: Protocol::OpenaiCompletions,
+            auth_mode: AuthMode::Bearer,
+            token_field: TokenField::MaxTokens,
+            replay_unsigned_thinking: false,
+            models: vec![Model {
+                id: options.model.clone(),
+                name: "MiniMax M3".into(),
+                context_window: 512_000,
+                max_output_tokens: 512_000,
+                supports_images: true,
+                supports_tools: true,
+                reasoning: Reasoning::None,
+                reasoning_levels: vec![],
+                default_reasoning_level: None,
+                thinking_budget: None,
+            }],
+        });
+        let summary = summary_credential(&credential, &options.model);
+        assert_eq!(
+            summary.custom.unwrap().models[0].max_output_tokens,
+            DEFAULT_RESERVE_TOKENS
+        );
+        assert_eq!(
+            credential.custom.as_ref().unwrap().models[0].max_output_tokens,
+            512_000
+        );
+        let (_cancel, signal) = watch::channel(false);
+        assert!(!ensure(
+            &session,
+            &credential,
+            &options,
+            100,
+            false,
+            signal,
+            None,
+            None,
+            None
+        )
+        .await
+        .unwrap());
+        assert_eq!(session.snapshot().unwrap().context.compactions, 0);
     }
 
     #[tokio::test]
@@ -1646,5 +1764,41 @@ mod tests {
         data.turns = turns;
         data.extras = extras;
         assert_eq!(input(&data), replay);
+    }
+
+    #[tokio::test]
+    async fn compaction_keeps_the_completed_public_delivery_available_to_predictions() {
+        let fixture = Fixture::new();
+        let session = long_session(&fixture);
+        session
+            .update(true, |data| {
+                data.turns
+                    .last_mut()
+                    .unwrap()
+                    .turn
+                    .steps
+                    .push(super::super::Step {
+                        text: "Implementação concluída. Falta revisar os testes.".into(),
+                        ..Default::default()
+                    });
+            })
+            .unwrap();
+        super::super::finish(&session, Ok(()));
+        let before = super::super::composer_context::messages(&session.snapshot().unwrap().turns);
+        let (_cancel, signal) = watch::channel(false);
+        assert!(ensure_with(&session, 0, true, signal, |_| async {
+            Ok("Implementation completed; tests still need review.".into())
+        })
+        .await
+        .unwrap());
+        let snapshot = session.snapshot().unwrap();
+        assert_eq!(snapshot.context.compactions, 1);
+        assert_eq!(
+            super::super::composer_context::messages(&snapshot.turns),
+            before
+        );
+        assert!(
+            super::super::composer_context::final_text(snapshot.turns.last().unwrap()).is_some()
+        );
     }
 }

@@ -12,6 +12,35 @@ function account(overrides: Partial<RemoteUsageAccount> = {}): RemoteUsageAccoun
   ], ...overrides };
 }
 
+it("shows Charm Hypercredits without treating the balance as a quota percentage", async () => {
+  const user = userEvent.setup();
+  render(<RemoteUsage load={vi.fn().mockResolvedValue([account({ alias: "charm-hyper-pessoal", displayName: "Meu Hyper", providerKind: "charm-hyper", plan: null, windows: [], creditBalance: 173.5 })])} />);
+  await user.click(screen.getByRole("button", { name: "Limites dos provedores" }));
+  const region = await screen.findByRole("region", { name: "Limites de Meu Hyper" });
+  expect(within(region).getByRole("img", { name: "Charm Hyper" })).toBeVisible();
+  expect(within(region).getByText("Hypercredits")).toBeVisible();
+  expect(within(region).getByText("173,5")).toBeVisible();
+  expect(within(region).queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(within(region).queryByText("Nenhuma janela informada.")).not.toBeInTheDocument();
+});
+
+it("distinguishes partial Hyper capacity recovery from the weekly renewal", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(now);
+  const user = userEvent.setup();
+  const hyper = account({ alias: "charm-hyper-pessoal", providerKind: "charm-hyper", windows: [
+    { id: "five_hour", group: "Charm Hyper", thirdParty: false, label: "5h", durationSeconds: 18_000, remainingPercent: 40, resetsAt: null, nextRecoveryAt: now + 9_000_000 },
+    { id: "weekly", group: "Charm Hyper", thirdParty: false, label: "Semanal", durationSeconds: 604_800, remainingPercent: 20, resetsAt: now + 302_400_000 },
+  ] });
+  render(<RemoteUsage load={vi.fn().mockResolvedValue([hyper])} />);
+  await user.click(screen.getByRole("button", { name: "Limites dos provedores" }));
+  const rolling = await screen.findByRole("region", { name: "Charm Hyper 5h" });
+  expect(within(rolling).getByText("Capacidade volta em 2h 30m")).toBeVisible();
+  expect(within(rolling).queryByText(/Renova|em reserva|em déficit|No ritmo/)).not.toBeInTheDocument();
+  expect(within(rolling).queryByRole("img", { name: /Restante esperado/ })).not.toBeInTheDocument();
+  const weekly = screen.getByRole("region", { name: "Charm Hyper Semanal" });
+  expect(within(weekly).getByText("Renova em 3d 12h")).toBeVisible();
+});
+
 it("identifies Muse subscription quotas with their reported windows", async () => {
   const user = userEvent.setup();
   render(<RemoteUsage load={vi.fn().mockResolvedValue([account({ alias: "Muse Code", providerKind: "muse-code" })])} />);

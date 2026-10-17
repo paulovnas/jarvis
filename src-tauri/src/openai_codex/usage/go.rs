@@ -61,6 +61,7 @@ fn parse(data: serde_json::Value) -> Result<Vec<UsageWindow>, ProviderError> {
                 duration_seconds,
                 remaining_percent: Some(100.0 - window.percent),
                 resets_at: Some(resets_at),
+                next_recovery_at: None,
             })
         })
         .collect()

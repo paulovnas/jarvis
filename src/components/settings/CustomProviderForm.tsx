@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Choice, Field, FieldHelp } from "./CustomProviderFields";
 import { CustomModelEditor } from "./CustomModelEditor";
-import { protocolLabels, supportsModelLookup, validateCustomProvider, type CustomConfig, type CustomModel } from "@/core/custom-provider";
+import { CustomModelDiscovery } from "./CustomModelDiscovery";
+import { normalizeCustomBaseUrl, protocolLabels, supportsModelLookup, validateCustomProvider, type CustomConfig, type CustomModel } from "@/core/custom-provider";
 import { validateProviderDisplayName, type ProviderAccount } from "@/core/provider-accounts";
 import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { Hint } from "@/components/ui/hint";
@@ -28,6 +29,7 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
   const [pending, setPending] = useState<Set<number>>(() => new Set());
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
   const markPending = (key: number, busy: boolean) => setPending(current => {
@@ -38,8 +40,9 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
   });
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (lock.current || pending.size > 0) return;
-    const error = validateCustomProvider(alias, config, apiKey, !!account);
+    if (lock.current || pending.size > 0 || discovering) return;
+    const nextConfig = { ...config, baseUrl: account?.custom?.baseUrl === config.baseUrl ? config.baseUrl : normalizeCustomBaseUrl(config.baseUrl) };
+    const error = validateCustomProvider(alias, nextConfig, apiKey, !!account);
     if (error) {
       setError(error);
       const invalidIndex = config.models.findIndex(model => validateCustomProvider(alias, { ...config, models: [model] }, apiKey, !!account) !== null);
@@ -53,7 +56,7 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
     }
     lock.current = true; setSaving(true); setError(null); onBusyChange?.(true);
     try {
-      const result = await invoke<ProviderAccount>("save_custom_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), config, apiKey: apiKey || null, editing: !!account });
+      const result = await invoke<ProviderAccount>("save_custom_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), config: nextConfig, apiKey: apiKey || null, editing: !!account });
       setApiKey(""); toast.success("Provedor salvo"); onSaved(result);
     } catch (error) {
       setError(typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : "Não foi possível salvar o provedor.");
@@ -66,8 +69,8 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
         <Choice label="Endpoint" help="Formato da API oferecido pelo provedor. Confira a documentação dele: Chat Completions, Responses ou Anthropic Messages. No OpenRouter, Chat Completions é a opção mais comum." value={config.protocol} items={Object.entries(protocolLabels).map(([value, label]) => ({ value: value as CustomConfig["protocol"], label }))} onChange={protocol => setConfig(c => ({ ...c, protocol, authMode: "bearer", replayUnsignedThinking: protocol === "anthropic-messages", models: c.models.map(m => ({ ...m, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null })) }))} disabled={saving} />
       </div>
       <ProviderDisplayNameField value={displayName ?? alias} onChange={setDisplayName} disabled={saving} required={!account} />
-      <Field label="URL base" help="Endereço da API, encontrado na documentação do provedor. No OpenRouter: https://openrouter.ai/api/v1. Não inclua a chave de API na URL." value={config.baseUrl} placeholder="https://openrouter.ai/api/v1" autoComplete="off" onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))} />
-      <Field label="Chave de API" help="Crie uma chave no painel do provedor. No OpenRouter: openrouter.ai/settings/keys. Ela fica protegida no cofre de credenciais do sistema; ao editar, deixe vazio para manter a chave atual." type="password" value={apiKey} autoComplete="new-password" placeholder={account ? "Manter chave atual" : "Cole sua chave"} onChange={e => setApiKey(e.target.value)} />
+      <Field label="URL base" help="Endereço da API informado pelo provedor. Novos endereços sem caminho recebem /v1; caminhos personalizados são preservados. Exemplo: https://openrouter.ai/api/v1. Não inclua a chave na URL." value={config.baseUrl} placeholder="https://seu-provedor.com/v1" autoComplete="off" onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))} onBlur={() => setConfig(c => ({ ...c, baseUrl: account?.custom?.baseUrl === c.baseUrl ? c.baseUrl : normalizeCustomBaseUrl(c.baseUrl) }))} />
+      <Field label="Chave de API" help="Crie uma chave no painel do seu provedor. Ela fica protegida no cofre de credenciais do sistema; ao editar, deixe vazio para manter a chave atual." type="password" value={apiKey} autoComplete="new-password" placeholder={account ? "Manter chave atual" : "Cole sua chave"} onChange={e => setApiKey(e.target.value)} />
       {config.protocol !== "openai-responses" && <Collapsible open={advanced} onOpenChange={setAdvanced}>
         <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" />} className="h-7 w-full cursor-pointer justify-start px-0 text-xs text-muted-foreground">Compatibilidade avançada<ChevronRight className={`ml-auto size-3.5 transition-transform ${advanced ? "rotate-90" : ""}`} /></CollapsibleTrigger>
         <CollapsibleContent className="space-y-3 pt-3">
@@ -76,6 +79,12 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
         </CollapsibleContent>
       </Collapsible>}
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="settings-section-title text-muted-foreground">Modelos</h3><div className="flex items-center gap-1">{supportsModelLookup(config.baseUrl) && <Hint content="Abrir catálogo OpenRouter"><Button type="button" variant="ghost" size="icon-sm" aria-label="Abrir catálogo OpenRouter" onClick={() => { void openUrl("https://openrouter.ai/models").catch(() => toast.error("Não foi possível abrir o catálogo.")); }}><ExternalLink data-icon="inline-start" /></Button></Hint>}<Button type="button" variant="outline" size="sm" disabled={saving || config.models.length >= 100} onClick={() => { const key = nextKey.current++; setModelKeys(keys => [...keys, key]); setConfig(c => ({ ...c, models: [...c.models, emptyModel()] })); setExpandedModel(key); }}><Plus data-icon="inline-start" />Adicionar modelo</Button></div></div>
+      <CustomModelDiscovery config={config} apiKey={apiKey} alias={account?.alias} disabled={saving || pending.size > 0} onPendingChange={setDiscovering} onImport={models => {
+        const retained = config.models.map((model, index) => ({ model, key: modelKeys[index] })).filter(({ model }) => model.id || model.name || model.contextWindow || model.maxOutputTokens);
+        setModelKeys([...retained.map(item => item.key), ...models.map(() => nextKey.current++)]);
+        setConfig(c => ({ ...c, models: [...retained.map(item => item.model), ...models] }));
+        setExpandedModel(null); toast.success(`${models.length} modelos importados. Salve o provedor para aplicar.`);
+      }} />
       <div className="flex min-w-0 flex-col gap-3">{config.models.map((model, index) => <CustomModelEditor key={modelKeys[index]} model={model} index={index} baseUrl={config.baseUrl} protocol={config.protocol} saving={saving} canRemove={config.models.length > 1}
         open={expandedModel === modelKeys[index]} onOpenChange={open => setExpandedModel(open ? modelKeys[index] : null)}
         onRemove={() => { markPending(modelKeys[index], false); if (expandedModel === modelKeys[index]) setExpandedModel(null); setModelKeys(keys => keys.filter((_, i) => i !== index)); setConfig(c => ({ ...c, models: c.models.filter((_, i) => i !== index) })); }}
@@ -85,6 +94,6 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
       />)}</div>
     </fieldset>
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-    <div className="flex justify-end gap-2 border-t pt-3"><Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>Cancelar</Button><Button type="submit" disabled={saving || pending.size > 0}>{saving ? "Salvando…" : "Salvar provedor"}</Button></div>
+    <div className="flex justify-end gap-2 border-t pt-3"><Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>Cancelar</Button><Button type="submit" disabled={saving || pending.size > 0 || discovering}>{saving ? "Salvando…" : "Salvar provedor"}</Button></div>
   </form></TooltipProvider>;
 }

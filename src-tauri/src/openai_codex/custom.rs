@@ -6,6 +6,7 @@ use crate::persistence::{AppState, ProviderAccountRecord};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path};
+pub(crate) mod catalog;
 pub(crate) mod discovery;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -68,6 +69,9 @@ pub(crate) struct Config {
 
 fn invalid(message: &'static str) -> ProviderError {
     ProviderError::new("custom_config", message)
+}
+fn valid_model_id(id: &str) -> bool {
+    !id.trim().is_empty() && id.encode_utf16().count() <= 200 && !id.chars().any(char::is_control)
 }
 pub(crate) fn validate_alias(alias: &str) -> Result<(), ProviderError> {
     if alias.is_empty()
@@ -132,27 +136,21 @@ impl Config {
         }
         let mut ids = HashSet::new();
         for model in &self.models {
-            if model.id.is_empty()
-                || model.id.len() > 200
-                || model
-                    .id
-                    .chars()
-                    .any(|c| c.is_control() || c.is_whitespace())
+            if !valid_model_id(&model.id)
                 || model.name.trim().is_empty()
-                || model.name.len() > 120
+                || model.name.encode_utf16().count() > 120
                 || model.name.chars().any(char::is_control)
                 || !ids.insert(&model.id)
             {
                 return Err(invalid(
-                    "Cada modelo precisa de um ID único (sem espaços) e um nome de exibição.",
+                    "Cada modelo precisa de um ID literal único, sem caracteres de controle, e um nome de exibição.",
                 ));
             }
             if !(4096..=100_000_000).contains(&model.context_window)
                 || model.max_output_tokens == 0
-                || model.max_output_tokens >= model.context_window
                 || model.max_output_tokens > 10_000_000
             {
-                return Err(invalid("Informe contexto de 4.096 a 100.000.000 tokens e saída positiva menor que o contexto (até 10.000.000)."));
+                return Err(invalid("Informe contexto de 4.096 a 100.000.000 tokens e saída de 1 a 10.000.000 tokens, conforme os limites da API."));
             }
             let compatible = match self.protocol {
                 Protocol::OpenaiCompletions => matches!(
@@ -287,6 +285,32 @@ fn save(
     editing: bool,
     display_name: Option<&str>,
 ) -> Result<(), ProviderError> {
+    save_provider(
+        connection,
+        store,
+        alias,
+        config,
+        api_key,
+        editing,
+        display_name,
+        "custom",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn save_provider(
+    connection: &mut Connection,
+    store: &dyn SecretStore,
+    alias: &str,
+    config: &Config,
+    api_key: Option<&str>,
+    editing: bool,
+    display_name: Option<&str>,
+    kind: &str,
+) -> Result<(), ProviderError> {
+    if !matches!(kind, "custom" | "charm-hyper") {
+        return Err(ProviderError::internal());
+    }
     validate_alias(alias)?;
     let display_name = display_name
         .map(super::display_name::validate)
@@ -300,11 +324,14 @@ fn save(
         )
         .optional()
         .map_err(|_| ProviderError::database())?;
-    if (editing && previous.as_ref().is_none_or(|(kind, _)| kind != "custom"))
+    if (editing
+        && previous
+            .as_ref()
+            .is_none_or(|(previous_kind, _)| previous_kind != kind))
         || (!editing && previous.is_some())
     {
         return Err(invalid(
-            "O alias já existe ou o provedor Custom não está mais disponível.",
+            "O alias já existe ou o provedor não está mais disponível.",
         ));
     }
     let key = api_key.filter(|key| !key.is_empty());
@@ -327,7 +354,7 @@ fn save(
         .as_ref()
         .map(|(_, id)| id.clone())
         .unwrap_or(format!(
-            "custom:{}",
+            "{kind}:{}",
             crate::library::new_id().map_err(|_| ProviderError::internal())?
         ));
     let next_credential =
@@ -336,7 +363,7 @@ fn save(
         .transaction()
         .map_err(|_| ProviderError::database())?;
     if !editing {
-        transaction.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id, show_usage) VALUES (?1, 'custom', ?2, 0)", params![alias, account_id]).map_err(|_| ProviderError::database())?;
+        transaction.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id, show_usage) VALUES (?1, ?2, ?3, ?4)", params![alias, kind, account_id, kind != "custom"]).map_err(|_| ProviderError::database())?;
     }
     if let Some(name) = display_name {
         super::display_name::update(&transaction, alias, name)?;

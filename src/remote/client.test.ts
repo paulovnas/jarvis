@@ -67,6 +67,12 @@ it("accepts sanitized OpenCode Go quotas including a monthly anniversary reset",
   expect(await new RemoteClient(fetcher).usage()).toEqual(usage);
 });
 
+it("accepts sanitized Charm Hyper balances without assuming a usage window", async () => {
+  const usage = [{ alias: "charm-hyper-pessoal", displayName: "Meu Hyper", providerKind: "charm-hyper", fetchedAt: 1, email: null, plan: null, creditBalance: 173, error: null, resetCredits: null, windows: [] }];
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(usage));
+  expect(await new RemoteClient(fetcher).usage()).toEqual(usage);
+});
+
 it("consumes the QR fragment without leaving the pairing credential in the URL", () => {
   const history = { replaceState: vi.fn() };
   expect(takePairingToken({ hash: "#pair=one-time-secret&view=chat", pathname: "/", search: "?mobile=1" }, history)).toBe("one-time-secret");

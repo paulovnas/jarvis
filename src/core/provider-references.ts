@@ -26,7 +26,7 @@ export function compatibleModels(account: ProviderAccount, kind: ReferenceKind):
   if (!account.enabled) return [];
   if (kind === "image_generation") return account.providerKind === "antigravity" ? [imageModel] : [];
   if (!account.modelsAvailable) return [];
-  return enabledModels(account).filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : account.providerKind === "opencode-go" ? account.visionModels?.includes(model.id) === true : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
+  return enabledModels(account).filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" ? account.visionModels?.includes(model.id) === true : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
 }
 
 export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind = "custom_agent"): string | null {

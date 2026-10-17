@@ -53,6 +53,7 @@ fn empty() -> AccountUsage {
         plan: None,
         windows: vec![],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     }
 }
@@ -188,6 +189,7 @@ fn window(bucket: &Value, id: &str, label: String, duration: f64) -> Option<Usag
         duration_seconds: Some(duration),
         remaining_percent: used.map(|value| 100.0 - value),
         resets_at,
+        next_recovery_at: None,
     })
 }
 

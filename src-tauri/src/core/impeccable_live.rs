@@ -1215,6 +1215,7 @@ fn selection_provider(
                     match account.provider_kind.as_str() {
                         "openai-codex" => "OpenAI",
                         "opencode-go" => "OpenCode Go",
+                        "charm-hyper" => "Charm Hyper",
                         "antigravity" => "Antigravity",
                         _ => "API configurada",
                     }

@@ -90,8 +90,8 @@ describe("model catalog refresh", () => {
     const refreshed = { ...account, showFiveHourUsage: true, showWeeklyUsage: false };
     expect(mergeModelCatalogRefresh([configured], [refreshed]).accounts[0]).toMatchObject({ showFiveHourUsage: false, showWeeklyUsage: true });
   });
-  it("refreshes Go catalogs and retains their per-model visibility settings", () => {
-    const go = { ...account, alias: "opencode-go-pessoal", providerKind: "opencode-go", disabledModels: ["compact"] };
+  it.each(["opencode-go", "charm-hyper"])("refreshes %s catalogs and retains their per-model visibility settings", providerKind => {
+    const go = { ...account, alias: `${providerKind}-pessoal`, providerKind, disabledModels: ["compact"] };
     const model = { id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null };
     const result = mergeModelCatalogRefresh([go], [{ ...go, models: [model] }]);
     expect(result.refreshed).toEqual([go.alias]);

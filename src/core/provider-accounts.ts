@@ -1,5 +1,10 @@
 import { customConfigSchema, type CustomConfig } from "./custom-provider";
 
+export const providerKindLabels: Record<string, string> = {
+  "openai-codex": "OpenAI Codex", antigravity: "Antigravity", custom: "Custom",
+  "opencode-go": "OpenCode Go", "charm-hyper": "Charm Hyper", "claude-code": "Claude Code", "muse-code": "Muse Code",
+};
+
 export type ProviderModel = {
   id: string;
   name: string;
@@ -122,7 +127,7 @@ export function mergeModelCatalogRefresh(current: ProviderAccount[], fetched: Pr
   const refreshed: string[] = [];
   const failed: string[] = [];
   const accounts = current.map(account => {
-    if (!account.enabled || !["openai-codex", "antigravity", "opencode-go"].includes(account.providerKind)) return account;
+    if (!account.enabled || !["openai-codex", "antigravity", "opencode-go", "charm-hyper"].includes(account.providerKind)) return account;
     const next = byAlias.get(account.alias);
     if (!next || next.providerKind !== account.providerKind || !next.modelsAvailable || next.modelsStale) {
       failed.push(account.alias);

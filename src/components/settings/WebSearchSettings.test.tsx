@@ -16,6 +16,24 @@ const account = (alias: string, providerKind = "openai-codex"): ProviderAccount 
 });
 
 describe("WebSearchSettings", () => {
+  it.each(["opencode-go", "charm-hyper"])("selects only %s Vision models confirmed by its live catalog", async providerKind => {
+    const gateway = { ...account(`${providerKind}-pessoal`, providerKind), visionModels: ["qwen-vl"], models: [
+      { id: "gpt-text", name: "Texto", reasoningLevels: [], defaultReasoningLevel: null },
+      { id: "qwen-vl", name: "Qwen Vision", reasoningLevels: [], defaultReasoningLevel: null },
+    ] };
+    invokeMock.mockImplementation(async (command, args) => command === "get_vision_config" ? { accountAlias: null, model: null, inheritChat: true } : args);
+    const user = userEvent.setup();
+    render(<WebSearchSettings accounts={[gateway]} kind="vision" />);
+    await user.click(await screen.findByRole("combobox", { name: "Provedor de Vision" }));
+    await user.click(await screen.findByRole("option", { name: gateway.alias }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_vision_config", { inheritChat: false, accountAlias: gateway.alias, model: "qwen-vl" }));
+    const model = screen.getByRole("combobox", { name: "Modelo de Vision" });
+    await waitFor(() => expect(model).toBeEnabled());
+    await user.click(model);
+    expect(await screen.findByRole("option", { name: "Qwen Vision" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Texto" })).not.toBeInTheDocument();
+  });
+
   it("oferece geração desligada ou Antigravity, com modelo fixo e sem herdar", async () => {
     invokeMock.mockImplementation(async (command, args) => command === "set_image_generation_config" ? args : { accountAlias: null, model: null, inheritChat: false });
     const user = userEvent.setup();

@@ -26,3 +26,9 @@ it("keeps a custom provider identifiable with the connection icon", () => {
   const { container } = render(<RemoteProviderIcon kind="custom" />);
   expect(container.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
 });
+
+it("identifies Charm Hyper with a bundled inline mark", () => {
+  const { container } = render(<RemoteProviderIcon kind="charm-hyper" />);
+  expect(container.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  expect(container.firstElementChild).not.toHaveAttribute("style");
+});

@@ -133,7 +133,7 @@ describe("measured transcript window", () => {
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
     const selection = document.getSelection()!;
     const selectedText = document.createRange();
-    selectedText.selectNodeContents(within(selected).getByText("Pedido 40"));
+    selectedText.selectNodeContents(await within(selected).findByText("Pedido 40"));
     const copy = within(focused).getByRole("button", { name: "Copiar resposta" });
     act(() => copy.focus());
     act(() => { selection.removeAllRanges(); selection.addRange(selectedText); document.dispatchEvent(new Event("selectionchange")); });

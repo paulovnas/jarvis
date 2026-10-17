@@ -11,11 +11,12 @@ import { useProviderUsage } from "@/hooks/use-provider-usage";
 import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 import { useMuseRuntime } from "@/hooks/use-muse-runtime";
 import { FreeGoModels } from "./FreeGoModels";
-import { providerDisplayName, type ProviderAccount } from "@/core/provider-accounts";
+import { providerDisplayName, providerKindLabels, type ProviderAccount } from "@/core/provider-accounts";
 import { planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, type UsageWindow } from "@/core/provider-usage";
 
 export function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
+  const recovery = window.resetsAt === null ? remainingTime(window.nextRecoveryAt ?? null, now) : null;
   const reserve = stale ? null : quotaReserve(window, now);
   const expected = stale ? null : expectedQuotaRemaining(window, now);
   return <div className="space-y-2">
@@ -25,6 +26,7 @@ export function WindowBar({ window, now, stale }: { window: UsageWindow; now: nu
       {expected !== null && <Hint content={`Restante esperado neste momento: ${Math.round(expected)}%`}><span role="img" aria-label={`Restante esperado: ${Math.round(expected)}%`} style={{ left: `${expected}%` }} className="absolute -top-1 h-3 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_1px_var(--color-card)]" /></Hint>}
     </div>}
     {reset && <Hint content={window.resetsAt ? new Date(window.resetsAt).toLocaleString("pt-BR") : undefined}><p className="text-[10px] text-muted-foreground">{reset === "agora" ? "Reset previsto agora" : `Renova em ${reset}`}</p></Hint>}
+    {recovery && <Hint content={window.nextRecoveryAt != null ? new Date(window.nextRecoveryAt).toLocaleString("pt-BR") : undefined}><p className="text-[10px] text-muted-foreground">{recovery === "agora" ? "Retorno de capacidade previsto agora" : `Capacidade volta em ${recovery}`}</p></Hint>}
     {reserve !== null && <Hint content="Percentual da cota total acima ou abaixo do consumo esperado para este momento da janela."><p className={`font-mono text-[10px] ${reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground"}`}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p></Hint>}
   </div>;
 }
@@ -53,12 +55,13 @@ export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount,
     : account.providerKind === "opencode-go"
       ? windows.filter(window => window.id === "five_hour" || window.id === "weekly")
       : windows;
-  const compact = ["openai-codex", "opencode-go", "claude-code", "muse-code"].includes(account.providerKind)
+  const compact = ["openai-codex", "opencode-go", "charm-hyper", "claude-code", "muse-code"].includes(account.providerKind)
     ? compactCandidates.filter(window => window.durationSeconds === 18_000
       ? account.showFiveHourUsage !== false
       : window.durationSeconds === 604_800 && account.showWeeklyUsage !== false)
     : compactCandidates;
   const credits = data?.resetCredits;
+  const balance = data?.creditBalance;
   const name = providerDisplayName(account);
   return <Popover>
     <PopoverTrigger render={<Button variant="ghost" />} aria-label={`Limites de ${name}`} openOnHover delay={250} closeDelay={150} className="h-6 shrink-0 cursor-pointer gap-1.5 rounded-sm px-2 font-mono text-[10px] font-normal tabular-nums">
@@ -69,16 +72,18 @@ export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount,
         {account.providerKind === "antigravity" && groups.length > 1 && <span className="text-muted-foreground">{window.thirdParty ? "3P" : "Gemini"}</span>}
         <span className="text-muted-foreground">{window.label}</span><span style={{ color: quotaColor(window.remainingPercent) }}>{quotaPercent(window.remainingPercent)}</span>
         {window.resetsAt !== null && <span className="text-muted-foreground">({remainingTime(window.resetsAt, now)})</span>}
-      </span>) : <span className="text-muted-foreground">—</span>}
+      </span>) : balance == null ? <span className="text-muted-foreground">—</span> : null}
+      {balance != null && <span className="text-muted-foreground">{balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })} Hypercredits</span>}
       {compact.length > 4 && <span className="text-muted-foreground">+{compact.length - 4}</span>}
       {failed && <AlertCircle aria-label="Limites desatualizados" className="size-3 text-onedark-yellow" />}
     </PopoverTrigger>
     <PopoverContent aria-label={`Limites de ${name}`} initialFocus={false} side="top" align="end" sideOffset={10} className="dark instrument-panel max-h-[70vh] w-[360px] max-w-[90vw] overflow-y-auto bg-card p-4 gap-0 text-foreground">
-      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? name}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{claude ? "Claude Code · CLI local" : muse ? "Muse Code · Assinatura" : `${account.providerKind === "antigravity" ? "Antigravity" : account.providerKind === "opencode-go" ? "OpenCode Go" : "OpenAI Codex"} · ${name}`}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
+      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? name}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{claude ? "Claude Code · CLI local" : muse ? "Muse Code · Assinatura" : `${providerKindLabels[account.providerKind] ?? account.providerKind} · ${name}`}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
       {!data && !error && <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-5" /><Skeleton className="h-2" /><Skeleton className="h-5" /><Skeleton className="h-2" /></div>}
       {failed && <p role="status" className="mb-3 text-[11px] text-onedark-yellow">{data?.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {(claude || muse) && data?.error && <p className="mb-3 text-xs text-muted-foreground">{data.error}</p>}
-      {data && !windows.length && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
+      {data && !windows.length && balance == null && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
+      {balance != null && <dl className="mb-4 flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">Hypercredits</dt><dd className="font-mono tabular-nums">{balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
       <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><Hint content={group} whenTruncated><h3 className="micro-label truncate text-muted-foreground">{group}</h3></Hint>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
       {credits && <section className="mt-4 border-t border-border pt-3"><div className="flex items-center justify-between text-xs"><span>Resets disponíveis</span><span className="font-mono text-primary">{credits.availableCount}</span></div>{credits.availableCount > 0 && <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">{credits.detailsAvailable && credits.expirations.length ? credits.expirations.map((expiry, index) => <p key={index}>{expiry ? `Expira em ${new Date(expiry).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "Validade não informada"}</p>) : <p>Validade indisponível</p>}</div>}</section>}
       {account.providerKind === "opencode-go" && <FreeGoModels />}

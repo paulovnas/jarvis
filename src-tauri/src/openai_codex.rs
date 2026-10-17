@@ -4,6 +4,7 @@ use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
 mod catalog_cache;
+pub(crate) mod charm_hyper;
 pub(crate) mod custom;
 pub(crate) mod display_name;
 mod inference_auth;
@@ -273,6 +274,12 @@ pub(crate) struct CodexCredential {
     pub(crate) plan_type: Option<String>,
     #[serde(default, rename = "projectId", skip_serializing_if = "Option::is_none")]
     pub(crate) project_id: Option<String>,
+    #[serde(
+        default,
+        rename = "hyperPanel",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) hyper_panel: Option<charm_hyper::panel::Connection>,
     #[serde(skip)]
     pub(crate) antigravity_models: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(skip)]
@@ -301,6 +308,7 @@ impl CodexCredential {
             email,
             plan_type,
             project_id: None,
+            hyper_panel: None,
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: None,
@@ -379,6 +387,7 @@ pub(crate) fn validate_provider_alias(alias: &str) -> Result<(), AliasValidation
         .strip_prefix(OPENAI_CODEX_ALIAS_PREFIX)
         .or_else(|| alias.strip_prefix("antigravity-"))
         .or_else(|| alias.strip_prefix("opencode-go-"))
+        .or_else(|| alias.strip_prefix("charm-hyper-"))
         .ok_or(AliasValidationError::InvalidAlias)?;
     validate_alias_suffix(suffix).map_err(|_| AliasValidationError::InvalidAlias)
 }
@@ -1579,6 +1588,7 @@ impl OAuthFlow {
 
 struct OAuthManager {
     usage_cache: usage::UsageCache,
+    hyper_panel: charm_hyper::panel::State,
     credentials_guard: std::sync::Mutex<()>,
     active_flow: std::sync::Mutex<Option<String>>,
     flows: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<OAuthFlow>>>,
@@ -1598,6 +1608,7 @@ impl OAuthManager {
         Self {
             credentials_guard: std::sync::Mutex::new(()),
             usage_cache: Default::default(),
+            hyper_panel: Default::default(),
             active_flow: std::sync::Mutex::new(None),
             flows: std::sync::Mutex::new(std::collections::HashMap::new()),
             endpoints,
@@ -1641,6 +1652,8 @@ impl OAuthManager {
             .map(|record| {
                 let account = if record.provider_kind == "opencode-go" {
                     opencode_go::account(app_state, home_dir, record)?
+                } else if record.provider_kind == "charm-hyper" {
+                    charm_hyper::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "custom" {
                     custom::account(app_state, home_dir, record)?
                 } else {
@@ -1685,6 +1698,19 @@ impl OAuthManager {
         } else {
             None
         };
+        let hyper_catalog = if initial.iter().any(|record| {
+            record.enabled
+                && record.provider_kind == "charm-hyper"
+                && alias.is_none_or(|selected| selected == record.alias)
+        }) {
+            match charm_hyper::discover() {
+                Ok(catalog) => Some(catalog),
+                Err(cause) if alias.is_some() => return Err(cause),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
         let _guard = self.credentials_guard.try_lock().map_err(|_| {
             ProviderError::new(
                 "provider_busy",
@@ -1700,7 +1726,7 @@ impl OAuthManager {
                     && record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go"
+                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
                     )
             })
         }) {
@@ -1716,12 +1742,20 @@ impl OAuthManager {
                 record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go"
+                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
                     )
                     && alias.is_none_or(|selected| record.alias == selected)
             })
             .cloned()
             .map(|record| {
+                if record.provider_kind == "charm-hyper" {
+                    if let Some(catalog) = &hyper_catalog {
+                        charm_hyper::remember(app_state, home_dir, &record.alias, catalog)?;
+                    }
+                    let mut account = charm_hyper::account(app_state, home_dir, record)?;
+                    account.models_stale = hyper_catalog.is_none();
+                    return attach_model_exclusions(app_state, home_dir, account);
+                }
                 if record.provider_kind == "opencode-go" {
                     if let Some(catalog) = &go_catalog {
                         opencode_go::remember(app_state, home_dir, &record.alias, catalog)?;
@@ -1783,6 +1817,9 @@ impl OAuthManager {
         display_name: Option<&str>,
     ) -> Result<OpenAiCodexConnectionStart, ProviderError> {
         validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
+        if !alias.starts_with(OPENAI_CODEX_ALIAS_PREFIX) && !alias.starts_with("antigravity-") {
+            return Err(ProviderError::invalid_alias());
+        }
         let display_name = display_name
             .map(display_name::validate)
             .transpose()?
@@ -2158,10 +2195,28 @@ impl OpenAiCodexState {
                 "Ative a conta nas configurações para usá-la.",
             ));
         }
-        if record.provider_kind == "opencode-go" {
-            let credential =
-                opencode_go::credential(state, home, self.manager.secret_store.as_ref(), alias)?;
-            let account = opencode_go::account(state, home, record.clone())?;
+        if matches!(record.provider_kind.as_str(), "opencode-go" | "charm-hyper") {
+            let (credential, account) = if record.provider_kind == "charm-hyper" {
+                (
+                    charm_hyper::credential(
+                        state,
+                        home,
+                        self.manager.secret_store.as_ref(),
+                        alias,
+                    )?,
+                    charm_hyper::account(state, home, record.clone())?,
+                )
+            } else {
+                (
+                    opencode_go::credential(
+                        state,
+                        home,
+                        self.manager.secret_store.as_ref(),
+                        alias,
+                    )?,
+                    opencode_go::account(state, home, record.clone())?,
+                )
+            };
             let disabled = state
                 .with_connection(home, |db| {
                     persistence::list_provider_model_exclusions(db, alias)

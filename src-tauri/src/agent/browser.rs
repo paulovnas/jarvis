@@ -641,11 +641,16 @@ pub(crate) async fn prune(app: &tauri::AppHandle) -> Result<(), AgentError> {
                 let mut statement = db
                     .prepare("SELECT id FROM conversations")
                     .map_err(|_| AgentError::storage())?;
-                let ids = statement
+                let mut ids = statement
                     .query_map([], |row| row.get::<_, String>(0))
                     .map_err(|_| AgentError::storage())?
                     .collect::<Result<std::collections::HashSet<_>, _>>()
                     .map_err(|_| AgentError::storage())?;
+                let mut providers = db.prepare("SELECT account_id FROM provider_accounts WHERE provider_kind = 'charm-hyper' AND enabled = 1")
+                    .map_err(|_| AgentError::storage())?;
+                for account_id in providers.query_map([], |row| row.get::<_, String>(0)).map_err(|_| AgentError::storage())? {
+                    ids.insert(crate::openai_codex::charm_hyper::panel::scope(&account_id.map_err(|_| AgentError::storage())?));
+                }
                 Ok::<_, AgentError>(ids)
             })
     })

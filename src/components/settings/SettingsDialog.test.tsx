@@ -326,14 +326,17 @@ describe("SettingsDialog provider accounts", () => {
     expect(weekly).not.toBeChecked();
   }, 15_000);
 
-  it("adds Go by subscription key, refreshes its models and replaces its key without OAuth", async () => {
+  it.each([
+    { providerKind: "opencode-go", label: "OpenCode Go", command: "save_opencode_go_provider" },
+    { providerKind: "charm-hyper", label: "Charm Hyper", command: "save_charm_hyper_provider" },
+  ])("adds $label by API key, refreshes its models and replaces its key without OAuth", async ({ providerKind, label, command: saveCommand }) => {
     const user = userEvent.setup();
-    const go = account("opencode-go-pessoal", { providerKind: "opencode-go", models: [{ id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null }] });
+    const go = account(`${providerKind}-pessoal`, { providerKind, models: [{ id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null }] });
     const refreshed = { ...go, models: [{ id: "kimi", name: "Kimi", reasoningLevels: [], defaultReasoningLevel: null }] };
     invokeMock.mockImplementation((command: string) => {
       if (command === "list_provider_accounts") return Promise.resolve([]);
       if (command === "get_provider_model_references") return Promise.resolve({ references: [], bindings: [] });
-      if (command === "save_opencode_go_provider") return Promise.resolve(go);
+      if (command === saveCommand) return Promise.resolve(go);
       if (command === "refresh_provider_models") return Promise.resolve([refreshed]);
       return Promise.resolve(undefined);
     });
@@ -343,13 +346,13 @@ describe("SettingsDialog provider accounts", () => {
     await user.click(screen.getByRole("button", { name: "Adicionar conta" }));
     screen.getByRole("combobox", { name: "Provedor" }).focus();
     await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "OpenCode Go" }));
+    await user.click(await screen.findByRole("option", { name: label }));
     fireEvent.change(screen.getByLabelText("Sufixo do alias"), { target: { value: "pessoal" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Minha conta" } });
     fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "private-test-key" } });
-    await user.click(screen.getByRole("button", { name: "Conectar OpenCode Go" }));
+    await user.click(screen.getByRole("button", { name: `Conectar ${label}` }));
     const detailsButton = await screen.findByRole("button", { name: `Detalhes de ${go.alias}` });
-    expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, displayName: "Minha conta", apiKey: "private-test-key", editing: false });
+    expect(invokeMock).toHaveBeenCalledWith(saveCommand, { alias: go.alias, displayName: "Minha conta", apiKey: "private-test-key", editing: false });
     await user.click(detailsButton);
     expect(screen.getByRole("switch", { name: `Limites de ${go.alias} na statusbar` })).toBeChecked();
     expect(screen.queryByRole("button", { name: "Re-autorizar" })).not.toBeInTheDocument();
@@ -357,11 +360,11 @@ describe("SettingsDialog provider accounts", () => {
     expect(await screen.findByText("Kimi")).toBeVisible();
     expect(changed).toHaveBeenLastCalledWith([refreshed]);
     await user.click(screen.getByRole("button", { name: "Atualizar chave" }));
-    expect(await screen.findByRole("dialog", { name: "Editar OpenCode Go" })).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: `Editar ${label}` })).toBeVisible();
     expect(screen.getByLabelText("Sufixo do alias")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "replacement-test-key" } });
     await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("save_opencode_go_provider", { alias: go.alias, apiKey: "replacement-test-key", editing: true }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith(saveCommand, { alias: go.alias, apiKey: "replacement-test-key", editing: true }));
     expect(invokeMock).not.toHaveBeenCalledWith("connect_provider_account", expect.anything());
     expect(invokeMock).not.toHaveBeenCalledWith("reauthorize_provider_account", expect.anything());
   });

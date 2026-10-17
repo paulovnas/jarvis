@@ -51,3 +51,12 @@ it("does not offer a five-hour alert when the account did not return that window
   expect(screen.getByRole("combobox", { name: "Janela" })).toHaveTextContent("Semanal");
   expect(screen.queryByRole("option", { name: "5 horas" })).not.toBeInTheDocument();
 });
+
+it("keeps percentage alerts unavailable for a Hypercredits-only report", () => {
+  const hyper = { ...account, alias: "charm-hyper-pessoal", providerKind: "charm-hyper" };
+  usage.mockReturnValue({ data: { alias: hyper.alias, fetchedAt: 1, email: null, plan: null, creditBalance: 173, error: null, resetCredits: null, windows: [] }, error: false });
+  render(<ProviderUsageAlertSettings account={hyper} saving={false} onChange={vi.fn()} />);
+  expect(screen.getByRole("switch", { name: "Alertar sobre limite" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.queryByRole("combobox", { name: "Janela" })).not.toBeInTheDocument();
+  expect(screen.getByText("Esta conta não informou uma janela de 5 horas ou semanal.")).toBeVisible();
+});

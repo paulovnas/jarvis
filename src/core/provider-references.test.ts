@@ -22,8 +22,8 @@ it("offers destinations compatible with the selected tool", () => {
   expect(compatibleModels({ ...referenceAccount(), providerKind: "antigravity" }, "image_generation")[0].id).toBe("gemini-3.1-flash-image");
 });
 
-it("offers only Go vision models confirmed by the catalog, independent of their name", () => {
-  const go = { ...referenceAccount(), alias: "opencode-go-pessoal", providerKind: "opencode-go", models: [
+it.each(["opencode-go", "charm-hyper"])("offers only %s vision models confirmed by the catalog, independent of their name", providerKind => {
+  const go = { ...referenceAccount(), alias: `${providerKind}-pessoal`, providerKind, models: [
     { id: "qwen-vl", name: "Qwen Vision", reasoningLevels: [], defaultReasoningLevel: null },
     { id: "claude-text", name: "Text", reasoningLevels: [], defaultReasoningLevel: null },
   ], visionModels: ["qwen-vl"] };

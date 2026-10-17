@@ -214,6 +214,7 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
                 duration_seconds: Some(18_000.0),
                 remaining_percent: Some(10.0),
                 resets_at: Some(2_000),
+                next_recovery_at: None,
             },
             UsageWindow {
                 id: "codex/secondary_window".into(),
@@ -223,9 +224,11 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
                 duration_seconds: Some(604_800.0),
                 remaining_percent: Some(19.6),
                 resets_at: Some(3_000),
+                next_recovery_at: None,
             },
         ],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     };
     let notices = alert_notices(&record, &usage, 1_500);
@@ -334,6 +337,7 @@ fn concurrent_refreshes_choose_the_most_depleted_bucket_and_notify_once() {
                 duration_seconds: Some(604_800.0),
                 remaining_percent: Some(15.0),
                 resets_at: Some(3_000),
+                next_recovery_at: None,
             },
             UsageWindow {
                 id: "gemini-flash-weekly".into(),
@@ -343,9 +347,11 @@ fn concurrent_refreshes_choose_the_most_depleted_bucket_and_notify_once() {
                 duration_seconds: Some(604_800.0),
                 remaining_percent: Some(4.0),
                 resets_at: Some(3_500),
+                next_recovery_at: None,
             },
         ],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     };
     let runtime = Arc::new(UsageCache::default());
@@ -404,8 +410,10 @@ fn antigravity_alerts_respect_third_party_visibility_and_ignore_stale_data() {
             duration_seconds: Some(18_000.0),
             remaining_percent: Some(10.0),
             resets_at: Some(3_000),
+            next_recovery_at: None,
         }],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     };
     assert!(alert_notices(&record, &usage, 1_500).is_empty());
@@ -469,6 +477,7 @@ fn codex_http_probe_is_read_only_and_scopes_requests_to_the_selected_account() {
         plan: None,
         windows: vec![],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     };
     codex(
@@ -542,8 +551,10 @@ fn account_usage_accepts_go_aliases_and_returns_the_account_snapshot() {
                     duration_seconds: Some(18_000.0),
                     remaining_percent: Some(76.0),
                     resets_at: Some(1_893_474_000_000),
+                    next_recovery_at: None,
                 }],
                 reset_credits: None,
+                credit_balance: None,
                 error: None,
             },
             Ok(()),
@@ -643,6 +654,7 @@ fn go_http_probe_preserves_complete_stale_limits_and_explains_auth_failures() {
             plan: None,
             windows: vec![],
             reset_credits: None,
+            credit_balance: None,
             error: None,
         };
         let result = result.map(|windows| {
@@ -703,8 +715,10 @@ fn go_usage_alerts_save_and_identify_the_subscription_provider() {
             duration_seconds: Some(18_000.0),
             remaining_percent: Some(15.0),
             resets_at: Some(2_000),
+            next_recovery_at: None,
         }],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     };
     let notices = alert_notices(&record, &usage, 1_500);

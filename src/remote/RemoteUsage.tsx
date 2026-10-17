@@ -8,16 +8,16 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
-import { providerDisplayName } from "@/core/provider-accounts";
+import { providerDisplayName, providerKindLabels } from "@/core/provider-accounts";
 import { expectedQuotaRemaining, planLabel, quotaPercent, quotaReserve, remainingTime, type AccountUsage, type UsageWindow } from "@/core/provider-usage";
 import { cn } from "@/lib/utils";
 import { RemoteProviderIcon } from "./RemoteProviderIcon";
 
-export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "muse-code" | "opencode-go" };
-const providerLabels = { "openai-codex": "OpenAI Codex", antigravity: "Antigravity", "claude-code": "Claude Code", "muse-code": "Muse Code", "opencode-go": "OpenCode Go" };
+export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "muse-code" | "opencode-go" | "charm-hyper" };
 
 function WindowUsage({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
+  const recovery = window.resetsAt === null ? remainingTime(window.nextRecoveryAt ?? null, now) : null;
   const reserve = stale ? null : quotaReserve(window, now);
   const expected = stale ? null : expectedQuotaRemaining(window, now);
   const remaining = window.remainingPercent;
@@ -30,6 +30,7 @@ function WindowUsage({ window, now, stale }: { window: UsageWindow; now: number;
       {expected !== null && <span role="img" aria-label={`Restante esperado: ${Math.round(expected)}%`} style={{ left: `${expected}%` }} className="absolute -top-0.5 h-2 w-0.5 -translate-x-1/2 rounded-full bg-foreground" />}
     </div>}
     {reset && <p className="font-mono text-[10px] text-muted-foreground">{reset === "agora" ? "Renovação prevista agora" : `Renova em ${reset}`}</p>}
+    {recovery && <p className="font-mono text-[10px] text-muted-foreground">{recovery === "agora" ? "Retorno de capacidade previsto agora" : `Capacidade volta em ${recovery}`}</p>}
     {reserve !== null && <p className={cn("font-mono text-[10px]", reserve < 0 ? "text-onedark-red" : reserve > 0 ? "text-onedark-green" : "text-muted-foreground")}>{reserve === 0 ? "No ritmo da janela" : `${Math.abs(reserve)}% ${reserve > 0 ? "em reserva" : "em déficit"}`}</p>}
   </section>;
 }
@@ -39,11 +40,12 @@ function AccountCard({ account, now, failed }: { account: RemoteUsageAccount; no
   const name = providerDisplayName(account);
   return <Card size="sm" role="region" aria-label={`Limites de ${name}`} className="min-w-0 shrink-0 gap-3 rounded-lg">
     <CardHeader>
-      <CardTitle className="flex min-w-0 items-center gap-2"><span role="img" aria-label={providerLabels[account.providerKind]} className="flex"><RemoteProviderIcon kind={account.providerKind} /></span><span className="min-w-0 flex-1 truncate" title={name}>{name}</span>{account.plan && <Badge variant="outline" className="max-w-24 shrink-0 truncate">{planLabel(account.plan, "unknown")}</Badge>}</CardTitle>
+      <CardTitle className="flex min-w-0 items-center gap-2"><span role="img" aria-label={providerKindLabels[account.providerKind]} className="flex"><RemoteProviderIcon kind={account.providerKind} /></span><span className="min-w-0 flex-1 truncate" title={name}>{name}</span>{account.plan && <Badge variant="outline" className="max-w-24 shrink-0 truncate">{planLabel(account.plan, "unknown")}</Badge>}</CardTitle>
     </CardHeader>
     <CardContent className="flex min-w-0 flex-col gap-3">
       {account.error && <p role="status" className="text-xs text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
-      {!account.error && !account.windows.length && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
+      {!account.error && !account.windows.length && account.creditBalance == null && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
+      {account.creditBalance != null && <dl className="flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">Hypercredits</dt><dd className="font-mono tabular-nums">{account.creditBalance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
       <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3">{account.windows.map(window => <WindowUsage key={window.id} window={window} now={now} stale={stale} />)}</div>
       {account.resetCredits && <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">Resets disponíveis</span><span className="font-mono text-primary">{account.resetCredits.availableCount}</span></div>}
     </CardContent>

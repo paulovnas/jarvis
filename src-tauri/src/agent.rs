@@ -3735,6 +3735,13 @@ fn run_turn_once<'a>(
             )
             .await?
         };
+        let owner = execution.as_ref().map_or(session, |exec| exec.root());
+        let project_id = owner.project_id()?.to_owned();
+        let design_repository_paths = if owner.global() {
+            Vec::new()
+        } else {
+            crate::library::repositories::configured_paths(state, home, &project_id)?
+        };
         let mut graft = if global_companion
             || execution
                 .as_ref()
@@ -3742,10 +3749,14 @@ fn run_turn_once<'a>(
         {
             crate::core::graft::Graft::inactive()
         } else {
-            crate::core::graft::Graft::open(home, &session.root, signal.clone()).await?
+            crate::core::graft::Graft::open(
+                home,
+                &session.root,
+                &design_repository_paths,
+                signal.clone(),
+            )
+            .await?
         };
-        let owner = execution.as_ref().map_or(session, |exec| exec.root());
-        let project_id = owner.project_id()?.to_owned();
         let publication_settings = publication::load(state, home, &project_id)?;
         let repository_context = if owner.global() {
             String::new()
@@ -3754,11 +3765,6 @@ fn run_turn_once<'a>(
         };
         let direct_tasks = !global_companion && options.direct() && owner.id == session.id;
         let mut core_activities = Vec::new();
-        let design_repository_paths = if owner.global() {
-            Vec::new()
-        } else {
-            crate::library::repositories::configured_paths(state, home, &project_id)?
-        };
         let design = if execution
             .as_ref()
             .is_some_and(|exec| exec.design_resources())

@@ -58,14 +58,15 @@ import { InputGroupInput } from "@/components/TextInput";
 import { Label } from "@/components/ui/label";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { Spinner } from "@/components/ui/spinner";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { accountList, enabledModels, providerDisplayName, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { accountList, enabledModels, providerDisplayName, providerKindLabels, validateProviderDisplayName, type ProviderAccount, type ProviderUsageAlert } from "@/core/provider-accounts";
 import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { ProviderAccountCard } from "./ProviderAccountCard";
 import { ClaudeProviderCard } from "./ClaudeProviderCard";
 import { MuseProviderCard } from "./MuseProviderCard";
 import { CustomProviderForm } from "./CustomProviderForm";
-import { OpenCodeGoProviderForm } from "./OpenCodeGoProviderForm";
+import { ApiKeyProviderForm } from "./OpenCodeGoProviderForm";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import { Hint } from "@/components/ui/hint";
 
@@ -689,8 +690,8 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
 
   const renderAdd = () => {
     const computedAlias = `${aliasPrefix}${suffix}`;
-    const providerSelect = <div className="space-y-2"><Label htmlFor="account-provider">Provedor</Label><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{provider === "custom" ? "Custom" : provider === "antigravity" ? "Antigravity" : provider === "opencode-go" ? "OpenCode Go" : "OpenAI Codex"}</SelectValue></SelectTrigger><SelectContent><SelectItem value="openai-codex" className="cursor-pointer">OpenAI Codex</SelectItem><SelectItem value="antigravity" className="cursor-pointer">Antigravity</SelectItem><SelectItem value="opencode-go" className="cursor-pointer">OpenCode Go</SelectItem><SelectItem value="custom" className="cursor-pointer">Custom</SelectItem></SelectContent></Select></div>;
-    if (provider === "opencode-go") return <><DialogHeader><DialogTitle>Adicionar OpenCode Go</DialogTitle><DialogDescription>Conecte sua assinatura usando uma chave de API.</DialogDescription></DialogHeader>{providerSelect}<OpenCodeGoProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
+    const providerSelect = <FieldGroup><Field><FieldLabel htmlFor="account-provider">Provedor</FieldLabel><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{providerKindLabels[provider] ?? provider}</SelectValue></SelectTrigger><SelectContent><SelectGroup>{["openai-codex", "antigravity", "opencode-go", "charm-hyper", "custom"].map(kind => <SelectItem key={kind} value={kind} className="cursor-pointer">{providerKindLabels[kind]}</SelectItem>)}</SelectGroup></SelectContent></Select></Field></FieldGroup>;
+    if (provider === "opencode-go" || provider === "charm-hyper") return <><DialogHeader><DialogTitle>Adicionar {providerKindLabels[provider]}</DialogTitle><DialogDescription>Conecte sua conta usando uma chave de API.</DialogDescription></DialogHeader>{providerSelect}<ApiKeyProviderForm key={provider} providerKind={provider} onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     if (provider === "custom") return <><DialogHeader><DialogTitle>Adicionar conta</DialogTitle><DialogDescription>Configure seu endpoint e os limites informados pelo provedor.</DialogDescription></DialogHeader>{providerSelect}<CustomProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     return (
       <>
@@ -874,7 +875,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
               {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
             </DialogContent>
           </Dialog>
-          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${editingCustom?.providerKind === "opencode-go" ? "sm:max-w-xl" : "sm:max-w-2xl"}`} aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>{editingCustom?.providerKind === "opencode-go" ? "Editar OpenCode Go" : "Editar provedor Custom"}</DialogTitle></DialogHeader>{editingCustom && (editingCustom.providerKind === "opencode-go" ? <OpenCodeGoProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} /> : <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />)}</DialogContent></Dialog>
+          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${editingCustom?.providerKind === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`} aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>{editingCustom?.providerKind === "custom" ? "Editar provedor Custom" : `Editar ${providerKindLabels[editingCustom?.providerKind ?? ""]}`}</DialogTitle></DialogHeader>{editingCustom && (editingCustom.providerKind === "opencode-go" || editingCustom.providerKind === "charm-hyper" ? <ApiKeyProviderForm key={editingCustom.alias} account={editingCustom} providerKind={editingCustom.providerKind} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} /> : <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />)}</DialogContent></Dialog>
       </SettingsSurface>
 
       {disconnectAlias && <ProviderRemovalDialog key={disconnectAlias} alias={disconnectAlias} accounts={accounts} onClose={() => setDisconnectAlias(null)} onBusyChange={busy => setDisconnecting(busy ? disconnectAlias : null)} onRemoved={handleProviderRemoved} />}

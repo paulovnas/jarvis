@@ -805,6 +805,7 @@ const PROVIDERS: &[&str] = &[
     "custom",
     "claude-code",
     "opencode-go",
+    "charm-hyper",
     "unavailable",
 ];
 const NATIVE_TOOLS: &[&str] = &[

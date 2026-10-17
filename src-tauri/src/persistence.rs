@@ -141,6 +141,10 @@ const MIGRATIONS: &[Migration] = &[
         version: 32,
         sql: include_str!("../../drizzle/0031_muse_web_search.sql"),
     },
+    Migration {
+        version: 33,
+        sql: include_str!("../../drizzle/0032_charm_hyper.sql"),
+    },
 ];
 
 #[test]
@@ -321,6 +325,133 @@ fn go_migration_keeps_provider_preferences_catalogs_and_tool_selections() {
         0
     );
     initialize_database(&mut db).unwrap();
+}
+
+#[test]
+fn charm_hyper_migration_preserves_accounts_preferences_catalogs_and_tool_selections() {
+    let mut db = Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    for migration in MIGRATIONS.iter().take(32) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch(
+        r#"INSERT INTO provider_accounts
+             (alias,provider_kind,account_id,created_at,enabled,show_usage,show_third_party_usage,
+              usage_alert_window,usage_alert_threshold,show_five_hour_usage,show_weekly_usage,display_name)
+           VALUES
+             ('custom-old','custom','custom-id',100,0,0,1,'weekly',20,0,1,'Custom antigo'),
+             ('go-old','opencode-go','go-id',200,1,1,0,'five_hour',35,1,0,'Go antigo'),
+             ('codex-old','openai-codex','codex-id',300,1,1,0,NULL,NULL,1,1,NULL),
+             ('google-old','antigravity','google-id',400,1,1,1,'weekly',10,0,0,'Google antigo');
+           INSERT INTO custom_provider_configs VALUES ('custom-old','{"baseUrl":"https://legacy.example/v1"}');
+           INSERT INTO provider_usage_alert_deliveries VALUES ('custom-old','weekly',123456,20);
+           INSERT INTO provider_model_exclusions VALUES ('custom-old','excluded'),('go-old','hidden');
+           INSERT INTO provider_transport_preferences VALUES ('custom-old',1);
+           INSERT INTO opencode_go_catalogs VALUES ('go-old','{"models":[{"id":"catalog-model"}]}');
+           INSERT INTO provider_model_bindings VALUES
+             ('chat:existing','{"account":"custom-old","model":"chosen","reasoning":null}',
+              '{"account":"go-old","model":"replacement","reasoning":null}');
+           UPDATE provider_bindings_revision SET revision=7 WHERE id=1;
+           INSERT INTO web_search_config(id,account_alias,model,inherit_chat,executor)
+             VALUES (1,'custom-old','chosen',0,'muse');
+           INSERT INTO vision_config(id,account_alias,model,inherit_chat)
+             VALUES (1,'custom-old','vision',0);
+           INSERT INTO image_generation_config(id,account_alias) VALUES (1,'go-old');
+           PRAGMA user_version=32;"#,
+    )
+    .unwrap();
+    let accounts = list_provider_accounts(&db).unwrap();
+    let tables = [
+        "custom_provider_configs",
+        "provider_usage_alert_deliveries",
+        "provider_model_exclusions",
+        "provider_transport_preferences",
+        "opencode_go_catalogs",
+        "provider_model_bindings",
+        "provider_bindings_revision",
+        "web_search_config",
+        "vision_config",
+        "image_generation_config",
+    ];
+    let related_rows = |db: &Connection| {
+        tables
+            .iter()
+            .map(|table| {
+                let mut statement = db
+                    .prepare(&format!("SELECT * FROM {table} ORDER BY 1,2"))
+                    .unwrap();
+                let columns = statement.column_count();
+                let rows = statement
+                    .query_map([], |row| {
+                        (0..columns)
+                            .map(|column| row.get::<_, rusqlite::types::Value>(column))
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap();
+                (*table, rows)
+            })
+            .collect::<Vec<_>>()
+    };
+    let related = related_rows(&db);
+    for _ in 0..2 {
+        initialize_database(&mut db).unwrap();
+        assert_eq!(list_provider_accounts(&db).unwrap(), accounts);
+        assert_eq!(related_rows(&db), related);
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            33
+        );
+    }
+    db.execute_batch(
+        r#"INSERT INTO provider_accounts(alias,provider_kind,account_id,display_name)
+             VALUES ('hyper-new','charm-hyper','hyper-id','Hyper');
+           INSERT INTO custom_provider_configs VALUES ('hyper-new','{"baseUrl":"https://hyper.charm.land/v1"}');"#,
+    )
+    .unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT provider_kind FROM provider_accounts JOIN custom_provider_configs USING(alias) WHERE alias='hyper-new'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap(),
+        "charm-hyper"
+    );
+    for invalid in [
+        "INSERT INTO custom_provider_configs VALUES ('missing','{}')",
+        "INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('duplicate','custom','go-id')",
+        "INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('unknown','unknown','unknown-id')",
+        "UPDATE provider_accounts SET show_five_hour_usage=2 WHERE alias='hyper-new'",
+        "UPDATE provider_accounts SET show_weekly_usage=2 WHERE alias='hyper-new'",
+        "UPDATE provider_accounts SET display_name='this name is too long' WHERE alias='hyper-new'",
+    ] {
+        assert!(db.execute(invalid, []).is_err(), "{invalid}");
+    }
+    db.execute(
+        "DELETE FROM provider_accounts WHERE alias IN ('custom-old','go-old','hyper-new')",
+        [],
+    )
+    .unwrap();
+    for table in tables.iter().take(5) {
+        assert_eq!(
+            db.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0,
+            "{table}"
+        );
+    }
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
 }
 
 #[derive(Debug)]
@@ -1041,7 +1172,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -1183,7 +1314,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

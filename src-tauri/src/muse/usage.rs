@@ -154,6 +154,7 @@ fn empty() -> AccountUsage {
         plan: None,
         windows: vec![],
         reset_credits: None,
+        credit_balance: None,
         error: None,
     }
 }
@@ -277,6 +278,7 @@ pub(super) fn parse(value: &Value) -> Result<AccountUsage, String> {
             duration_seconds,
             remaining_percent,
             resets_at,
+            next_recovery_at: None,
         });
     }
     Ok(usage)
