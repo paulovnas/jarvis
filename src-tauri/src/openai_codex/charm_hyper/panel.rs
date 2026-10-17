@@ -78,10 +78,12 @@ struct Flow {
     started: Instant,
 }
 
+type CachedUsage = (Instant, Result<Value, ProviderError>);
+
 #[derive(Default)]
 pub(in crate::openai_codex) struct State {
     flows: Mutex<HashMap<String, Flow>>,
-    usage: tokio::sync::Mutex<HashMap<String, (Instant, Result<Value, ProviderError>)>>,
+    usage: tokio::sync::Mutex<HashMap<String, CachedUsage>>,
 }
 
 pub(crate) fn scope(account_id: &str) -> String {
