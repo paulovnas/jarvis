@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn marketplace_inspection_is_read_only_but_installation_keeps_command_capability() {
+    assert!(capability_allows(
+        Capability::ReadOnly,
+        "jarvis_skill_marketplace"
+    ));
+    assert!(!capability_allows(
+        Capability::ReadOnly,
+        "jarvis_propose_skills"
+    ));
+    assert!(!capability_allows(
+        Capability::WriteFiles,
+        "jarvis_propose_skills"
+    ));
+    assert!(capability_allows(
+        Capability::Commands,
+        "jarvis_propose_skills"
+    ));
+}
+
+#[test]
 fn native_canvas_instructions_match_the_available_tools_and_routing() {
     let (_fixture, hub) = super::super::tests::hub();
     for role in [
@@ -395,6 +415,187 @@ fn definition() -> RunDefinition {
     let c = catalog::tests::example();
     c.resolve(&c.flows[0].id).unwrap()
 }
+
+fn adaptive_catalog() -> catalog::Catalog {
+    let mut value = serde_json::to_value(catalog::tests::example()).unwrap();
+    let planner = "1".repeat(32);
+    let specialists = ["narrative", "design", "godot", "art", "3d", "qa"];
+    let base_agent = value["agents"][0].clone();
+    let mut agents = vec![base_agent.clone()];
+    agents.extend(specialists.iter().enumerate().map(|(i, name)| {
+        let mut agent = base_agent.clone();
+        agent["id"] = json!(format!("{:032x}", i + 100));
+        agent["name"] = json!(name);
+        agent
+    }));
+    value["agents"] = json!(agents);
+    let mut routes: Vec<_> = specialists
+        .iter()
+        .enumerate()
+        .map(|(i, name)| json!({"id":name,"label":name,"target":format!("{:032x}", i + 2)}))
+        .collect();
+    routes.push(json!({"id":"finish","label":"Entregar","target":null}));
+    let mut steps = vec![
+        json!({"id":planner,"agentId":value["agents"][0]["id"],"instructions":"Plan selectively","position":{"x":0,"y":0},"next":null,"onRework":null,"routes":routes}),
+    ];
+    steps.extend(specialists.iter().enumerate().map(|(i, name)| json!({"id":format!("{:032x}",i+2),"agentId":format!("{:032x}",i+100),"instructions":name,"position":{"x":100,"y":i*100},"next":planner,"onRework":null})));
+    value["flows"][0]["entry"] = json!(planner);
+    value["flows"][0]["steps"] = json!(steps);
+    value["flows"][0]["maxSteps"] = json!(24);
+    let catalog: catalog::Catalog = serde_json::from_value(value).unwrap();
+    catalog.validate().unwrap();
+    catalog
+}
+
+fn adaptive_definition() -> RunDefinition {
+    let catalog = adaptive_catalog();
+    catalog.resolve(&catalog.flows[0].id).unwrap()
+}
+
+#[tokio::test]
+async fn adaptive_routing_selects_only_the_requested_specialists_for_five_rpg_modes() {
+    let definition = adaptive_definition();
+    for path in [
+        vec!["godot"],
+        vec!["narrative"],
+        vec!["design", "godot", "qa"],
+        vec!["design", "art", "3d", "godot", "qa"],
+        vec!["narrative", "design", "godot", "qa"],
+    ] {
+        let catalog = adaptive_catalog();
+        let before = serde_json::to_value(&catalog).unwrap();
+        let trace: Value = serde_json::from_str(&routing::trace(&catalog, &json!({"id":definition.flow.id,"routes":path.iter().copied().chain(["finish"]).collect::<Vec<_>>()})).unwrap()).unwrap();
+        assert_eq!(trace["modelsExecuted"], false);
+        assert_eq!(trace["toolsExecuted"], false);
+        assert_eq!(trace["terminal"], true);
+        assert_eq!(
+            trace["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|step| step["agentName"].as_str())
+                .filter(|name| *name != "Researcher")
+                .collect::<Vec<_>>(),
+            path
+        );
+        assert_eq!(serde_json::to_value(&catalog).unwrap(), before);
+        let mut choices = path.iter().copied().chain(["finish"]);
+        let mut visited = vec![];
+        let (_sender, signal) = watch::channel(false);
+        let results = walk(&definition, signal, |step, _, _| {
+            let route = if step.id == definition.flow.entry {
+                Some(choices.next().unwrap())
+            } else {
+                visited.push(step.instructions);
+                None
+            };
+            let mut value = serde_json::to_value(handoff(Verdict::Completed)).unwrap();
+            if let Some(route) = route {
+                value["route"] = json!(route);
+            }
+            async move { Ok(serde_json::from_value(value).unwrap()) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(visited, path);
+        assert_eq!(results.len(), path.len() * 2 + 1);
+    }
+}
+
+#[test]
+fn adaptive_catalog_rejects_ambiguous_missing_and_nonterminating_routes() {
+    for case in 0..5 {
+        let mut catalog = adaptive_catalog();
+        let entry = &mut catalog.flows[0].steps[0];
+        match case {
+            0 => entry.next = Some(entry.routes[0].target.clone().unwrap()),
+            1 => entry.routes.push(entry.routes[0].clone()),
+            2 => entry.routes[0].id = String::new(),
+            3 => entry.routes[0].target = Some("e".repeat(32)),
+            _ => {
+                entry.routes.pop();
+            }
+        }
+        assert!(catalog.validate().is_err(), "case {case}");
+    }
+    let catalog = adaptive_catalog();
+    let id = &catalog.flows[0].id;
+    for choices in [
+        vec![],
+        vec!["invented"],
+        vec!["finish", "godot"],
+        vec!["narrative"; 48],
+    ] {
+        assert!(routing::trace(&catalog, &json!({"id":id,"routes":choices})).is_err());
+    }
+}
+
+#[tokio::test]
+async fn adaptive_completion_validates_the_choice_before_persisting_and_keeps_it_on_recovery() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = adaptive_definition();
+    let mut job = super::super::tests::job(&hub, Role::Custom, ".");
+    job.custom_step_id = Some(definition.flow.entry.clone());
+    job.custom_agent = Some(definition.agents[0].clone());
+    let id = job.id.clone();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.custom_definition = Some(definition);
+        state.jobs.insert(id.clone(), job);
+        Ok(())
+    })
+    .unwrap();
+    let exec = Execution {
+        hub: hub.clone(),
+        id: id.clone(),
+        role: Role::Custom,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    for route in [
+        None,
+        Some("invented"),
+        Some("00000000000000000000000000000002"),
+    ] {
+        let mut result = handoff(Verdict::Completed);
+        result.route = route.map(str::to_owned);
+        let tool = ToolCall {
+            id: "choose".into(),
+            name: "hub_complete".into(),
+            args: json!(result),
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let (_sender, signal) = watch::channel(false);
+        assert!(dispatch::execute(&exec, &tool, signal).await.is_err());
+        assert!(hub.job(&id).unwrap().handoff.is_none());
+    }
+    let mut result = handoff(Verdict::Completed);
+    result.route = Some("narrative".into());
+    let tool = ToolCall {
+        id: "choose".into(),
+        name: "hub_complete".into(),
+        args: json!(result),
+        status: "running".into(),
+        output: String::new(),
+        duration_ms: 0,
+    };
+    let (_sender, signal) = watch::channel(false);
+    dispatch::execute(&exec, &tool, signal).await.unwrap();
+    let recovered = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recovered.jobs[&id]
+            .handoff
+            .as_ref()
+            .unwrap()
+            .route
+            .as_deref(),
+        Some("narrative")
+    );
+}
 fn handoff(verdict: Verdict) -> Handoff {
     Handoff {
         verdict,
@@ -403,6 +604,7 @@ fn handoff(verdict: Verdict) -> Handoff {
         evidence: vec!["src/file.rs".into()],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![],
     }
 }

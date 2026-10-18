@@ -814,6 +814,7 @@ mod tests {
                 "Confirme o novo comportamento.".into(),
             ],
             limitations: vec![],
+            route: None,
             task_ids: vec![],
         }];
         publish_custom(&hub, &handoffs).unwrap();

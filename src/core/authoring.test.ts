@@ -9,6 +9,13 @@ const proposal = {
   } },
 };
 
+it("accepts a batch of reviewed marketplace skills and rejects an empty batch", () => {
+  const skill = { source: "studio/blender-skills", skillId: "modeling", name: "Blender modeling", description: "Modelagem no Blender", reason: "Ajuda o designer 3D a validar a geometria.", content: "Use the existing Blender scene.", files: ["SKILL.md"], digest: "a".repeat(64) };
+  const target = { kind: "skills", skills: [skill, { ...skill, skillId: "materials", name: "Blender materials" }] };
+  expect(pendingAuthoringSchema.parse({ ...proposal, target }).target).toEqual(target);
+  expect(pendingAuthoringSchema.safeParse({ ...proposal, target: { ...target, skills: [] } }).success).toBe(false);
+});
+
 it("accepts a scoped project instructions proposal and refuses another file", () => {
   const target = { kind: "project_instructions", path: "AGENTS.md", before: null, after: "# Project rules\nUse existing tests." };
   expect(pendingAuthoringSchema.parse({ ...proposal, target }).target).toEqual(target);

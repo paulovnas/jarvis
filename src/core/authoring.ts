@@ -3,6 +3,7 @@ import { customAgentSchema, customFlowSchema } from "./workflow-catalog";
 import { publicationProposalSchema } from "./publication";
 import { hookSchema } from "./hooks";
 import { pluginPreviewSchema } from "./plugins";
+import { skillInstallationSchema } from "./skills";
 
 const mcpProposalServerSchema = z.object({
   name: z.string(), transport: z.enum(["stdio", "http"]),
@@ -18,6 +19,7 @@ const targetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("mcp"), server: mcpProposalServerSchema, before: mcpProposalServerSchema.nullable().optional() }),
   z.object({ kind: z.literal("hook"), before: hookSchema.nullable(), after: hookSchema.nullable() }).refine(target => target.before !== null || target.after !== null, "A proposta deve identificar o hook."),
   z.object({ kind: z.literal("plugin"), preview: pluginPreviewSchema }),
+  z.object({ kind: z.literal("skills"), skills: z.array(skillInstallationSchema).min(1).max(20) }),
   z.object({ kind: z.literal("project_instructions"), path: z.literal("AGENTS.md"), before: z.string().nullable(), after: z.string().min(1) }).strict(),
 ]);
 

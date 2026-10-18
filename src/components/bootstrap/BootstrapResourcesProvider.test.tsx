@@ -1,11 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { afterEach, expect, it, vi } from "vitest";
 import { BootstrapResourcesProvider } from "./BootstrapResourcesProvider";
 import { useBootstrapResources } from "@/hooks/use-bootstrap-resources";
 import type { BootstrapResources } from "@/core/bootstrap";
 import { coreFixture } from "@/test/core-fixtures";
 import { emptyLibrary } from "@/test/library-fixtures";
+import { SkillsSettings } from "@/components/settings/SkillsSettings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -18,6 +20,19 @@ function Probe() {
   const current = context.resources.accounts[0];
   return <><span>{current?.models[0]?.id}</span><span>{context.resources.checked.core ? "checked" : "local"}</span><span>{current?.enabled ? "enabled" : "disabled"}</span><button onClick={() => context.updateAccounts([{ ...current, enabled: false }])}>Disable</button></>;
 }
+
+it("refreshes the settings catalog after a chat skill installation without reopening the app", async () => {
+  vi.mocked(listen).mockClear();
+  const skills = { includeAgents: false, directory: "/home/.jarvis/skills", skills: [], warnings: [] };
+  const resources = { ...initial(), skills, checked: { core: true, skills: true }, loaded: { ...initial().loaded, skills: true } };
+  vi.mocked(invoke).mockImplementation(command => Promise.resolve(command === "list_skills" ? { ...skills, skills: [{ id: "blender", name: "Blender modeling", description: "Model the existing scene", origin: "jarvis", path: "/home/.jarvis/skills/blender", enabled: true, automatic: true, source: "studio/blender-skills", marketplaceId: "studio/blender-skills/modeling", updateAvailable: false, updateError: null }] } : [account]));
+  render(<BootstrapResourcesProvider initial={resources}><SkillsSettings /></BootstrapResourcesProvider>);
+  expect(screen.queryByRole("button", { name: "Detalhes de Blender modeling" })).not.toBeInTheDocument();
+  const subscription = vi.mocked(listen).mock.calls.find(([name]) => name === "skills:changed");
+  expect(subscription).toBeDefined();
+  await act(async () => { subscription?.[1]({ event: "skills:changed", id: 1, payload: null }); });
+  expect(await screen.findByRole("button", { name: "Detalhes de Blender modeling" })).toBeVisible();
+});
 
 it("keeps local resources visible during stalled reads and refreshes them after reconnection", async () => {
   vi.useFakeTimers();

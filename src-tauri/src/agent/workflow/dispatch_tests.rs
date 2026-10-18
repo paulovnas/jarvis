@@ -709,6 +709,7 @@ async fn completion_wakes_parent_once_even_when_it_arrives_before_wait_registrat
         evidence: vec!["src/handler.ts:14".into()],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![],
     });
     hub.mutate(|state| {
@@ -824,6 +825,7 @@ fn completed_handoff(id: &str) -> Handoff {
         evidence: vec!["Focused regression passed".into()],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![id.into()],
     }
 }
@@ -1151,6 +1153,7 @@ fn review_admits_completed_implementation_without_removing_its_beads_dependency(
         evidence: vec![],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec!["implementation".into()],
     });
     let mut reviewer = job(&hub, Role::Reviewer, ".");
@@ -1189,6 +1192,7 @@ fn repair_can_depend_on_a_review_with_findings_but_not_a_failed_review() {
         evidence: vec![],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![],
     });
     let mut repair = job(&hub, Role::Builder, "backend");
@@ -1583,6 +1587,7 @@ fn harness_evaluation_rework_reuses_builder_and_reviewer_with_completed_prior_ro
         evidence: vec!["backend/handler.ts".into()],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![],
     });
     reviewer.dependencies = vec![builder.id.clone()];

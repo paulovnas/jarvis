@@ -29,6 +29,25 @@ const mcpProposal = (): PendingAuthoring => ({ turnId: "turn-1", toolId: "mcp-ad
 } } });
 
 describe("Jarvito chat", () => {
+  it.each([false, true])("approves a global skill batch in the island with externalQuestions=%s", async externalQuestions => {
+    const user = userEvent.setup(); const onQuestionChange = vi.fn();
+    const original = call.getMockImplementation()!;
+    call.mockImplementation(async (command, args, invokeOptions) => command === "answer_agent_authoring"
+      ? { ...globalChat.chat, revision: 3, pendingAuthoring: null }
+      : original(command, args, invokeOptions));
+    const skill = { source: "studio/blender-skills", skillId: "modeling", name: "Blender modeling", description: "Validate Blender geometry", reason: "Validar a cena do projeto.", content: "Inspect the existing scene.", files: ["SKILL.md"], digest: "a".repeat(64) };
+    globalChat.chat.activeTurnId = "turn-1";
+    globalChat.chat.pendingAuthoring = { turnId: "turn-1", toolId: "skills-add", action: "create", catalogRevision: null, summary: "Adicionar skills para o designer 3D", agentReferences: [], target: { kind: "skills", skills: [skill, { ...skill, skillId: "materials", name: "Blender materials" }] } };
+    render(<CompanionChatPane externalQuestions={externalQuestions} onQuestionChange={onQuestionChange} />);
+    expect(await screen.findByRole("dialog", { name: "Revisar instalação de skills" })).toBeVisible();
+    expect(screen.getByText("Blender modeling")).toBeVisible();
+    expect(screen.getByText("Blender materials")).toBeVisible();
+    expect(onQuestionChange).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByRole("button", { name: "Continuar no Jarvis" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Aprovar e instalar 2 skills" }));
+    await waitFor(() => expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: { turnId: "turn-1", toolId: "skills-add", approved: true, note: null } }));
+    expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
+  });
   it("accepts a shared prediction with Tab without sending and discards it after typing", async () => {
     globalChat.chat.turns = [turn("Pedido", "Entrega pronta")];
     const original = call.getMockImplementation()!;

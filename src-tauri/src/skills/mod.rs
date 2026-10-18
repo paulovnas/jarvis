@@ -1,6 +1,7 @@
 mod builtin;
 mod cache;
 mod catalog;
+pub(crate) mod installation;
 mod marketplace;
 mod runtime_cache;
 mod store;
@@ -131,7 +132,7 @@ pub struct SkillCacheCleanup {
     status: SkillCacheStatus,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Detail {
     pub name: String,
@@ -233,7 +234,10 @@ fn selected_project(state: &AppState, home: &Path) -> Result<Option<PathBuf>, Sk
     state.with_connection(home, |db| db.query_row("SELECT p.path FROM projects p JOIN navigation_selection n ON n.project_id = p.id WHERE n.id = 1", [], |r| r.get::<_, String>(0)).optional().map(|v| v.map(PathBuf::from)).map_err(Into::into))
 }
 fn snapshot(home: &Path, project: Option<&Path>) -> Result<Snapshot, SkillError> {
-    store::recover(home)?;
+    // Metadata reads must not mistake an active installation for an abandoned journal.
+    if let Ok(_guard) = CATALOG_LOCK.try_lock() {
+        store::recover(home)?;
+    }
     let config = read_config(home)?;
     let (skills, warnings) = catalog::discover(home, project, &config)?;
     Ok(Snapshot {
@@ -354,7 +358,7 @@ pub(crate) async fn authorized_snapshot(
     .map_err(|_| error("Não foi possível verificar as skills deste turno."))
 }
 
-/// Admit newly installed plugins without replacing already pinned package versions.
+/// Admit native marketplace installs and new plugins without replacing turn versions.
 pub(crate) async fn refresh_snapshot(
     home: &Path,
     project: &Path,
@@ -366,14 +370,18 @@ pub(crate) async fn refresh_snapshot(
         .filter(|skill| skill.origin == "plugin")
         .filter_map(|skill| skill.source.as_deref())
         .collect();
+    let pinned_ids: BTreeSet<_> = frozen.iter().map(|skill| skill.id.as_str()).collect();
     let added: Vec<_> = current
         .iter()
         .filter(|skill| {
-            skill.origin == "plugin"
-                && skill
-                    .source
-                    .as_deref()
-                    .is_some_and(|id| !pinned_plugins.contains(id))
+            (skill.origin == "jarvis"
+                && skill.marketplace_id.is_some()
+                && !pinned_ids.contains(skill.id.as_str()))
+                || skill.origin == "plugin"
+                    && skill
+                        .source
+                        .as_deref()
+                        .is_some_and(|id| !pinned_plugins.contains(id))
         })
         .cloned()
         .collect();

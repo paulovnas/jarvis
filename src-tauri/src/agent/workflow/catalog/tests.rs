@@ -113,6 +113,7 @@ pub(crate) fn example() -> Catalog {
                     position: Position { x: 10.0, y: 20.0 },
                     next: Some(end.clone()),
                     on_rework: None,
+                    routes: vec![],
                 },
                 Step {
                     id: end,
@@ -121,6 +122,7 @@ pub(crate) fn example() -> Catalog {
                     position: Position { x: 320.0, y: 20.0 },
                     next: None,
                     on_rework: Some(entry),
+                    routes: vec![],
                 },
             ],
         }],

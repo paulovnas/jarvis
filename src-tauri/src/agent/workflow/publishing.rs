@@ -597,6 +597,7 @@ mod tests {
             evidence: vec![],
             validation: vec![],
             limitations: vec![],
+            route: None,
             task_ids: vec![],
         });
         hub.mutate(|state| {

@@ -379,7 +379,7 @@ async fn mcp_registration_always_waits_for_native_approval_and_never_replays_or_
 #[test]
 fn catalog_tools_expose_overview_and_typed_proposals() {
     let definitions = definitions();
-    assert_eq!(definitions.len(), 8);
+    assert_eq!(definitions.len(), 11);
     let names: Vec<_> = definitions
         .iter()
         .filter_map(|definition| definition["name"].as_str())
@@ -393,8 +393,11 @@ fn catalog_tools_expose_overview_and_typed_proposals() {
             "jarvis_propose_mcp",
             "jarvis_propose_hook",
             "jarvis_propose_plugin",
+            "jarvis_skill_marketplace",
+            "jarvis_propose_skills",
             "jarvis_propose_project_instructions",
-            "jarvis_test_mcp"
+            "jarvis_test_mcp",
+            "jarvis_test_flow"
         ]
     );
     assert!(definitions[1]["parameters"]["properties"]["agent"].is_object());

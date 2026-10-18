@@ -162,6 +162,8 @@ impl Capabilities {
                 | "design_read"
                 | "jarvis_inspect_publication"
                 | "jarvis_catalog"
+                | "jarvis_test_flow"
+                | "jarvis_skill_marketplace"
                 | "http_requests"
                 | "http_result"
                 | "video_docs"
@@ -219,6 +221,7 @@ impl Capabilities {
             approval,
             parallel_safe: effect == Effect::ReadOnly
                 && !name.starts_with("jarvito_")
+                && name != "jarvis_skill_marketplace"
                 && !super::self_development::handles(name),
         }
     }
@@ -498,6 +501,25 @@ mod tests {
         assert_eq!(
             catalog.capabilities("jarvis_catalog").unwrap().effect,
             Effect::ReadOnly
+        );
+    }
+
+    #[test]
+    fn marketplace_search_needs_no_execution_approval_but_skill_batches_wait_for_native_review() {
+        let catalog = Catalog::new(&super::super::authoring::definitions());
+        let search = catalog.specs.get("jarvis_skill_marketplace").unwrap();
+        assert_eq!(search.handler, Handler::JarvisAuthoring);
+        assert_eq!(search.capabilities.effect, Effect::ReadOnly);
+        assert_eq!(search.capabilities.approval, ApprovalPolicy::Never);
+        assert!(!search.capabilities.parallel_safe);
+        let batch = catalog.specs.get("jarvis_propose_skills").unwrap();
+        assert_eq!(batch.handler, Handler::JarvisAuthoring);
+        assert_eq!(batch.capabilities.effect, Effect::Interactive);
+        assert!(!batch.capabilities.parallel_safe);
+        let global = Catalog::new(&super::super::companion_chat::tools());
+        assert_eq!(
+            global.specs.get("read_skill").unwrap().handler,
+            Handler::SkillRead
         );
     }
 

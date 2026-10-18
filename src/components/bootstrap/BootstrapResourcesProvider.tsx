@@ -3,7 +3,8 @@ import { coreSnapshotSchema, type CoreSnapshot } from "@/core/core-components";
 import type { LibrarySnapshot } from "@/core/library";
 import { accountList, type ProviderAccount } from "@/core/provider-accounts";
 import { readResource, watchResourceRecovery } from "@/core/resource-request";
-import type { SkillSnapshot } from "@/core/skills";
+import { skillsSnapshotSchema, type SkillSnapshot } from "@/core/skills";
+import { listen } from "@tauri-apps/api/event";
 import type { BootstrapResources, ProviderUsageCacheEntry } from "@/core/bootstrap";
 import { BootstrapResourcesContext } from "@/core/bootstrap-context";
 
@@ -16,6 +17,7 @@ export function BootstrapResourcesProvider({
 }) {
   const [resources, setResources] = useState(initial);
   const accountsRevision = useRef(0);
+  const skillsRevision = useRef(0);
 
   const updateCore = useCallback((snapshot: CoreSnapshot, checked?: boolean) => {
     setResources((current) => ({
@@ -26,6 +28,7 @@ export function BootstrapResourcesProvider({
     }));
   }, []);
   const updateSkills = useCallback((snapshot: SkillSnapshot, checked?: boolean) => {
+    skillsRevision.current += 1;
     setResources((current) => ({
       ...current,
       skills: snapshot,
@@ -33,6 +36,18 @@ export function BootstrapResourcesProvider({
       checked: checked === undefined ? current.checked : { ...current.checked, skills: checked },
     }));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const subscription = listen("skills:changed", () => {
+      const revision = ++skillsRevision.current;
+      void readResource("list_skills").then(value => {
+        const snapshot = skillsSnapshotSchema.parse(value);
+        if (active && revision === skillsRevision.current) updateSkills(snapshot, false);
+      }).catch(() => { /* Keep the last catalog usable if a refresh fails. */ });
+    });
+    return () => { active = false; void subscription.then(stop => stop()).catch(() => {}); };
+  }, [updateSkills]);
   const updateAccounts = useCallback((accounts: ProviderAccount[]) => {
     accountsRevision.current += 1;
     setResources((current) => ({

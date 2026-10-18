@@ -228,7 +228,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     } catch (cause) { setActionError(errorMessage(cause)); return false; }
   };
   const answerGlobalProposal = async (proposal: PendingAuthoring, approved: boolean, note: string | null, values?: McpAuthoringValues): Promise<boolean> => {
-    if (!active || !chat?.global || busy || !["mcp", "hook", "plugin"].includes(proposal.target.kind) || chat.chat.activeTurnId !== proposal.turnId || chat.chat.pendingAuthoring?.turnId !== proposal.turnId || chat.chat.pendingAuthoring.toolId !== proposal.toolId) return false;
+    if (!active || !chat?.global || busy || !["mcp", "hook", "plugin", "skills"].includes(proposal.target.kind) || chat.chat.activeTurnId !== proposal.turnId || chat.chat.pendingAuthoring?.turnId !== proposal.turnId || chat.chat.pendingAuthoring.toolId !== proposal.toolId) return false;
     setBusy(true); setActionError(null);
     try {
       const next = readChat(await invoke("answer_agent_authoring", { conversationId: chat.conversationId, decision: {
@@ -266,7 +266,7 @@ export function CompanionChatPane({ active = true, externalQuestions = false, on
     finally { setBusy(false); }
   };
   const selectedTitle = selected === "global" ? "Conversar com Jarvito" : conversations.find(item => item.id === selected)?.title ?? chat?.projectName ?? "Conversa do projeto";
-  const globalProposal = chat?.global && chat.chat.pendingAuthoring && ["mcp", "hook", "plugin"].includes(chat.chat.pendingAuthoring.target.kind) ? chat.chat.pendingAuthoring : null;
+  const globalProposal = chat?.global && chat.chat.pendingAuthoring && ["mcp", "hook", "plugin", "skills"].includes(chat.chat.pendingAuthoring.target.kind) ? chat.chat.pendingAuthoring : null;
 
   useEffect(() => {
     if (!onQuestionChange) return;

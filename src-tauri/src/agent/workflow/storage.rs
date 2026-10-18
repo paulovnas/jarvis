@@ -959,6 +959,7 @@ mod retry_tests {
                 evidence: vec!["HML access verified; GET /ncm returned 403".into()],
                 validation: vec!["Identity endpoint checked".into()],
                 limitations: vec!["Original modal objective remains unresolved".into()],
+                route: None,
                 task_ids: vec![],
             };
             source.handoff = Some(handoff.clone());

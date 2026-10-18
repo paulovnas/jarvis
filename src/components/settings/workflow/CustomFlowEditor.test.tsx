@@ -5,6 +5,22 @@ import { CustomFlowEditor } from "./CustomFlowEditor";
 import { builtinAgent, customAgent, customFlow } from "@/test/workflow-fixtures";
 
 vi.mock("./WorkflowCanvas", () => ({ default: () => <div aria-label="Canvas do fluxo" /> }));
+it("edits conditional routes while preserving stable IDs and the specialist return", async () => {
+  const user = userEvent.setup(); const save = vi.fn().mockResolvedValue(true);
+  const specialist = { ...customFlow.steps[0], id: "d".repeat(32), next: customFlow.entry };
+  const routes = [{ id: "lore", label: "Consultar narrativa", target: specialist.id }, { id: "finish", label: "Entregar", target: null }];
+  render(<CustomFlowEditor initial={{ ...customFlow, steps: [{ ...customFlow.steps[0], routes }, specialist] }} agents={[customAgent]} saving={false} creating={false} onSave={save} onClose={vi.fn()} />);
+  expect(screen.getByRole("combobox", { name: "Ao concluir" })).toBeDisabled();
+  await user.clear(screen.getByLabelText("Nome da rota 1"));
+  await user.type(screen.getByLabelText("Nome da rota 1"), "Consultar lore");
+  await user.click(screen.getByRole("button", { name: "Adicionar rota" }));
+  expect(screen.getByLabelText("Nome da rota 3")).toHaveValue("Nova rota");
+  await user.click(screen.getByRole("button", { name: "Remover rota 3" }));
+  await user.click(screen.getByRole("button", { name: "Salvar fluxo" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
+  expect(save.mock.calls[0][0].steps[0].routes).toEqual([{ ...routes[0], label: "Consultar lore" }, routes[1]]);
+  expect(save.mock.calls[0][0].steps[1].next).toBe(customFlow.entry);
+});
 it("adds blocks, blocks saving disconnected graphs and connects them through keyboard-accessible controls", async () => {
   const user = userEvent.setup(); const save = vi.fn().mockResolvedValue(true);
   render(<CustomFlowEditor initial={customFlow} agents={[customAgent]} saving={false} creating={false} onSave={save} onClose={vi.fn()} />);

@@ -300,9 +300,16 @@ impl<'a> Bridge<'a> {
                     .ok_or_else(AgentError::internal)?
                     .instructions()?
             } else {
-                companion_chat::global_prompt().into()
+                companion_chat::global_prompt()
             };
             prompt = format!("{instructions}\nExecution backend: {backend}. Use only the Jarvis MCP tools advertised for this conversation. Native built-in tools and project filesystem operations are disabled until the user confirms a project in the Jarvito interface. Managed image attachments may be generated without granting project access.\n");
+            if !image_specialist {
+                let skills =
+                    crate::skills::authorized_snapshot(home, &session.root, &frozen_skills)
+                        .await
+                        .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+                prompt.push_str(&crate::skills::prompt(&skills));
+            }
             if image_specialist {
                 prompt = format!("{instructions}\nExecution backend: {backend}. Use only the native image, attachment, question, knowledge and handoff tools advertised by Jarvis. Built-in Claude tools and alternate image engines are disabled. Use the exact native generation request; its provider and local ComfyUI processing are managed by Jarvis.\n");
                 let data = owner.data.lock().map_err(|_| AgentError::internal())?;
@@ -378,6 +385,15 @@ impl<'a> Bridge<'a> {
             return Ok(definitions);
         }
         if self.owner().global_companion() {
+            if !image_specialist {
+                self.frozen_skills = crate::skills::refresh_snapshot(
+                    self.runtime.home,
+                    &self.session.root,
+                    &self.frozen_skills,
+                )
+                .await
+                .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+            }
             let mut definitions = if image_specialist {
                 vec![attachments::definition()]
             } else {
@@ -706,10 +722,12 @@ impl<'a> Bridge<'a> {
     ) -> Result<Option<Value>, AgentError> {
         let registered = matches!(
             tool.name.as_str(),
-            "jarvis_propose_mcp" | "jarvis_propose_plugin"
+            "jarvis_propose_mcp" | "jarvis_propose_plugin" | "jarvis_propose_skills"
         ) && status == "completed"
-            && serde_json::from_str::<Value>(output)
-                .is_ok_and(|result| result["approved"] == true && result["status"] == "applied");
+            && serde_json::from_str::<Value>(output).is_ok_and(|result| {
+                result["approved"] == true
+                    && (result["status"] == "applied" || result["status"] == "partial")
+            });
         let discovery = matches!(
             tool.name.as_str(),
             "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
@@ -737,12 +755,13 @@ impl<'a> Bridge<'a> {
         if !tool.name.starts_with("mcp_") && !registered && !checked && schemas.is_empty() {
             return Ok(None);
         }
-        let capability_context = if (registered || unavailable)
-            && !self.publication
-            && !self.owner().global_companion()
-        {
-            let mut context = crate::plugins::runtime_prompt(self.runtime.home, &self.session.root)
-                .map_err(|cause| AgentError::new(cause.code, &cause.message))?;
+        let capability_context = if (registered || unavailable) && !self.publication {
+            let mut context = if self.owner().global_companion() {
+                String::new()
+            } else {
+                crate::plugins::runtime_prompt(self.runtime.home, &self.session.root)
+                    .map_err(|cause| AgentError::new(cause.code, &cause.message))?
+            };
             let skills = crate::skills::authorized_snapshot(
                 self.runtime.home,
                 &self.session.root,
@@ -1762,6 +1781,81 @@ pub(in crate::agent) mod tests {
             .await
             .unwrap();
         assert_eq!(serde_json::from_str::<Value>(&found).unwrap()["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn marketplace_batch_gateway_refreshes_partial_installs_without_a_new_user_message() {
+        let tool = |name: &str, args: Value| ToolCall {
+            id: format!("gateway-{name}"),
+            name: name.into(),
+            args,
+            status: "running".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        let fixture = crate::agent::tests::Fixture::new();
+        let home = fixture.root.as_path();
+        let checkout = crate::skills::installation::tests::repository(home);
+        let frozen = crate::skills::active(home, home).await.unwrap();
+        let selections = ["modeling", "materials"]
+            .into_iter()
+            .map(|id| crate::skills::installation::Selection {
+                source: "studio/blender-skills".into(),
+                skill_id: id.into(),
+                reason: "Useful guidance for this project's 3D scene.".into(),
+            })
+            .collect();
+        let prepared = crate::skills::installation::prepare(home, selections, || false).unwrap();
+        std::fs::write(checkout.join("materials/script.ps1"), "Changed package").unwrap();
+        let output = crate::skills::installation::apply(home, &prepared, || false).unwrap();
+        assert_eq!(output["status"], "partial");
+        let session = crate::agent::tests::session(&fixture);
+        let options = crate::agent::tests::options(ApprovalMode::Yolo);
+        let signal = session
+            .reserve("Use the approved skills".into(), options.clone())
+            .unwrap();
+        let state = AppState::default();
+        let oauth = OpenAiCodexState::default();
+        let mcp = crate::mcp::McpState::default();
+        let grants = execution_grants::GrantStore::default();
+        let mut bridge = fixture_bridge(
+            &session,
+            TurnRuntime {
+                grants: &grants,
+                state: &state,
+                oauth: &oauth,
+                mcp: &mcp,
+                home,
+            },
+            options,
+            signal,
+        );
+        bridge.frozen_skills = frozen;
+        let content = bridge
+            .discovery_content(
+                &tool("jarvis_propose_skills", json!({})),
+                &output.to_string(),
+                "completed",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let receipt: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+        let id = output["installed"][0]["id"].as_str().unwrap();
+        let context = receipt["capabilityContext"].as_str().unwrap();
+        assert!(context.contains(id));
+        assert!(context.contains("Validate existing Blender geometry"));
+        assert!(!context.contains("Review scene materials"));
+        let result = bridge
+            .dispatch(
+                &tool("read_skill", json!({"id":id})),
+                Handler::SkillRead,
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(result.contains("Inspect the current scene"));
     }
 
     #[cfg(unix)]

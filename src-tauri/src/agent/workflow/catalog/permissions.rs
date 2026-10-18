@@ -101,11 +101,20 @@ fn description(name: &str) -> &'static str {
         "jarvis_test_mcp" => {
             "Testar a conexão e o catálogo de um MCP cadastrado, sem executar suas ferramentas."
         }
+        "jarvis_test_flow" => {
+            "Conferir o percurso de um fluxo sem executar agentes ou ferramentas."
+        }
         "jarvis_propose_hook" => {
             "Propor a criação, edição ou remoção de hooks manuais para aprovação explícita."
         }
         "jarvis_propose_plugin" => {
             "Propor plugins e marketplaces para revisão e aprovação explícita."
+        }
+        "jarvis_skill_marketplace" => {
+            "Pesquisar e inspecionar skills no marketplace, sem instalar."
+        }
+        "jarvis_propose_skills" => {
+            "Propor a instalação de um conjunto de skills com aprovação explícita."
         }
         "jarvis_propose_project_instructions" => {
             "Propor a seção Jarvis no AGENTS.md do projeto para aprovação explícita."

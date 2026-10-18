@@ -442,6 +442,81 @@ fn marketplace_parses_rankings_searches_and_rejects_unsafe_sources() {
     }
 }
 
+#[tokio::test]
+async fn turn_catalog_admits_installed_marketplace_skills_without_unrelated_local_additions() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let original = root(home).join("skills/original");
+    skill(&original, "original", "Original instructions");
+    let frozen = active(home, home).await.unwrap();
+    let installed = store::target(home, "studio/blender-skills", "modeling");
+    skill(&installed, "modeling", "Use the existing Blender scene");
+    fs::write(
+        installed.join(".jarvis-source.json"),
+        serde_json::to_vec(&store::Metadata {
+            source: "studio/blender-skills".into(),
+            skill_id: "modeling".into(),
+            subpath: "modeling".into(),
+            digest: store::digest(&installed).unwrap(),
+            update_available: false,
+            update_error: None,
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    skill(
+        &root(home).join("skills/unrelated"),
+        "unrelated",
+        "Unrelated local addition",
+    );
+    let refreshed = refresh_snapshot(home, home, &frozen).await.unwrap();
+    assert_eq!(refreshed.len(), frozen.len() + 1);
+    let added = refreshed
+        .iter()
+        .find(|skill| skill.name == "modeling")
+        .unwrap();
+    assert!(search(&refreshed, &serde_json::json!({"query":"modeling"}))
+        .unwrap()
+        .contains(&added.id));
+    assert!(
+        read_from_snapshot(home, home, &serde_json::json!({"id":added.id}), &refreshed)
+            .await
+            .unwrap()
+            .contains("Use the existing Blender scene")
+    );
+    let again = refresh_snapshot(home, home, &refreshed).await.unwrap();
+    assert_eq!(again.len(), refreshed.len());
+    update_config(home, |config| {
+        config.disabled.insert(added.id.clone());
+    })
+    .unwrap();
+    assert!(
+        read_from_snapshot(home, home, &serde_json::json!({"id":added.id}), &refreshed)
+            .await
+            .is_err()
+    );
+}
+
+#[test]
+fn listing_skills_preserves_an_active_installation_journal_and_recovers_it_afterwards() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let staging = root(home).join("skill-transactions/active-install");
+    fs::create_dir_all(staging.join("next")).unwrap();
+    fs::write(staging.join("target.json"), "\"new-skill\"").unwrap();
+    fs::write(staging.join("next/SKILL.md"), "Reviewed package").unwrap();
+    let guard = lock().unwrap();
+    snapshot(home, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(staging.join("next/SKILL.md")).unwrap(),
+        "Reviewed package"
+    );
+    drop(guard);
+    let _guard = lock().unwrap();
+    store::recover(home).unwrap();
+    assert!(!staging.exists());
+}
+
 #[test]
 fn marketplace_resolution_ignores_materialized_compatibility_aliases() {
     let temp = tempfile::tempdir().unwrap();

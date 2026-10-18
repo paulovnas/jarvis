@@ -19,6 +19,7 @@ export const customAgentSchema = z.object({
 export const workflowStepSchema = z.object({
   id, agentId: agentReferenceIdSchema, instructions: z.string().max(8000),
   position: z.object({ x: z.number(), y: z.number() }), next: id.nullable(), onRework: id.nullable(),
+  routes: z.array(z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/i), label: z.string().trim().min(1).max(100), target: id.nullable() })).max(24).optional(),
 });
 export const customFlowSchema = z.object({
   id, name: z.string().min(1).max(100), description: z.string().max(500), entry: id,
@@ -76,14 +77,21 @@ export function validateGraph(flow: CustomFlow, agents: FlowAgent[]): string | n
     const agent = agents.find(agent => agent.id === step.agentId);
     if (!agent) return "Vincule um agente existente a cada bloco.";
     if (!isBuiltinAgent(agent) && agent.usage === "solo") return "Agentes Solo não podem fazer parte de fluxos. Altere o uso para Misto ou Somente em fluxos.";
-    if ([step.next, step.onRework].some(next => next && !nodes.has(next))) return "Remova as conexões para blocos que não existem mais.";
-    const seen = new Set<string>();
-    let cursor: string | null = step.id;
-    while (cursor) {
-      if (seen.has(cursor)) return "Uma conexão de conclusão forma um ciclo. Use a saída de correção para retornos.";
-      seen.add(cursor); cursor = nodes.get(cursor)?.next ?? null;
+    const routes = step.routes ?? [];
+    if (routes.length && step.next) return "Use rotas condicionais ou uma próxima etapa fixa, sem combinar as duas saídas.";
+    if (routes.length > 24 || new Set(routes.map(route => route.id)).size !== routes.length || routes.some(route => !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(route.id) || !route.label.trim() || route.label.length > 100)) return "Informe rotas com nomes válidos e identificadores únicos.";
+    if ([step.next, step.onRework, ...routes.map(route => route.target)].some(next => next && !nodes.has(next))) return "Remova as conexões para blocos que não existem mais.";
+  }
+  const finishing = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const step of flow.steps) {
+      const exits = step.routes?.length ? step.routes.map(route => route.target) : [step.next];
+      if (!finishing.has(step.id) && exits.some(target => !target || finishing.has(target))) { finishing.add(step.id); changed = true; }
     }
   }
+  if (finishing.size !== nodes.size) return "Há um ciclo sem caminho para finalizar o fluxo. Adicione uma rota de conclusão.";
   const reachable = new Set<string>();
   const pending = [flow.entry];
   while (pending.length) {
@@ -93,6 +101,7 @@ export function validateGraph(flow: CustomFlow, agents: FlowAgent[]): string | n
     const step = nodes.get(current);
     if (step?.next) pending.push(step.next);
     if (step?.onRework) pending.push(step.onRework);
+    for (const route of step?.routes ?? []) if (route.target) pending.push(route.target);
   }
   return reachable.size === nodes.size ? null : "Há blocos desconectados do início. Conecte ou remova esses blocos.";
 }

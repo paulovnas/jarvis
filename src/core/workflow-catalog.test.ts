@@ -1,7 +1,19 @@
 import { expect, it } from "vitest";
-import { flowOptions, flowSelection, modelChoiceSchema, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
+import { customFlowSchema, flowOptions, flowSelection, modelChoiceSchema, validateGraph, workflowCatalogSchema } from "./workflow-catalog";
 import { builtinAgent, builtinFlow, builtinImageAgent, builtinVideoAgent, customAgent, customFlow, customCatalog } from "@/test/workflow-fixtures";
 import { chatOptions } from "@/test/chat-fixtures";
+
+it("preserves selective routes, allows a specialist to return to its planner and rejects invalid exits", () => {
+  const specialist = { ...customFlow.steps[0], id: "d".repeat(32), next: customFlow.entry };
+  const routes = [{ id: "narrative", label: "Consultar narrativa", target: specialist.id }, { id: "finish", label: "Entregar ao usuário", target: null }];
+  const adaptive = { ...customFlow, steps: [{ ...customFlow.steps[0], routes }, specialist] };
+  expect(customFlowSchema.parse(adaptive).steps[0]).toHaveProperty("routes", routes);
+  expect(validateGraph(adaptive, [customAgent])).toBeNull();
+  expect(validateGraph({ ...adaptive, steps: [{ ...adaptive.steps[0], next: specialist.id }, specialist] }, [customAgent])).toMatch(/rota/i);
+  expect(validateGraph({ ...adaptive, steps: [{ ...adaptive.steps[0], routes: [routes[0]] }, specialist] }, [customAgent])).toMatch(/ciclo|final/i);
+  expect(validateGraph({ ...adaptive, steps: [{ ...adaptive.steps[0], routes: [routes[0], routes[0]] }, specialist] }, [customAgent])).toMatch(/rota/i);
+  expect(validateGraph({ ...adaptive, steps: [{ ...adaptive.steps[0], routes: [{ ...routes[0], target: "e".repeat(32) }] }, specialist] }, [customAgent])).toMatch(/conex|rota/i);
+});
 
 it("preserves an optional secondary target and rejects nested fallback chains", () => {
   const primary = { account: "work", model: "primary", reasoning: null };

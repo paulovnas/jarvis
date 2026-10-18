@@ -236,6 +236,8 @@ fn server(replies: Vec<(u16, String, Value)>) -> (String, std::thread::JoinHandl
                     Err(e) => panic!("fixture connection: {e}"),
                 }
             };
+            // Accepted sockets inherit the listener's nonblocking mode on Windows.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

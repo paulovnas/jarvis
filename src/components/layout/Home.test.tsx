@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as tauriEvents from "@tauri-apps/api/event";
 import type { EventCallback } from "@tauri-apps/api/event";
-import { act, render as renderView, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as renderView, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "./Home";
+// Keep cold module compilation outside the draft-navigation interaction budget.
+import "@/components/dashboard/ProjectDashboard";
 import { TitleBar } from "./TitleBar";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { populatedLibrary } from "@/test/library-fixtures";
@@ -129,17 +131,21 @@ describe("Home shell", () => {
 
   it("discards queued portrait navigation after an explicit wide-window dismissal", async () => {
     vi.stubGlobal("innerWidth", 768);
-    const user = userEvent.setup();
     render(<Home />);
     await screen.findByRole("textbox", { name: "Mensagem" });
-    await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
-    vi.stubGlobal("innerWidth", 1440);
-    act(() => window.dispatchEvent(new Event("resize")));
-    await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
-    await user.click(screen.getByRole("button", { name: "Recolher barra lateral" }));
-    await waitFor(() => expect(document.getElementById("home-shell-panels")).not.toHaveClass("panels-animating"));
-    expect(document.getElementById("workspace-panel-content")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByRole("button", { name: "Abrir barra lateral" })).toHaveAttribute("aria-expanded", "false");
+    // Keep portrait navigation queued until the explicit desktop dismissal.
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
+      vi.stubGlobal("innerWidth", 1440);
+      act(() => window.dispatchEvent(new Event("resize")));
+      fireEvent.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
+      fireEvent.click(screen.getByRole("button", { name: "Recolher barra lateral" }));
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(document.getElementById("home-shell-panels")).not.toHaveClass("panels-animating");
+      expect(document.getElementById("workspace-panel-content")).toHaveAttribute("aria-hidden", "true");
+      expect(screen.getByRole("button", { name: "Abrir barra lateral" })).toHaveAttribute("aria-expanded", "false");
+    } finally { vi.useRealTimers(); }
   });
 
   it("disables closed sidebar drag targets and enables them again only after opening", async () => {

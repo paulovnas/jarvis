@@ -25,6 +25,25 @@ function agentRequest(): PendingAuthoring {
   };
 }
 
+it("reviews all marketplace skills together and asks for one explicit installation decision", async () => {
+  const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
+  const skill = { source: "studio/blender-skills", skillId: "modeling", name: "Blender modeling", description: "Modelagem no Blender", reason: "Validar a geometria do projeto.", content: "Use the existing Blender scene.", files: ["SKILL.md", "references/geometry.md"], digest: "a".repeat(64) };
+  const request = pendingAuthoringSchema.parse({ turnId: "skills-turn", toolId: "skills-tool", action: "create", catalogRevision: null, summary: "Instalar duas skills para o designer 3D", agentReferences: [], target: { kind: "skills", skills: [skill, { ...skill, skillId: "materials", name: "Blender materials", description: "Materiais no Blender", reason: "Revisar os materiais da cena." }] } });
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar instalação de skills" });
+  expect(within(dialog).getByText("Blender modeling")).toBeVisible();
+  expect(within(dialog).getByText("Blender materials")).toBeVisible();
+  expect(within(dialog).getByText("Validar a geometria do projeto.")).toBeVisible();
+  expect(within(dialog).getByText("Revisar os materiais da cena.")).toBeVisible();
+  expect(within(dialog).getAllByText("studio/blender-skills")).toHaveLength(2);
+  expect(within(dialog).getByText(/Disponíveis em todas as conversas/)).toBeVisible();
+  expect(answer).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  expect(dialog).toBeVisible();
+  await user.click(within(dialog).getByRole("button", { name: "Aprovar e instalar 2 skills" }));
+  expect(answer).toHaveBeenCalledExactlyOnceWith(true, null);
+});
+
 it("compares project instructions and waits for an explicit approval", async () => {
   const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
   const before = "# Existing rules\nUse bun.\n";
@@ -218,7 +237,7 @@ it("shows flow routing with readable agent names and returns a rejection note", 
     turnId: "turn-2", toolId: "tool-2", action: "update", catalogRevision: 7,
     summary: "Adicionar uma etapa de validação ao fluxo.",
     target: { kind: "flow", before, after: { ...before, maxSteps: 4, steps: [
-      { ...before.steps[0], next: second },
+      { ...before.steps[0], routes: [{ id: "review", label: "Revisar entrega", target: second }, { id: "finish", label: "Entregar resultado", target: null }] },
       { id: second, agentId: agent.id, instructions: "Validar", position: { x: 320, y: 10 }, next: null, onRework: first },
     ] } },
     agentReferences: [{ id: agent.id, name: agent.name }],
@@ -228,6 +247,8 @@ it("shows flow routing with readable agent names and returns a rejection note", 
   expect(within(dialog).getAllByText(agent.name)).toHaveLength(2);
   expect(within(dialog).getByText("Etapas")).toBeVisible();
   expect(within(dialog).getByText("Limite")).toBeVisible();
+  expect(within(dialog).getByText("Revisar entrega → etapa 2")).toBeVisible();
+  expect(within(dialog).getByText("Entregar resultado → finalizar")).toBeVisible();
   await user.type(within(dialog).getByLabelText(/Orientação para o agente/), "Troque o nome antes de salvar");
   await user.click(within(dialog).getByRole("button", { name: "Recusar" }));
   expect(answer).toHaveBeenCalledWith(false, "Troque o nome antes de salvar");

@@ -221,8 +221,12 @@ fn package_files(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>, fs::Permissions)>,
     Ok(files)
 }
 pub(super) fn digest(dir: &Path) -> Result<String, SkillError> {
+    Ok(digest_files(&package_files(dir)?))
+}
+
+fn digest_files(files: &[(PathBuf, Vec<u8>, fs::Permissions)]) -> String {
     let mut hash = Sha256::new();
-    for (path, bytes, permissions) in package_files(dir)? {
+    for (path, bytes, permissions) in files {
         let path = path.to_string_lossy();
         hash.update((path.len() as u64).to_le_bytes());
         hash.update(path.as_bytes());
@@ -236,7 +240,7 @@ pub(super) fn digest(dir: &Path) -> Result<String, SkillError> {
         #[cfg(not(unix))]
         let _ = permissions;
     }
-    Ok(format!("{:x}", hash.finalize()))
+    format!("{:x}", hash.finalize())
 }
 pub(super) fn target(home: &Path, source: &str, skill_id: &str) -> PathBuf {
     root(home).join("skills").join(format!(
@@ -286,6 +290,16 @@ pub(super) fn replace(
     destination: &Path,
     meta: &Metadata,
 ) -> Result<(), SkillError> {
+    replace_package(home, source_dir, destination, meta, true)
+}
+
+fn replace_package(
+    home: &Path,
+    source_dir: &Path,
+    destination: &Path,
+    meta: &Metadata,
+    replace_existing: bool,
+) -> Result<(), SkillError> {
     recover(home)?;
     if fs::symlink_metadata(destination).is_ok_and(|m| m.is_symlink()) {
         return Err(error("O destino da skill não pode ser um link."));
@@ -306,8 +320,16 @@ pub(super) fn replace(
         file.set_permissions(permissions)?;
         file.sync_all()?;
     }
+    if digest(&next)? != meta.digest {
+        return Err(error(
+            "O conteúdo da skill mudou durante a instalação. Prepare outra proposta.",
+        ));
+    }
     catalog::parse(&catalog::skill_file(&next).ok_or_else(|| error("SKILL.md ausente."))?)?;
     save_metadata(&next, meta)?;
+    if !replace_existing && fs::symlink_metadata(destination).is_ok() {
+        return Err(error("Esta skill já está instalada. Não será substituída."));
+    }
     let target_name = destination
         .file_name()
         .ok_or_else(|| error("Destino inválido."))?
@@ -319,7 +341,7 @@ pub(super) fn replace(
     // Keep the recovery journal until both directory renames are durable.
     let staging = staging.keep();
     let result = (|| {
-        if destination.exists() {
+        if replace_existing && destination.exists() {
             fs::rename(destination, staging.join("previous"))?;
             sync_dir(destination.parent().unwrap())?;
             sync_dir(&staging)?;
@@ -370,7 +392,95 @@ pub(super) fn install(home: &Path, source: &str, skill_id: &str) -> Result<(), S
             update_available: false,
             update_error: None,
         };
-        replace(home, &dir, &destination, &meta)
+        replace_package(home, &dir, &destination, &meta, false)
+    })
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PreparedInstall {
+    pub detail: Detail,
+    pub metadata: Metadata,
+}
+
+pub(super) fn prepare_install(
+    home: &Path,
+    source: &str,
+    skill_id: &str,
+) -> Result<PreparedInstall, SkillError> {
+    validate(source, skill_id)?;
+    if fs::symlink_metadata(target(home, source, skill_id)).is_ok() {
+        return Err(error("Esta skill já está instalada. Não será substituída."));
+    }
+    review_package(home, source, skill_id)
+}
+
+pub(super) fn review_package(
+    home: &Path,
+    source: &str,
+    skill_id: &str,
+) -> Result<PreparedInstall, SkillError> {
+    validate(source, skill_id)?;
+    cache::with_repository(home, source, false, |repo| {
+        let dir = resolve(repo, skill_id)?;
+        let file = catalog::skill_file(&dir).ok_or_else(|| error("SKILL.md ausente."))?;
+        let package = package_files(&dir)?;
+        let bytes = &package
+            .iter()
+            .find(|(relative, _, _)| dir.join(relative) == file)
+            .ok_or_else(|| error("SKILL.md ausente."))?
+            .1;
+        let content = std::str::from_utf8(bytes)
+            .map_err(|_| error("O arquivo da skill precisa estar em UTF-8."))?;
+        let (name, description, _) = catalog::parse_text(content, &file)?;
+        Ok(PreparedInstall {
+            detail: Detail {
+                name,
+                description,
+                content: content.into(),
+                path: None,
+                source: Some(source.into()),
+                files: package
+                    .iter()
+                    .map(|(relative, _, _)| relative.to_string_lossy().replace('\\', "/"))
+                    .collect(),
+            },
+            metadata: Metadata {
+                source: source.into(),
+                skill_id: skill_id.into(),
+                subpath: dir
+                    .strip_prefix(repo)
+                    .map_err(|_| error("Origem inválida."))?
+                    .into(),
+                digest: digest_files(&package),
+                update_available: false,
+                update_error: None,
+            },
+        })
+    })
+}
+
+pub(super) fn install_prepared(
+    home: &Path,
+    prepared: &PreparedInstall,
+    cancelled: &impl Fn() -> bool,
+) -> Result<(), SkillError> {
+    let meta = &prepared.metadata;
+    validate(&meta.source, &meta.skill_id)?;
+    let destination = target(home, &meta.source, &meta.skill_id);
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Err(error("Esta skill já está instalada. Não será substituída."));
+    }
+    cache::with_repository(home, &meta.source, false, |repo| {
+        let dir = repo.join(&meta.subpath);
+        if digest(&dir)? != meta.digest {
+            return Err(error(
+                "O conteúdo da skill mudou após a revisão. Prepare outra proposta.",
+            ));
+        }
+        if cancelled() {
+            return Err(error("Instalação cancelada."));
+        }
+        replace_package(home, &dir, &destination, meta, false)
     })
 }
 pub(super) fn check(home: &Path) -> Result<(), SkillError> {

@@ -3117,6 +3117,7 @@ async fn authorize_declared(
                 | "jarvis_propose_mcp"
                 | "jarvis_propose_hook"
                 | "jarvis_propose_plugin"
+                | "jarvis_propose_skills"
                 | "jarvis_propose_project_instructions"
         );
     let execution_preauthorized = computer_yolo
@@ -3420,6 +3421,7 @@ fn authoring_tools_for_turn(mode: Mode, publication: bool) -> Vec<Value> {
                         | "jarvis_test_mcp"
                         | "jarvis_propose_hook"
                         | "jarvis_propose_plugin"
+                        | "jarvis_propose_skills"
                         | "jarvis_propose_project_instructions"
                 ))
                 && (!publication
@@ -4118,7 +4120,7 @@ fn run_turn_once<'a>(
                         .ok_or_else(AgentError::internal)?
                         .instructions()?
                 } else {
-                    companion_chat::global_prompt().to_owned()
+                    companion_chat::global_prompt()
                 };
                 definitions = if image_specialist {
                     workflow::image_tools(
@@ -4135,6 +4137,15 @@ fn run_turn_once<'a>(
                     }
                 } else {
                     definitions.push(questions::definition());
+                    frozen_skills =
+                        crate::skills::refresh_snapshot(home, &session.root, &frozen_skills)
+                            .await
+                            .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+                    let skills =
+                        crate::skills::authorized_snapshot(home, &session.root, &frozen_skills)
+                            .await
+                            .map_err(|cause| AgentError::new("skill_error", &cause.message))?;
+                    instructions.push_str(&crate::skills::prompt(&skills));
                     instructions.push_str(web_search::instructions(search_enabled));
                     if search_enabled {
                         definitions.push(web_search::definition());

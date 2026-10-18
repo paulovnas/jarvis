@@ -4,23 +4,23 @@ import { Flag, GripVertical, LockKeyhole, Maximize, Minus, Plus } from "lucide-r
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { isBuiltinAgent, type CustomFlow, type FlowAgent, type WorkflowGraph } from "@/core/workflow-catalog";
+import { customId, isBuiltinAgent, type CustomFlow, type FlowAgent, type WorkflowGraph } from "@/core/workflow-catalog";
 import type { WorkflowAppearance } from "@/core/workflow-appearance";
 import { WorkflowIdentityIcon } from "@/components/agents/WorkflowIdentityIcon";
 import { Hint } from "@/components/ui/hint";
 import "@xyflow/react/dist/style.css";
 import "./workflow-canvas.css";
 
-type AgentNode = Node<{ label: string; description: string; entry: boolean; builtin: boolean; delegation: boolean; appearance?: WorkflowAppearance | null }, "agent">;
+type AgentNode = Node<{ label: string; description: string; entry: boolean; builtin: boolean; delegation: boolean; routeCount: number; appearance?: WorkflowAppearance | null }, "agent">;
 const AgentBlock = memo(function AgentBlock({ data, selected }: NodeProps<AgentNode>) {
   return <Card className={`workflow-node w-56 cursor-pointer gap-0 py-0 ${selected ? "border-primary ring-1 ring-primary/30" : "border-border"}`}>
     <Handle type="target" position={Position.Left} className="cursor-pointer" aria-label="Entrada da etapa" />
     <CardContent className="p-3"><div className="flex items-center gap-2"><WorkflowIdentityIcon appearance={data.appearance} className="size-4 shrink-0" /><span className="min-w-0 flex-1 truncate text-xs font-medium">{data.label}</span><GripVertical className="size-3.5 text-muted-foreground" /></div>
       <div className="mt-2 flex flex-wrap gap-1.5">{data.entry && <Badge variant="outline" className="gap-1 border-primary/40 text-[10px] text-primary"><Flag className="size-2.5" />Início</Badge>}{data.builtin && <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground"><LockKeyhole className="size-2.5" />Jarvis</Badge>}</div>
       <p className="mt-2 line-clamp-2 min-h-8 text-[11px] leading-4 text-muted-foreground">{data.description || "Execute as instruções deste agente."}</p>
-      <div className="mt-3 flex justify-between border-t border-border pt-2 font-mono text-[9px]">{data.delegation ? <span className="text-onedark-cyan">Delega conforme o escopo →</span> : <><span className="text-primary">Concluído →</span><span className="text-destructive">Correção ↓</span></>}</div>
+      <div className="mt-3 flex justify-between border-t border-border pt-2 font-mono text-[9px]">{data.delegation ? <span className="text-onedark-cyan">Delega conforme o escopo →</span> : <><span className="text-primary">{data.routeCount ? "Escolhe uma rota →" : "Concluído →"}</span><span className="text-destructive">Correção ↓</span></>}</div>
     </CardContent>
-    {data.delegation ? <Handle type="source" position={Position.Right} id="delegation" className="cursor-pointer !bg-onedark-cyan" aria-label="Saída de delegação" /> : <><Handle type="source" position={Position.Right} id="next" className="cursor-pointer !bg-primary" aria-label="Saída de conclusão" /><Handle type="source" position={Position.Bottom} id="onRework" className="cursor-pointer !bg-destructive" aria-label="Saída de correção" /></>}
+    {data.delegation ? <Handle type="source" position={Position.Right} id="delegation" className="cursor-pointer !bg-onedark-cyan" aria-label="Saída de delegação" /> : <><Handle type="source" position={Position.Right} id="next" className="cursor-pointer !bg-primary" aria-label={data.routeCount ? "Saída condicional" : "Saída de conclusão"} /><Handle type="source" position={Position.Bottom} id="onRework" className="cursor-pointer !bg-destructive" aria-label="Saída de correção" /></>}
   </Card>;
 });
 const nodeTypes = { agent: AgentBlock };
@@ -29,8 +29,8 @@ function reconcileNodes(previous: AgentNode[], flow: WorkflowGraph, agents: Flow
   return flow.steps.map(step => {
     const old = previous.find(node => node.id === step.id);
     const agent = agents.find(item => item.id === step.agentId);
-    const data = { label: agent?.name ?? "Agente indisponível", description: step.instructions || agent?.description || "", entry: step.id === flow.entry, builtin: agent ? isBuiltinAgent(agent) : false, delegation, appearance: agent?.appearance };
-    const sameData = old && old.data.label === data.label && old.data.description === data.description && old.data.entry === data.entry && old.data.builtin === data.builtin && old.data.delegation === data.delegation && old.data.appearance === data.appearance;
+    const data = { label: agent?.name ?? "Agente indisponível", description: step.instructions || agent?.description || "", entry: step.id === flow.entry, builtin: agent ? isBuiltinAgent(agent) : false, delegation, routeCount: step.routes?.length ?? 0, appearance: agent?.appearance };
+    const sameData = old && old.data.label === data.label && old.data.description === data.description && old.data.entry === data.entry && old.data.builtin === data.builtin && old.data.delegation === data.delegation && old.data.routeCount === data.routeCount && old.data.appearance === data.appearance;
     // Keep measured dimensions and drag state: dropping them hides nodes while React Flow remeasures.
     return { ...old, id: step.id, type: "agent", position: step.position, selected: step.id === selected, data: sameData ? old.data : data };
   });
@@ -53,7 +53,10 @@ export default function WorkflowCanvas({ flow, agents, selected, onSelect, onCha
     const positions = changes.filter(change => change.type === "position");
     if (!("connections" in flow) && positions.some(change => change.position)) onChange({ ...flow, steps: flow.steps.map(step => { const change = positions.find(item => item.id === step.id); return change?.position ? { ...step, position: change.position } : step; }) });
   }, [disabled, flow, onChange, onSelect]);
-  const edges = useMemo<Edge[]>(() => "connections" in flow ? flow.connections.map(connection => ({ id: connection.id, source: connection.source, sourceHandle: "delegation", target: connection.target, label: connection.label, type: "smoothstep", style: { stroke: "var(--color-onedark-cyan)" }, labelStyle: { fill: "var(--muted-foreground)", fontSize: 10 }, labelBgStyle: { fill: "var(--card)" } })) : flow.steps.flatMap(step => (["next", "onRework"] as const).flatMap(kind => step[kind] ? [{ id: `${step.id}/${kind}`, source: step.id, sourceHandle: kind, target: step[kind], label: kind === "next" ? "Concluído" : "Correção", type: "smoothstep", style: { stroke: kind === "next" ? "var(--primary)" : "var(--destructive)" }, labelStyle: { fill: "var(--muted-foreground)", fontSize: 10 }, labelBgStyle: { fill: "var(--card)" } }] : [])), [flow]);
+  const edges = useMemo<Edge[]>(() => "connections" in flow ? flow.connections.map(connection => ({ id: connection.id, source: connection.source, sourceHandle: "delegation", target: connection.target, label: connection.label, type: "smoothstep", style: { stroke: "var(--color-onedark-cyan)" }, labelStyle: { fill: "var(--muted-foreground)", fontSize: 10 }, labelBgStyle: { fill: "var(--card)" } })) : flow.steps.flatMap(step => [
+    ...(["next", "onRework"] as const).flatMap(kind => step[kind] ? [{ id: `${step.id}/${kind}`, source: step.id, sourceHandle: kind, target: step[kind], label: kind === "next" ? "Concluído" : "Correção", type: "smoothstep", style: { stroke: kind === "next" ? "var(--primary)" : "var(--destructive)" }, labelStyle: { fill: "var(--muted-foreground)", fontSize: 10 }, labelBgStyle: { fill: "var(--card)" } }] : []),
+    ...(step.routes ?? []).flatMap(route => route.target ? [{ id: `${step.id}/route/${route.id}`, source: step.id, sourceHandle: "next", target: route.target, label: route.label, type: "smoothstep", style: { stroke: "var(--primary)", strokeDasharray: "4 3" }, labelStyle: { fill: "var(--muted-foreground)", fontSize: 10 }, labelBgStyle: { fill: "var(--card)" } }] : []),
+  ]), [flow]);
   return <div className="workflow-canvas h-full min-h-64 overflow-hidden rounded-md border border-border bg-sidebar" aria-label="Canvas do fluxo"><ReactFlowProvider><ReactFlow<AgentNode>
     nodes={state.nodes} edges={edges} nodeTypes={nodeTypes} colorMode="dark" fitView minZoom={0.2} maxZoom={1.6}
     nodesDraggable={!disabled} nodesConnectable={!disabled} edgesReconnectable={false} deleteKeyCode={null}
@@ -61,7 +64,11 @@ export default function WorkflowCanvas({ flow, agents, selected, onSelect, onCha
     onNodesChange={onNodesChange}
     onConnect={connection => {
       if (disabled || !connection.source || !connection.target || !["next", "onRework"].includes(connection.sourceHandle ?? "")) return;
-      if (!("connections" in flow)) onChange({ ...flow, steps: flow.steps.map(step => step.id === connection.source ? { ...step, [connection.sourceHandle === "next" ? "next" : "onRework"]: connection.target } : step) });
+      if (!("connections" in flow)) onChange({ ...flow, steps: flow.steps.map(step => {
+        if (step.id !== connection.source) return step;
+        if (connection.sourceHandle === "next" && step.routes?.length) return step.routes.length >= 24 ? step : { ...step, next: null, routes: [...step.routes, { id: customId(), label: `Rota ${step.routes.length + 1}`, target: connection.target }] };
+        return { ...step, [connection.sourceHandle === "next" ? "next" : "onRework"]: connection.target };
+      }) });
     }}
     ariaLabelConfig={{ "node.a11yDescription.default": "Pressione Enter para selecionar um bloco. Use as setas para movê-lo.", "controls.zoomIn.ariaLabel": "Aumentar zoom", "controls.zoomOut.ariaLabel": "Diminuir zoom", "controls.fitView.ariaLabel": "Enquadrar fluxo" }}
   ><Background color="var(--border)" gap={20} /><CanvasControls /></ReactFlow></ReactFlowProvider></div>;

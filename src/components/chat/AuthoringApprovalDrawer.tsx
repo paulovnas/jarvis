@@ -15,6 +15,7 @@ import { McpProposalFields } from "./McpProposalFields";
 import { HookProposalFields } from "./HookProposalFields";
 import { PluginChangeReview } from "@/components/settings/PluginChangeReview";
 import { ProjectInstructionsReview } from "./ProjectInstructionsReview";
+import { SkillInstallationReview } from "./SkillInstallationReview";
 import { AGENT_USAGE_LABELS, CAPABILITY_LABELS, type CustomAgent, type CustomFlow } from "@/core/workflow-catalog";
 import { agentAppearance, flowAppearance } from "@/core/workflow-appearance";
 import { hasMcpAuthoringValues, type McpAuthoringValues, type PendingAuthoring } from "@/core/authoring";
@@ -27,7 +28,7 @@ type Decision = (approved: boolean, note: string | null, mcpValues?: McpAuthorin
 function changedFields(request: PendingAuthoring): string[] {
   const target = request.target;
   if (target.kind === "project_instructions") return target.before === target.after ? [] : ["content"];
-  if (target.kind === "publication" || target.kind === "plugin") return [];
+  if (target.kind === "publication" || target.kind === "plugin" || target.kind === "skills") return [];
   if (target.kind === "mcp") {
     const before = target.before;
     if (!before) return [];
@@ -114,7 +115,7 @@ function FlowReview({ flow, references }: { flow: CustomFlow; references: Pendin
             {step.id === flow.entry && <Badge variant="outline" className="shrink-0 text-[9px] text-onedark-green">Início</Badge>}
           </div>
           <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-2 font-mono text-[10px] text-muted-foreground">
-            <span>Concluir → {step.next ? `etapa ${indexes.get(step.next) ?? "?"}` : "finalizar"}</span>
+            {step.routes?.length ? step.routes.map(route => <span key={route.id}>{route.label} → {route.target ? `etapa ${indexes.get(route.target) ?? "?"}` : "finalizar"}</span>) : <span>Concluir → {step.next ? `etapa ${indexes.get(step.next) ?? "?"}` : "finalizar"}</span>}
             <span className="text-muted-foreground/40">•</span>
             <span>Correção → {step.onRework ? `etapa ${indexes.get(step.onRework) ?? "?"}` : "parar"}</span>
           </div>
@@ -181,12 +182,14 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
   const isMcp = request.target.kind === "mcp";
   const isHook = request.target.kind === "hook";
   const isPlugin = request.target.kind === "plugin";
+  const skillCount = request.target.kind === "skills" ? request.target.skills.length : 0;
+  const isSkills = skillCount > 0;
   const isProjectInstructions = request.target.kind === "project_instructions";
   const credentialsReady = request.target.kind !== "mcp" || hasMcpAuthoringValues(request.target.server, mcpValues, request.target.before);
   const privateValuesChanged = isMcp && [...Object.values(mcpValues.environment), ...Object.values(mcpValues.headers)].some(value => value.trim());
   const requestsRevision = isPublication && note.trim().length > 0;
-  const action = isMcp ? "Adicionar" : request.action === "delete" ? "Remover" : request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
-  const target = isProjectInstructions ? "AGENTS.md" : isPublication ? "ações" : isMcp ? "MCP" : isHook ? "hook" : isPlugin ? "plugin" : isAgent ? "agente" : "fluxo";
+  const action = isSkills ? "Instalar" : isMcp ? "Adicionar" : request.action === "delete" ? "Remover" : request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
+  const target = isSkills ? "skills" : isProjectInstructions ? "AGENTS.md" : isPublication ? "ações" : isMcp ? "MCP" : isHook ? "hook" : isPlugin ? "plugin" : isAgent ? "agente" : "fluxo";
   const answer = async (approved: boolean) => {
     if (pending || (approved && !credentialsReady)) return;
     setPending(true);
@@ -197,31 +200,31 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
     <SheetContent showCloseButton={false} className="dark gap-0 border-border bg-background data-[side=right]:w-[min(720px,94vw)] data-[side=right]:sm:max-w-[720px]">
       <SheetHeader className="shrink-0 border-b border-border bg-card/55 p-5 pr-6">
         <div className="mb-3 flex items-center gap-2"><Badge variant="outline" className="gap-1.5 border-primary/30 text-primary">{isPublication ? <Sparkles className="size-3" /> : isMcp ? <Plug className="size-3" /> : isHook ? <Anchor className="size-3" /> : isAgent ? <Bot className="size-3" /> : <Route className="size-3" />}{action} {target}</Badge>{request.catalogRevision !== null && <Badge variant="secondary" className="font-mono text-[9px]">revisão {request.catalogRevision}</Badge>}{owner && <span className="ml-auto truncate text-xs text-muted-foreground">Solicitado por {owner}</span>}</div>
-        <SheetTitle className="text-xl">{isProjectInstructions ? "Revisar instruções do projeto" : isPublication ? "Revisar ações Git e GitHub" : isMcp ? "Revisar servidor MCP" : "Revisar alteração no Jarvis"}</SheetTitle>
+        <SheetTitle className="text-xl">{isSkills ? "Revisar instalação de skills" : isProjectInstructions ? "Revisar instruções do projeto" : isPublication ? "Revisar ações Git e GitHub" : isMcp ? "Revisar servidor MCP" : "Revisar alteração no Jarvis"}</SheetTitle>
         <SheetDescription className="mt-1 max-w-2xl leading-5">{request.summary}</SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         <Alert className="mb-5 border-onedark-green/25 bg-onedark-green/5 text-onedark-green">
           <ShieldCheck aria-hidden="true" />
           <AlertTitle>Você mantém o controle</AlertTitle>
-          <AlertDescription className="text-foreground">{isProjectInstructions ? "O AGENTS.md ainda não foi alterado. Confira o arquivo atual e a proposta antes de aprovar." : isPublication ? "Nenhuma operação Git ou GitHub foi executada. O Jarvis realizará somente as ações exibidas após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
+          <AlertDescription className="text-foreground">{isSkills ? "Nenhuma skill desta proposta foi instalada. Confira o conjunto antes de aprovar a instalação." : isProjectInstructions ? "O AGENTS.md ainda não foi alterado. Confira o arquivo atual e a proposta antes de aprovar." : isPublication ? "Nenhuma operação Git ou GitHub foi executada. O Jarvis realizará somente as ações exibidas após sua aprovação." : "A configuração ainda não foi alterada. O Jarvis salvará esta proposta somente se você aprovar."}</AlertDescription>
         </Alert>
         {request.action === "update" && !isPlugin && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCompareArrows className="size-3.5" />Campos alterados</p>
           <div className="flex flex-wrap gap-1.5">{changes.length ? changes.map(field => <Badge key={field} variant="outline" className="text-[10px] text-onedark-yellow">{fieldLabels[field] ?? field}</Badge>) : <span className="text-xs text-muted-foreground">{privateValuesChanged ? "Substituir valores privados" : "A proposta não altera nenhum campo."}</span>}</div>
         </section>}
-        {request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : request.target.kind === "mcp" ? <McpProposalFields server={request.target.server} before={request.target.before} values={mcpValues} disabled={pending} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <PublicationReview proposal={request.target.after} />}
+        {request.target.kind === "skills" ? <SkillInstallationReview skills={request.target.skills} /> : request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : request.target.kind === "mcp" ? <McpProposalFields server={request.target.server} before={request.target.before} values={mcpValues} disabled={pending} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <PublicationReview proposal={request.target.after} />}
         <Separator className="my-5" />
         <div className="space-y-2">
           <Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label>
           <Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder={isPublication ? "Descreva o ajuste que o agente deve incorporar antes de apresentar uma nova proposta." : "Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação."} className="min-h-20 resize-y" />
           {isPublication && <p className="text-xs leading-5 text-muted-foreground">Ao adicionar uma orientação, nenhuma ação será executada agora. O agente GitHub revisará a proposta e pedirá sua aprovação novamente.</p>}
         </div>
-        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isProjectInstructions ? "A autorização vale apenas para o AGENTS.md deste projeto. Se o arquivo mudar durante a revisão, será necessário preparar outra proposta." : isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : isMcp ? request.action === "update" ? "A autorização vale apenas para atualizar este MCP na revisão exibida. Alterações concorrentes exigem outra proposta." : "A autorização vale apenas para adicionar este novo servidor MCP. Configurações existentes não serão substituídas." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isSkills ? "A autorização vale uma vez para os pacotes exibidos. Skills existentes não serão substituídas. Se o conteúdo mudar durante a revisão, será necessária outra proposta." : isProjectInstructions ? "A autorização vale apenas para o AGENTS.md deste projeto. Se o arquivo mudar durante a revisão, será necessário preparar outra proposta." : isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : isMcp ? request.action === "update" ? "A autorização vale apenas para atualizar este MCP na revisão exibida. Alterações concorrentes exigem outra proposta." : "A autorização vale apenas para adicionar este novo servidor MCP. Configurações existentes não serão substituídas." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || !credentialsReady || (!isPlugin && !privateValuesChanged && request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : isMcp && request.action === "create" ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button>
+        <Button className="cursor-pointer" disabled={pending || !credentialsReady || (!isPlugin && !privateValuesChanged && request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{isSkills ? `Aprovar e instalar ${skillCount} ${skillCount === 1 ? "skill" : "skills"}` : requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : isMcp && request.action === "create" ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

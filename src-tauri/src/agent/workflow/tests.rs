@@ -2361,6 +2361,7 @@ fn recovery_reconciles_completed_workers_and_resumes_only_interrupted_turns() {
         evidence: vec![],
         validation: vec![],
         limitations: vec![],
+        route: None,
         task_ids: vec![],
     });
     let (completed_session, _) = storage::worker(&hub, &completed, None).unwrap();
@@ -2657,6 +2658,7 @@ fn complete_closure_requires_independent_approval_for_the_exact_bead() {
         evidence: vec!["src/code.ts".into()],
         validation: vec!["Tests pass".into()],
         limitations: vec![],
+        route: None,
         task_ids: vec!["task-a".into()],
     });
     hub.mutate(|state| {

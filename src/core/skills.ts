@@ -10,6 +10,7 @@ export const skillSchema = z.object({
 });
 export const skillsSnapshotSchema = z.object({ includeAgents: z.boolean(), directory: z.string(), skills: z.array(skillSchema), warnings: z.array(z.string()) });
 export const skillDetailSchema = z.object({ name: z.string(), description: z.string(), content: z.string(), path: z.string().nullable(), source: z.string().nullable(), files: z.array(z.string()) });
+export const skillInstallationSchema = z.object({ source: z.string(), skillId: z.string(), name: z.string(), description: z.string(), reason: z.string(), content: z.string(), files: z.array(z.string()), digest: z.string().regex(/^[a-f0-9]{64}$/) });
 export const marketplaceSchema = z.array(z.object({ id: z.string(), skillId: z.string(), name: z.string(), source: z.string(), installs: z.number().nonnegative() }));
 export const skillUpdateSchema = z.object({ snapshot: skillsSnapshotSchema, updated: z.number().int().nonnegative(), errors: z.array(z.string()) });
 export const skillCacheStatusSchema = z.object({ bytes: z.number().nonnegative(), repositories: z.number().int().nonnegative(), residues: z.number().int().nonnegative() });

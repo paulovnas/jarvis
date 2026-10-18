@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkflowCanvas from "./WorkflowCanvas";
 import { builtinAgent, builtinFlow, customAgent, customFlow } from "@/test/workflow-fixtures";
 const originalResizeObserver = window.ResizeObserver;
+const originalBBox = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getBBox");
 
 beforeEach(() => {
   // jsdom has no layout. Report a real measurement once, as the browser does
@@ -11,6 +12,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(224);
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(160);
   vi.stubGlobal("DOMMatrixReadOnly", class { m22 = 1; });
+  Object.defineProperty(SVGElement.prototype, "getBBox", { configurable: true, value: () => ({ x: 0, y: 0, width: 100, height: 16 }) });
   window.ResizeObserver = class {
     constructor(private callback: ResizeObserverCallback) {}
     observe(target: Element) { queueMicrotask(() => this.callback([{ target, contentRect: new DOMRect(0, 0, 224, 160), borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [] }], this)); }
@@ -28,7 +30,23 @@ it("renders native flow definitions as a locked delegation canvas", async () => 
   fireEvent.keyDown(view.container.querySelector<HTMLElement>(".react-flow__node")!, { key: "ArrowRight" });
   expect(onChange).not.toHaveBeenCalled();
 });
-afterEach(() => { window.ResizeObserver = originalResizeObserver; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { window.ResizeObserver = originalResizeObserver; if (originalBBox) Object.defineProperty(SVGElement.prototype, "getBBox", originalBBox); else Reflect.deleteProperty(SVGElement.prototype, "getBBox"); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("shows named conditional connections without turning them into a fixed sequence", async () => {
+  const specialist = { ...customFlow.steps[0], id: "d".repeat(32), position: { x: 360, y: 40 }, next: customFlow.entry };
+  const flow = { ...customFlow, steps: [{ ...customFlow.steps[0], routes: [{ id: "lore", label: "Consultar narrativa", target: specialist.id }, { id: "finish", label: "Entregar", target: null }] }, specialist] };
+  const props = { agents: [customAgent], selected: flow.entry, onChange: vi.fn(), onSelect: vi.fn(), disabled: false };
+  const view = render(<WorkflowCanvas flow={customFlow} {...props} />);
+  await waitFor(() => expect(view.container.querySelector(".react-flow__node")).toBeVisible());
+  view.rerender(<WorkflowCanvas flow={flow} {...props} />);
+  await waitFor(() => expect(view.container.querySelectorAll(".react-flow__edge")).toHaveLength(2));
+  expect(screen.getByText("Consultar narrativa")).toBeVisible();
+  expect(screen.getByText("Escolhe uma rota →")).toBeVisible();
+  expect(screen.getByLabelText("Saída condicional")).toBeInTheDocument();
+  view.rerender(<WorkflowCanvas flow={customFlow} {...props} />);
+  await waitFor(() => expect(view.container.querySelectorAll(".react-flow__edge")).toHaveLength(0));
+  expect(screen.getByLabelText("Saída de conclusão")).toBeInTheDocument();
+});
 
 it("keeps a measured node visible while moving and preserves its position after editing its label", async () => {
   function Editor() {

@@ -21,6 +21,13 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
         definition("hub_send", "Deliver focused evidence or instructions to your parent or an active child. Does not change permissions or wake a completed agent; use hub_retry for a follow-up round.", json!({"to":string,"message":string}), &["to","message"]),
         definition("hub_complete", "Deliver your final structured handoff to the parent and end this agent. Do not use until child work has settled. The runtime re-reads the assigned Beads task and comments before accepting completion; if they changed, incorporate the returned snapshot and call hub_complete again. Reviewer uses approved/rework/blocked; other roles use completed/blocked. Cite actual evidence and validation, and list limitations honestly. taskIds contains exact Beads IDs actually addressed or reviewed (including the epic when reviewed); only approved IDs can be closed in Complete. Use [] for research without a task.", json!({"verdict":{"type":"string","enum":["completed","approved","rework","blocked"]},"summary":string,"outcomes":strings,"evidence":strings,"validation":strings,"limitations":strings,"taskIds":strings}), &["verdict","summary","outcomes","evidence","validation","limitations","taskIds"]),
     ];
+    if flow == Flow::Custom {
+        let complete = tools
+            .iter_mut()
+            .find(|tool| tool["name"] == "hub_complete")
+            .expect("completion tool exists");
+        complete["parameters"]["properties"]["route"] = json!({"type":"string","minLength":1,"maxLength":64,"description":"For a step with declared conditional exits, choose exactly one of its route IDs when completed/approved. Omit for fixed connections and rework/blocked. The runtime validates the saved graph before scheduling."});
+    }
     if role.coordinator() || (flow == Flow::Publication && role == Role::Github) {
         let spawn_roles: Vec<_> = [
             Role::Planner,
@@ -772,6 +779,32 @@ async fn complete(
         return Err(invalid("Veredito incompatível com o papel do agente."));
     }
     let job = exec.hub.job(&exec.id)?;
+    if exec.flow == Flow::Custom
+        && (matches!(handoff.verdict, Verdict::Completed | Verdict::Approved)
+            || handoff.route.is_some())
+    {
+        let state = exec
+            .hub
+            .manifest
+            .lock()
+            .map_err(|_| AgentError::internal())?;
+        let step = state.custom_definition.as_ref().and_then(|definition| {
+            definition
+                .flow
+                .steps
+                .iter()
+                .find(|step| Some(step.id.as_str()) == job.custom_step_id.as_deref())
+        });
+        if let Some(step) = step {
+            routing::next_step(step, &handoff.verdict, handoff.route.as_deref())?;
+        } else if handoff.route.is_some() {
+            return Err(invalid("A rota não pertence a uma etapa do fluxo atual."));
+        }
+    } else if handoff.route.is_some() {
+        return Err(invalid(
+            "Rotas condicionais pertencem somente a fluxos personalizados.",
+        ));
+    }
     if let Some(recorded) = &job.handoff {
         return if recorded == &handoff {
             Ok("Handoff já registrado; o resultado confirmado foi preservado.".into())

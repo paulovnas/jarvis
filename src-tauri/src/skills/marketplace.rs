@@ -141,3 +141,11 @@ pub(super) fn browse(query: &str, ranking: &str, limit: usize) -> Result<Vec<Ent
     cache.insert(key, (Instant::now(), entries.clone()));
     Ok(entries)
 }
+
+#[cfg(test)]
+pub(super) fn cache_search(query: &str, limit: usize, raw: &str) {
+    CACHE.lock().unwrap().insert(
+        format!("alltime:{}:{}", limit.clamp(24, 600), query),
+        (Instant::now(), parse_search(raw).unwrap()),
+    );
+}

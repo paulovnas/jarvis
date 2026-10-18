@@ -11,9 +11,10 @@ Use esta skill quando o usuário pedir um novo agente, um novo fluxo ou a melhor
 2. Consulte `jarvis_catalog` com `view: overview`. Para editar, leia também o item exato com `view: agent` ou `view: flow`.
 3. Preserve IDs ao editar. Para novos agentes, fluxos e etapas, gere IDs distintos com 32 caracteres hexadecimais.
 4. Escreva instruções específicas, verificáveis e proporcionais ao papel. Conceda somente a capacidade e as ferramentas necessárias. Defina o uso como `solo` para o agente principal de um chat, `flow_only` para uso exclusivo em fluxos ou `mixed` para ambos. Um modelo nulo herda o modelo atual do chat.
-5. Em fluxos, use somente agentes `mixed` ou `flow_only`, conecte todas as etapas a partir da entrada, mantenha a saída normal sem ciclos e use `onRework` somente para retornos intencionais de correção.
+5. Em fluxos, use somente agentes `mixed` ou `flow_only` e conecte todas as etapas a partir da entrada. Para uma sequência fixa, use `next`; para seleção, use `next: null` e `routes: [{id, label, target}]`. O agente escolhe exatamente um `id` em `hub_complete.route`; `target` é o ID de uma etapa ou `null` para finalizar. Especialistas podem retornar ao mesmo Planejador. Inclua uma saída de finalização e limite os retornos com `maxSteps`. Use `onRework` somente para correções reais. Um agente executa por vez; não invente despacho paralelo ou acesso a `hub_spawn`.
 6. Envie uma única proposta coerente com `jarvis_propose_agent` ou `jarvis_propose_flow`, usando a revisão exata recém-lida. O Jarvis abrirá a revisão para o usuário e só salvará após aprovação explícita.
 7. Se a proposta for recusada, incorpore a observação do usuário. Não reenvie a mesma proposta sem uma mudança solicitada.
+8. Após aprovação, use `jarvis_test_flow` com o ID salvo e `routes` contendo as escolhas ordenadas de cada cenário. Confira os IDs reais das etapas e agentes retornados. Esse teste valida o percurso declarado, sem chamar modelos nem ferramentas: não comprova a classificação semântica do Planejador ou o trabalho dos especialistas.
 
 Agentes e fluxos nativos do Jarvis são imutáveis. Nunca tente alterá-los por arquivos, terminal ou outras ferramentas.
 

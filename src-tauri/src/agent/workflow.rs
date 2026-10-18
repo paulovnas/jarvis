@@ -8,6 +8,7 @@ mod guidance;
 mod image;
 mod publishing;
 mod recovery;
+pub(super) mod routing;
 pub(crate) mod settings;
 mod storage;
 #[cfg(test)]
@@ -67,6 +68,8 @@ struct Handoff {
     validation: Vec<String>,
     limitations: Vec<String>,
     task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

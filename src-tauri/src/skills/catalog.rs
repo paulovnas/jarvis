@@ -38,6 +38,13 @@ pub(super) fn text(path: &Path) -> Result<String, SkillError> {
 }
 pub(super) fn parse(path: &Path) -> Result<(String, String, bool), SkillError> {
     let raw = text(path)?;
+    parse_text(&raw, path)
+}
+
+pub(super) fn parse_text(raw: &str, path: &Path) -> Result<(String, String, bool), SkillError> {
+    if raw.len() > MAX_TEXT {
+        return Err(error("Arquivo de skill excede 1 MiB."));
+    }
     let raw = raw.trim_start_matches('\u{feff}');
     let mut lines = raw.lines();
     if lines.next().map(str::trim) != Some("---") {

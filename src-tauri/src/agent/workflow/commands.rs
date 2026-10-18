@@ -757,6 +757,7 @@ mod tests {
             evidence: vec!["large private evidence".repeat(1000)],
             validation: vec![],
             limitations: vec![],
+            route: None,
             task_ids: vec![],
         });
         let mut state = hub.manifest.lock().unwrap();

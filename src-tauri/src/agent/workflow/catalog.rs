@@ -69,6 +69,16 @@ pub struct Step {
     pub position: Position,
     pub next: Option<String>,
     pub on_rework: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<Route>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Route {
+    pub id: String,
+    pub label: String,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -413,6 +423,7 @@ pub(crate) fn builtin_flows() -> Vec<BuiltinFlowDefinition> {
                 position: node_position(flow, *role),
                 next: None,
                 on_rework: None,
+                routes: vec![],
             })
             .collect();
         let connections = flow
@@ -511,6 +522,27 @@ impl Catalog {
         }
         let nodes: BTreeMap<_, _> = flow.steps.iter().map(|s| (s.id.as_str(), s)).collect();
         for step in &flow.steps {
+            let mut route_ids = BTreeSet::new();
+            if step.routes.len() > 24
+                || (!step.routes.is_empty() && step.next.is_some())
+                || step.routes.iter().any(|route| {
+                    route.id.is_empty()
+                        || route.id.len() > 64
+                        || !route
+                            .id
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+                        || !route.id.as_bytes()[0].is_ascii_alphanumeric()
+                        || !route_ids.insert(route.id.as_str())
+                        || !text_valid(&route.label, 100, true)
+                        || route
+                            .target
+                            .as_ref()
+                            .is_some_and(|id| !nodes.contains_key(id.as_str()))
+                })
+            {
+                return Err(invalid("Rotas inválidas: use identificadores únicos, nomes e destinos existentes, sem combinar rotas com uma próxima etapa fixa."));
+            }
             if let Some(agent) = self.agents.iter().find(|agent| agent.id == step.agent_id) {
                 if !agent.usage.allows_flow() {
                     return Err(invalid(
@@ -534,18 +566,34 @@ impl Catalog {
                     "Todas as etapas precisam de agentes e conexões válidos.",
                 ));
             }
-            let mut seen = BTreeSet::new();
-            let mut cursor = Some(step.id.as_str());
-            while let Some(id) = cursor {
-                if !seen.insert(id) {
-                    return Err(invalid("Conexões de conclusão devem chegar ao fim. Use a saída de correção para retornos."));
+        }
+        let mut finishing = BTreeSet::new();
+        loop {
+            let before = finishing.len();
+            for step in &flow.steps {
+                let exits: Vec<_> = if step.routes.is_empty() {
+                    vec![step.next.as_deref()]
+                } else {
+                    step.routes
+                        .iter()
+                        .map(|route| route.target.as_deref())
+                        .collect()
+                };
+                if exits
+                    .iter()
+                    .any(|target| target.is_none_or(|id| finishing.contains(id)))
+                {
+                    finishing.insert(step.id.as_str());
                 }
-                cursor = nodes
-                    .get(id)
-                    .ok_or_else(|| invalid("Conexão inválida."))?
-                    .next
-                    .as_deref();
             }
+            if finishing.len() == before {
+                break;
+            }
+        }
+        if finishing.len() != nodes.len() {
+            return Err(invalid(
+                "Conexões de conclusão devem chegar ao fim. Há um ciclo sem rota para finalizar.",
+            ));
         }
         let mut visited = BTreeSet::new();
         let mut pending = vec![flow.entry.as_str()];
@@ -556,6 +604,11 @@ impl Catalog {
                     [step.next.as_deref(), step.on_rework.as_deref()]
                         .into_iter()
                         .flatten(),
+                );
+                pending.extend(
+                    step.routes
+                        .iter()
+                        .filter_map(|route| route.target.as_deref()),
                 );
             }
         }
