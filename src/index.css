@@ -141,8 +141,11 @@ html[data-companion], html[data-companion] body, html[data-companion] #root { ba
 .markdown-editor-prose li[data-type="taskItem"] { display: flex; gap: 0.6em; }
 .markdown-editor-prose li[data-type="taskItem"] > div { flex: 1; min-width: 0; }
 .markdown-editor-prose li[data-type="taskItem"] > label { padding-top: 0.2em; }
-.markdown-editor-prose:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: var(--muted-foreground); }
+.markdown-editor-prose:not(.skill-editor):has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: var(--muted-foreground); }
 .panels-animating > [data-panel] { transition: flex-grow 200ms ease-out; }
+html[data-native-window-resize], html[data-native-window-resize] * {
+  cursor: var(--native-window-resize-cursor) !important;
+}
 @media (prefers-reduced-motion: reduce) {
   [data-slot="skeleton"] { animation: none; }
   .panels-animating > [data-panel] { transition: none; }

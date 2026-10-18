@@ -467,7 +467,10 @@ fn global_scope_changes_reject_unloaded_durable_queues_and_preserve_their_messag
 #[test]
 fn publication_authoring_catalog_exposes_only_metadata_and_build_mcp_registration() {
     for (mode, expected) in [
-        (Mode::Build, vec!["jarvis_catalog", "jarvis_propose_mcp"]),
+        (
+            Mode::Build,
+            vec!["jarvis_catalog", "jarvis_propose_mcp", "jarvis_test_mcp"],
+        ),
         (Mode::Plan, vec!["jarvis_catalog"]),
     ] {
         let definitions = authoring_tools_for_turn(mode, true);

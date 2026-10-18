@@ -9,7 +9,7 @@ function extraToolCount() {
   const configured = process.env.EXTRA_TOOLS_FILE
     ? readFileSync(process.env.EXTRA_TOOLS_FILE, "utf8")
     : process.env.EXTRA_TOOLS ?? "0";
-  return Math.min(94, Math.max(0, Number.parseInt(configured, 10) || 0));
+  return Math.min(4096, Math.max(0, Number.parseInt(configured, 10) || 0));
 }
 function listedTools() {
   return [
@@ -17,7 +17,7 @@ function listedTools() {
     { name: "mutate", description: "An unknown side effect", inputSchema: { type: "object", properties: { hang: { type: "boolean" } }, additionalProperties: false } },
     ...Array.from({ length: extraToolCount() }, (_, index) => ({
       name: `catalog_tool_${index}`,
-      description: `Synthetic catalog operation ${index} for customer archive lookup and deterministic MCP discovery tests`,
+      description: `Synthetic catalog operation ${index} for customer archive lookup and deterministic MCP discovery tests${"x".repeat(Number(process.env.EXTRA_DESCRIPTION_BYTES ?? 0))}`,
       inputSchema: { type: "object", properties: { query: { type: "string", description: `Search query for catalog operation ${index}` } }, required: ["query"], additionalProperties: false },
       annotations: { readOnlyHint: true, destructiveHint: false },
     })),
@@ -30,7 +30,10 @@ function respond(request) {
     if (process.env.HANG_INITIALIZE === "1") return null;
     result = { protocolVersion: "2024-11-05", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "jarvis-fixture", version: "1" } };
   } else if (request.method === "tools/list") {
-    result = { tools: listedTools() };
+    const tools = listedTools();
+    const size = Number(process.env.TOOLS_PAGE_SIZE) || tools.length;
+    const offset = Number(request.params?.cursor) || 0;
+    result = { tools: tools.slice(offset, offset + size), ...(offset + size < tools.length ? { nextCursor: String(offset + size) } : {}) };
   } else if (request.method === "tools/call") {
     if (process.env.CALLS_FILE) appendFileSync(process.env.CALLS_FILE, `${request.params.name}\n`);
     if (request.params.arguments?.query === "rpc-error") {
@@ -55,7 +58,7 @@ if (process.argv.includes("--http")) {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const message = JSON.parse(Buffer.concat(chunks).toString());
-    const delay = message.method === "tools/call" ? (message.params.arguments?.delayMs ?? 0) : 0;
+    const delay = message.method === "initialize" ? Number(process.env.INITIALIZE_DELAY_MS ?? 0) : message.method === "tools/call" ? (message.params.arguments?.delayMs ?? 0) : 0;
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
     const result = respond(message);
     if (!result) { response.writeHead(202).end(); return; }
@@ -75,7 +78,7 @@ if (process.argv.includes("--http")) {
       }
       return;
     }
-    const delay = message.method === "tools/call" ? (message.params.arguments?.delayMs ?? 0) : 0;
+    const delay = message.method === "initialize" ? Number(process.env.INITIALIZE_DELAY_MS ?? 0) : message.method === "tools/call" ? (message.params.arguments?.delayMs ?? 0) : 0;
     const reply = () => { const result = respond(message); if (result) process.stdout.write(`${JSON.stringify(result)}\n`); };
     if (delay > 0) setTimeout(reply, delay); else reply();
   });

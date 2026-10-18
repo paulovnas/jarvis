@@ -5,6 +5,21 @@ import { Maximize2, Minimize2, Minus, X } from "lucide-react";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { Button } from "@/components/ui/button";
 import { Hint } from "@/components/ui/hint";
+import { toast } from "sonner";
+
+const resizeCursors = {
+  North: "ns-resize", South: "ns-resize", West: "ew-resize", East: "ew-resize",
+  NorthWest: "nwse-resize", SouthEast: "nwse-resize", NorthEast: "nesw-resize", SouthWest: "nesw-resize",
+} as const;
+
+function resizeDirection(event: MouseEvent): keyof typeof resizeCursors | null {
+  const { clientX: x, clientY: y } = event;
+  if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
+  const side = x < 6 ? "West" : x >= window.innerWidth - 6 ? "East" : null;
+  if (y < 6) return side === "West" ? "NorthWest" : side === "East" ? "NorthEast" : "North";
+  if (y >= window.innerHeight - 6) return side === "West" ? "SouthWest" : side === "East" ? "SouthEast" : "South";
+  return side;
+}
 
 export function TitleBarSlot({ side, children }: { side: "left" | "right"; children: ReactNode }) {
   const target = document.getElementById(`titlebar-${side}-navigation`);
@@ -15,6 +30,7 @@ export function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isMac = /Mac/.test(navigator.platform);
+  const isWindows = /Win/.test(navigator.platform);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -25,7 +41,7 @@ export function TitleBar() {
         const appWindow = getCurrentWindow();
         const refresh = async () => {
           try {
-            const [maximized, fullscreen] = await Promise.all([appWindow.isMaximized(), isMac ? appWindow.isFullscreen() : false]);
+            const [maximized, fullscreen] = await Promise.all([appWindow.isMaximized(), appWindow.isFullscreen()]);
             if (active) { setIsMaximized(maximized); setIsFullscreen(fullscreen); }
           } catch { /* The window may close while its resize event is pending. */ }
         };
@@ -44,6 +60,56 @@ export function TitleBar() {
       if (unlisten) unlisten();
     };
   }, [isMac]);
+
+  useEffect(() => {
+    if (!isWindows || isMaximized || isFullscreen) return;
+    let appWindow: ReturnType<typeof getCurrentWindow>;
+    try { appWindow = getCurrentWindow(); } catch { return; }
+    const root = document.documentElement;
+    const clearCursor = () => {
+      root.removeAttribute("data-native-window-resize");
+      root.style.removeProperty("--native-window-resize-cursor");
+    };
+    const hover = (event: PointerEvent) => {
+      const direction = event.buttons === 0 ? resizeDirection(event) : null;
+      if (!direction) { clearCursor(); return; }
+      root.setAttribute("data-native-window-resize", direction);
+      root.style.setProperty("--native-window-resize-cursor", resizeCursors[direction]);
+    };
+    let consumedResize = false;
+    const resize = (event: PointerEvent) => {
+      consumedResize = false;
+      if (event.defaultPrevented || event.button !== 0) return;
+      const direction = resizeDirection(event);
+      if (!direction) return;
+      consumedResize = true;
+      // Window capture precedes the panel library's document-level hit testing.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void appWindow.startResizeDragging(direction).catch(() => toast.error("Não foi possível redimensionar a janela."));
+    };
+    const blockEdgeClick = (event: MouseEvent) => {
+      // Canceling pointerdown does not suppress Chromium's later click events.
+      if (event.detail === 0 || event.button !== 0 || (!consumedResize && !resizeDirection(event))) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("pointerdown", resize, true);
+    window.addEventListener("pointermove", hover, true);
+    window.addEventListener("click", blockEdgeClick, true);
+    window.addEventListener("dblclick", blockEdgeClick, true);
+    window.addEventListener("blur", clearCursor);
+    root.addEventListener("pointerleave", clearCursor);
+    return () => {
+      window.removeEventListener("pointerdown", resize, true);
+      window.removeEventListener("pointermove", hover, true);
+      window.removeEventListener("click", blockEdgeClick, true);
+      window.removeEventListener("dblclick", blockEdgeClick, true);
+      window.removeEventListener("blur", clearCursor);
+      root.removeEventListener("pointerleave", clearCursor);
+      clearCursor();
+    };
+  }, [isWindows, isMaximized, isFullscreen]);
 
   const handleMinimize = async () => {
     try {

@@ -77,6 +77,187 @@ fn repository() -> tempfile::TempDir {
     directory
 }
 
+fn unborn_repository() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    git_ok(directory.path(), ["init", "--initial-branch=main"]);
+    git_ok(directory.path(), ["config", "user.name", "Jarvis Test"]);
+    git_ok(
+        directory.path(),
+        ["config", "user.email", "jarvis@example.test"],
+    );
+    directory
+}
+
+#[test]
+fn unborn_local_commit_supports_staged_files_and_requested_branches_without_a_remote() {
+    for staged in [true, false] {
+        for branch in [None, Some("feature/initial")] {
+            let repository = unborn_repository();
+            let root = repository.path().canonicalize().unwrap();
+            std::fs::create_dir(root.join("docs")).unwrap();
+            std::fs::create_dir(root.join(".jarvis")).unwrap();
+            std::fs::write(root.join("docs/README.md"), "# Project\n").unwrap();
+            std::fs::write(root.join(".jarvis/settings.json"), "{}\n").unwrap();
+            if staged {
+                git_ok(&root, ["add", "--all"]);
+            }
+            let mut repository_proposal =
+                repo_proposal(".", &["docs/README.md", ".jarvis/settings.json"]);
+            repository_proposal.branch = branch.map(str::to_owned);
+            validate_repository(&root, &repository_proposal, false).unwrap();
+            let proposal = Proposal {
+                summary: "Criar commit inicial local".into(),
+                authorization: None,
+                repositories: vec![repository_proposal],
+            };
+            let receipt: Value =
+                serde_json::from_str(&preview(&root, &proposal, "initial").unwrap()).unwrap();
+            assert_eq!(receipt["status"], "proposed");
+            assert!(!run(&root, "git", ["rev-parse", "--verify", "HEAD"])
+                .unwrap()
+                .status
+                .success());
+            let result: Value = serde_json::from_str(&apply(&root, &proposal, None)).unwrap();
+            assert_eq!(result["status"], "published", "{result}");
+            assert_eq!(
+                result["repositories"][0]["branch"],
+                branch.unwrap_or("main")
+            );
+            assert!(result["repositories"][0]["commit"].is_string());
+            assert_eq!(result["repositories"][0]["push"], "none");
+            assert_eq!(git_ok(&root, ["rev-list", "--count", "HEAD"]), "1");
+            assert_eq!(
+                git_ok(&root, ["rev-list", "--parents", "-n", "1", "HEAD"])
+                    .split_whitespace()
+                    .count(),
+                1,
+            );
+            assert_eq!(
+                git_ok(&root, ["ls-tree", "-r", "--name-only", "HEAD"]),
+                ".jarvis/settings.json\ndocs/README.md",
+            );
+            assert!(git_ok(&root, ["status", "--porcelain=v1"]).is_empty());
+            assert!(git_ok(&root, ["remote"]).is_empty());
+        }
+    }
+}
+
+#[test]
+fn unborn_review_detects_content_index_and_concurrent_initial_commit_changes() {
+    let repository = unborn_repository();
+    let root = repository.path().canonicalize().unwrap();
+    std::fs::write(root.join("seed.txt"), "approved\n").unwrap();
+    let proposal = authorized_proposal(
+        UserAuthorizationMode::ExplicitRequest,
+        "commit",
+        repo_proposal(".", &["seed.txt"]),
+    );
+    let receipt: Value =
+        serde_json::from_str(&preview(&root, &proposal, "initial").unwrap()).unwrap();
+    let fingerprint = review_fingerprint(&root, &proposal).unwrap();
+    std::fs::write(root.join("seed.txt"), "changed\n").unwrap();
+    assert_ne!(review_fingerprint(&root, &proposal).unwrap(), fingerprint);
+    std::fs::write(root.join("seed.txt"), "approved\n").unwrap();
+    assert_eq!(review_fingerprint(&root, &proposal).unwrap(), fingerprint);
+    git_ok(&root, ["add", "seed.txt"]);
+    assert_ne!(review_fingerprint(&root, &proposal).unwrap(), fingerprint);
+    git_ok(&root, ["rm", "--cached", "seed.txt"]);
+    assert_eq!(review_fingerprint(&root, &proposal).unwrap(), fingerprint);
+    // An empty first commit changes only HEAD, not the reviewed files or index.
+    git_ok(
+        &root,
+        [
+            "commit",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "-m",
+            "Concurrent first commit",
+        ],
+    );
+    assert_ne!(review_fingerprint(&root, &proposal).unwrap(), fingerprint);
+    assert!(validate_confirmation(
+        &root,
+        &proposal,
+        "initial",
+        "Pode fazer!",
+        Some(&receipt),
+        receipt["createdAt"].as_u64().unwrap() + 1,
+    )
+    .is_err());
+}
+
+#[test]
+fn unborn_commit_rejects_unreviewed_staged_files() {
+    let repository = unborn_repository();
+    let root = repository.path().canonicalize().unwrap();
+    std::fs::write(root.join("seed.txt"), "approved\n").unwrap();
+    std::fs::write(root.join("outside.txt"), "not approved\n").unwrap();
+    git_ok(&root, ["add", "outside.txt"]);
+    let failure =
+        validate_repository(&root, &repo_proposal(".", &["seed.txt"]), false).unwrap_err();
+    assert_eq!(failure.code, "publication_staged_scope");
+    assert_eq!(
+        staged_files(&root).unwrap(),
+        BTreeSet::from(["outside.txt".into()])
+    );
+    assert!(!run(&root, "git", ["rev-parse", "--verify", "HEAD"])
+        .unwrap()
+        .status
+        .success());
+}
+
+#[test]
+fn unborn_support_preserves_existing_detached_head_state() {
+    let repository = repository();
+    let root = repository.path().canonicalize().unwrap();
+    let head = git_ok(&root, ["rev-parse", "HEAD"]);
+    git_ok(&root, ["switch", "--detach", "HEAD"]);
+    assert_eq!(current_branch(&root).unwrap(), "HEAD");
+    let state = serde_json::to_value(repository_state(&root, ".").unwrap()).unwrap();
+    assert_eq!(state["head"], head);
+    assert_eq!(state["branch"], "HEAD");
+}
+
+#[test]
+fn unborn_state_does_not_accept_a_branch_with_a_missing_commit_object() {
+    let repository = unborn_repository();
+    let root = repository.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join(".git/refs/heads/main"),
+        "0123456789012345678901234567890123456789\n",
+    )
+    .unwrap();
+    assert!(repository_state(&root, ".").is_none());
+}
+
+#[test]
+fn unborn_commit_is_reported_as_partial_when_a_later_push_fails() {
+    let repository = unborn_repository();
+    let root = repository.path().canonicalize().unwrap();
+    std::fs::write(root.join("seed.txt"), "approved\n").unwrap();
+    let unavailable = root.join("unavailable.git");
+    git_ok(
+        &root,
+        ["remote", "add", "origin", unavailable.to_str().unwrap()],
+    );
+    let mut repository_proposal = repo_proposal(".", &["seed.txt"]);
+    repository_proposal.push = PushMode::Normal;
+    let proposal = Proposal {
+        summary: "Criar commit e enviar".into(),
+        authorization: None,
+        repositories: vec![repository_proposal],
+    };
+    let result: Value = serde_json::from_str(&apply(&root, &proposal, None)).unwrap();
+    assert_eq!(result["status"], "partial", "{result}");
+    assert_eq!(result["error"]["code"], "publication_push_rejected");
+    assert!(result["failedRepository"]["before"]["head"].is_null());
+    assert_eq!(
+        result["failedRepository"]["after"]["head"],
+        git_ok(&root, ["rev-parse", "HEAD"]),
+    );
+    assert_eq!(git_ok(&root, ["rev-list", "--count", "HEAD"]), "1");
+}
+
 fn initialize_repository(directory: &Path) {
     git_ok(directory, ["init"]);
     git_ok(directory, ["config", "user.name", "Jarvis Test"]);

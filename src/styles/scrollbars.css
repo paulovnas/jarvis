@@ -20,6 +20,14 @@
 @layer base {
   @media (forced-colors: none) {
     @supports selector(::-webkit-scrollbar) {
+      /* Editable scrollports must not pass their text cursor to the scrollbar. */
+      ::-webkit-scrollbar,
+      ::-webkit-scrollbar-track,
+      ::-webkit-scrollbar-thumb,
+      ::-webkit-scrollbar-corner {
+        cursor: default;
+      }
+
       ::-webkit-scrollbar {
         width: 10px;
         height: 10px;

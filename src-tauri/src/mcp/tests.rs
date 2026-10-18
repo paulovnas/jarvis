@@ -73,6 +73,7 @@ impl Fixture {
                 guard: Mutex::new(()),
                 secrets: secrets.clone(),
                 apps_context: Mutex::new(None),
+                connection_checks: Mutex::default(),
             })),
             secrets,
         }
@@ -1003,6 +1004,265 @@ async fn stable_gateway_receives_activated_schemas_without_relisting_its_initial
 }
 
 #[tokio::test]
+async fn catalog_limits_allow_144_paginated_tools_but_reject_resource_exhaustion() {
+    for (extra, description_bytes, page_size, accepted) in [
+        (142, 0, 48, true),
+        (4096, 0, 0, false),
+        (142, 80_000, 0, false),
+    ] {
+        let f = Fixture::new();
+        let server = f.local_with_tools("audacity", 5000, extra);
+        let (_, mut config) = f.mcp.inspect_config(&f.state, &f.home, &server.id).unwrap();
+        if let config::Config::Local {
+            environment,
+            timeout,
+            ..
+        } = &mut config
+        {
+            environment.insert("TOOLS_PAGE_SIZE".into(), page_size.to_string());
+            environment.insert(
+                "EXTRA_DESCRIPTION_BYTES".into(),
+                description_bytes.to_string(),
+            );
+            *timeout = 10_000;
+        }
+        let server = f
+            .mcp
+            .update_config(&f.state, &f.home, &server, &server.name, &config)
+            .unwrap();
+        let (_sender, signal) = watch::channel(false);
+        let check = runtime::check_connection(&f.mcp, server, config, &f.home, signal).await;
+        if accepted {
+            assert_eq!(check.tool_count, 144);
+            assert!(check.error.is_none());
+        } else {
+            assert!(check.error.unwrap().contains("limite de segurança"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_checks_during_initialization_do_not_certify_an_older_starting_process() {
+    let f = Fixture::new();
+    let server = f.local("audacity");
+    let (_, mut config) = f.mcp.inspect_config(&f.state, &f.home, &server.id).unwrap();
+    if let config::Config::Local { environment, .. } = &mut config {
+        environment.insert("INITIALIZE_DELAY_MS".into(), "500".into());
+    }
+    let server = f
+        .mcp
+        .update_config(&f.state, &f.home, &server, &server.name, &config)
+        .unwrap();
+    let intent = serde_json::from_value(
+        json!({"mode":"explicit","servers":[{"id":server.id,"name":server.name}]}),
+    )
+    .unwrap();
+    let (_sender, signal) = watch::channel(false);
+    let startup = runtime::TurnClients::discover_for_intent(
+        &f.mcp, &f.state, &f.home, &f.home, &intent, signal,
+    );
+    tokio::pin!(startup);
+    tokio::select! {
+        _ = &mut startup => panic!("Fixture must pause initialization"),
+        _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !f.home.join("starts").exists() { tokio::time::sleep(std::time::Duration::from_millis(10)).await; }
+        }) => {},
+    }
+    f.mcp.refresh_after_check(&server).unwrap();
+    let mut clients = startup.await.unwrap();
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(definitions
+        .iter()
+        .any(|tool| tool["name"] == "mcp_activate"));
+    assert_eq!(definitions.len(), 1);
+    clients.ensure_scope_visible(&definitions).unwrap();
+}
+
+#[tokio::test]
+async fn explicitly_retested_repairs_replace_active_mcp_clients_without_expanding_scope() {
+    for explicit in [false, true] {
+        let f = Fixture::new();
+        let (mut server, tools_file) = f.local_with_dynamic_tools("audacity", 5000, 0);
+        f.local("unrelated");
+        let intent = if explicit {
+            serde_json::from_value(
+                json!({"mode":"explicit","servers":[{"id":server.id,"name":server.name}]}),
+            )
+            .unwrap()
+        } else {
+            McpIntent::default()
+        };
+        let (_sender, signal) = watch::channel(false);
+        let mut clients = runtime::TurnClients::discover_for_intent(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &f.home,
+            &intent,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+        clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+        if !explicit {
+            f.activate(&mut clients, "audacity", signal.clone()).await;
+        }
+        for (extra, update_registration) in [(4, false), (8, true)] {
+            fs::write(&tools_file, extra.to_string()).unwrap();
+            let (_, config) = f.mcp.inspect_config(&f.state, &f.home, &server.id).unwrap();
+            if update_registration {
+                server = f
+                    .mcp
+                    .update_config(&f.state, &f.home, &server, &server.name, &config)
+                    .unwrap();
+                let mut repair_catalog =
+                    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+                repair_catalog.extend([
+                    json!({"name":"jarvis_catalog"}),
+                    json!({"name":"jarvis_propose_mcp"}),
+                    json!({"name":"jarvis_test_mcp"}),
+                ]);
+                clients
+                    .ensure_scope_visible(&repair_catalog)
+                    .expect("saving a repair must leave the next diagnostic step reachable");
+            }
+            let check =
+                runtime::check_connection(&f.mcp, server.clone(), config, &f.home, signal.clone())
+                    .await;
+            assert!(check.error.is_none());
+            assert_eq!(check.tool_count, extra + 2);
+            f.mcp.refresh_after_check(&server).unwrap();
+            let old = runtime::wire_name(&server, "lookup");
+            let calls_before = fs::read_to_string(f.home.join("calls")).unwrap_or_default();
+            assert!(clients
+                .execute(
+                    &f.mcp,
+                    &f.state,
+                    &f.home,
+                    &old,
+                    &json!({"query":"stale must not run"}),
+                    false,
+                    signal.clone()
+                )
+                .await
+                .is_err());
+            assert_eq!(
+                fs::read_to_string(f.home.join("calls")).unwrap_or_default(),
+                calls_before
+            );
+            let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+            let activate = definitions
+                .iter()
+                .find(|tool| tool["name"] == "mcp_activate")
+                .unwrap();
+            if explicit {
+                assert_eq!(
+                    activate["parameters"]["properties"]["server"]["enum"],
+                    json!(["audacity"])
+                );
+            }
+            clients.ensure_scope_visible(&definitions).unwrap();
+            assert!(!definitions.iter().any(|tool| tool["name"] == old));
+            f.activate(&mut clients, "audacity", signal.clone()).await;
+            let name = format!("catalog_tool_{}", extra - 1);
+            clients
+                .execute(
+                    &f.mcp,
+                    &f.state,
+                    &f.home,
+                    "mcp_search_tools",
+                    &json!({"query":name,"server":"audacity","limit":1}),
+                    false,
+                    signal.clone(),
+                )
+                .await
+                .unwrap();
+            let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+            let wire = runtime::wire_name(&server, &name);
+            assert!(definitions.iter().any(|tool| tool["name"] == wire));
+            let output = clients
+                .execute(
+                    &f.mcp,
+                    &f.state,
+                    &f.home,
+                    &wire,
+                    &json!({"query":"repaired client"}),
+                    false,
+                    signal.clone(),
+                )
+                .await
+                .unwrap();
+            assert!(output.contains("repaired client"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn catalogs_with_144_tools_remain_searchable_and_callable_without_eager_exposure() {
+    let f = Fixture::new();
+    let server = f.local_with_tools("audacity", 2000, 142);
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &McpIntent::default(),
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    f.activate(&mut clients, "audacity", signal.clone()).await;
+    let check = f
+        .mcp
+        .list(&f.state, &f.home)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.id == server.id)
+        .unwrap()
+        .last_check
+        .unwrap();
+    assert_eq!(check.tool_count, 144);
+    assert!(check.error.is_none());
+    let initial = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(initial.len(), 2);
+    let selected = runtime::wire_name(&server, "catalog_tool_141");
+    clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            "mcp_search_tools",
+            &json!({"query":"catalog_tool_141","server":"audacity","limit":1}),
+            false,
+            signal.clone(),
+        )
+        .await
+        .unwrap();
+    let loaded = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert_eq!(loaded.len(), 3);
+    assert!(loaded.iter().any(|tool| tool["name"] == selected));
+    let result = clients
+        .execute(
+            &f.mcp,
+            &f.state,
+            &f.home,
+            &selected,
+            &json!({"query":"last tool reachable"}),
+            false,
+            signal,
+        )
+        .await
+        .unwrap();
+    assert!(result.contains("last tool reachable"));
+    assert_eq!(
+        fs::read_to_string(f.home.join("calls")).unwrap(),
+        "catalog_tool_141\n"
+    );
+}
+
+#[tokio::test]
 async fn stable_gateway_receipts_include_only_selected_and_permitted_deferred_schemas() {
     let f = Fixture::new();
     let database = f.local_with_tools("database", 2000, 48);
@@ -1453,6 +1713,7 @@ async fn discovery_names_survive_restart_and_stale_checks_do_not_overwrite_new_c
         guard: Mutex::new(()),
         secrets: f.secrets.clone(),
         apps_context: Mutex::new(None),
+        connection_checks: Mutex::default(),
     }));
     let check = reopened
         .list(&AppState::default(), &f.home)
@@ -3102,7 +3363,7 @@ async fn mutating_timeout_is_uncertain_and_is_never_replayed_during_reconnection
 }
 
 #[tokio::test]
-async fn unavailable_explicit_mcp_fails_before_any_alternative_is_connected() {
+async fn unavailable_explicit_mcp_allows_repair_without_connecting_an_alternative() {
     let f = Fixture::new();
     let notebook = f.local("gemini-notebook-mcp");
     f.local("database");
@@ -3110,7 +3371,7 @@ async fn unavailable_explicit_mcp_fails_before_any_alternative_is_connected() {
         .set_enabled(&f.state, &f.home, &notebook.id, false)
         .unwrap();
     let (_sender, signal) = watch::channel(false);
-    let error = runtime::TurnClients::discover_for_user(
+    let mut clients = runtime::TurnClients::discover_for_user(
         &f.mcp,
         &f.state,
         &f.home,
@@ -3119,11 +3380,97 @@ async fn unavailable_explicit_mcp_fails_before_any_alternative_is_connected() {
         signal,
     )
     .await
-    .err()
     .unwrap();
-    assert_eq!(error.code, "mcp_requested_unavailable");
-    assert!(error.message.contains("gemini-notebook-mcp"));
+    assert!(clients.instructions().contains("gemini-notebook-mcp"));
+    assert!(clients.instructions().contains("could not initialize"));
+    assert!(!clients.requires_explicit_attempt());
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(definitions.is_empty());
+    clients
+        .ensure_scope_visible(&[json!({"name":"jarvis_catalog"})])
+        .unwrap();
+    assert!(clients
+        .ensure_connection_test_scope("jarvis_test_mcp", &json!({"id":"unrelated"}))
+        .is_err());
     assert!(!f.home.join("calls").exists());
+}
+
+#[tokio::test]
+async fn partially_broken_explicit_scope_preserves_healthy_clients_and_only_selected_recovery() {
+    let f = Fixture::new();
+    let healthy = f.local("healthy");
+    let broken = f
+        .mcp
+        .save(
+            &f.state,
+            &f.home,
+            None,
+            &json!({"broken":{"type":"local","command":["node",f.home.join("missing.mjs")]}})
+                .to_string(),
+        )
+        .unwrap()
+        .remove(0);
+    let unrelated = f.local("unrelated");
+    let intent: McpIntent = serde_json::from_value(json!({"mode":"explicit","servers":[{"id":healthy.id,"name":healthy.name},{"id":broken.id,"name":broken.name}]})).unwrap();
+    let (_sender, signal) = watch::channel(false);
+    let mut clients = runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &intent,
+        signal.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(clients.requires_explicit_attempt());
+    let definitions = clients.definitions(&f.mcp, &f.state, &f.home, false).await;
+    assert!(definitions
+        .iter()
+        .any(|tool| tool["name"] == runtime::wire_name(&healthy, "lookup")));
+    let activation = definitions
+        .iter()
+        .find(|tool| tool["name"] == "mcp_activate")
+        .unwrap();
+    assert_eq!(
+        activation["parameters"]["properties"]["server"]["enum"],
+        json!(["broken"])
+    );
+    assert!(clients
+        .ensure_connection_test_scope("jarvis_test_mcp", &json!({"id":unrelated.id}))
+        .is_err());
+    assert!(f
+        .mcp
+        .list(&f.state, &f.home)
+        .unwrap()
+        .iter()
+        .find(|server| server.id == broken.id)
+        .unwrap()
+        .last_check
+        .as_ref()
+        .unwrap()
+        .error
+        .is_some());
+    clients
+        .refresh_intent(&f.mcp, &f.state, &f.home, &intent, signal)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(f.home.join("starts")).unwrap(),
+        "healthy\n"
+    );
+    assert!(!f.home.join("calls").exists());
+    drop(clients);
+    assert!(runtime::TurnClients::discover_for_intent(
+        &f.mcp,
+        &f.state,
+        &f.home,
+        &f.home,
+        &intent,
+        watch::channel(true).1
+    )
+    .await
+    .is_err());
 }
 
 #[tokio::test]

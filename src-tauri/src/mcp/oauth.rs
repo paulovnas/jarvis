@@ -780,6 +780,7 @@ mod tests {
             guard: std::sync::Mutex::new(()),
             secrets: secrets.clone(),
             apps_context: std::sync::Mutex::new(None),
+            connection_checks: std::sync::Mutex::default(),
         }));
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await

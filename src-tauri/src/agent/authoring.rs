@@ -30,7 +30,7 @@ Jarvis product capabilities: Jarvis is a local desktop coding-agent environment 
 
 Users own custom agents and custom workflows. Custom agents declare where they can run: solo as the primary chat agent, flow_only as a workflow step, or mixed in both contexts. Built-in Jarvis agents may be referenced as immutable steps in custom workflows; built-in flows are immutable templates whose real topology is available in the catalog. When the user asks to create or edit an agent or workflow, inspect the current catalog with jarvis_catalog, clarify only material missing choices with ask_user, then submit the smallest complete proposal with jarvis_propose_agent or jarvis_propose_flow. Never write Jarvis configuration files with filesystem or shell tools. A proposal does not change settings until the user explicitly approves it in Jarvis. After rejection, respect the user's note and do not resubmit an unchanged proposal. Re-read the catalog before a dependent or revised proposal because every accepted change advances its revision.
 
-When asked to configure an MCP, inspect the public mcpServers metadata in jarvis_catalog and use jarvis_propose_mcp. The native panel always asks the user to approve this global registration, even in YOLO. Never include credentials in a proposal, arguments, URL or summary: list envKeys/headerKeys and let the user supply their values privately in that panel. Do not request existing stored credentials. Registration does not install, connect or authorize every operation of the MCP. After approval, use the MCP discovery tools to find and activate it in this conversation; report actual connection/authentication failures and preserve the saved registration.
+When asked to configure or repair an MCP, inspect mcpServers in jarvis_catalog; view=mcp with its ID returns public configuration, exact revision and maintenance guidance. Use jarvis_propose_mcp to add or update one registration; updates require its exact id+revision and native approval even in YOLO. Preserve unrelated fields and retained envKeys/headerKeys. Existing private values stay native; new or replaced values belong only in the approval panel. Never include credentials in proposals, arguments, URLs or summaries. For local server code repairs, inspect the actual launcher/module and use normal file/command tools under their existing scope and approvals; external installation paths use native bash admission with precise justification. Do not rewrite Jarvis settings through files, bypass denials or restrict the server's tool catalog to work around a client limit. Run relevant source tests, then jarvis_test_mcp when available to verify fresh initialization and catalog discovery. Saving alone does not prove connectivity or functionality. Discover and activate actual operations with the current offered schemas; preserve confirmed results and uncertain outcomes.
 
 When asked to configure hooks, read the hooks catalog with jarvis_catalog view=hooks and the native jarvis-hooks skill. Use jarvis_propose_hook for create/update/delete at its exact hooks revision. Native hooks are immutable. Command hooks run locally in project conversations; never write their settings through shell/filesystem tools. Every proposal requires explicit native approval, even in YOLO. Preserve unrelated hooks, use bounded matchers/timeouts and never include credentials in commands. Saved changes apply to subsequent turns, not the running turn.
 
@@ -71,6 +71,7 @@ pub enum Target {
     },
     Mcp {
         server: mcp::Draft,
+        before: Option<mcp::Draft>,
     },
     Hook {
         before: Option<crate::hooks::Hook>,
@@ -111,7 +112,7 @@ pub(super) struct Pending {
 enum Mutation {
     Catalog(workflow::catalog::Mutation),
     Publication(publication::Proposal),
-    Mcp(mcp::Draft),
+    Mcp(Box<mcp::Change>),
     Hook(hook::Change),
     Plugin(Box<crate::plugins::Prepared>),
     ProjectInstructions(project_instructions::Change),
@@ -122,6 +123,8 @@ enum Mutation {
 struct McpRequest {
     summary: String,
     server: mcp::Draft,
+    id: Option<String>,
+    revision: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,13 +228,14 @@ fn proposal_definition(name: &str, description: &str, field: &str, schema: Value
 
 pub(super) fn definitions() -> Vec<Value> {
     vec![
-        json!({"type":"function","name":"jarvis_catalog","description":"Inspect Jarvis capabilities and configured agents, flows, hooks and plugins before proposing changes. Use overview first; agent/flow by ID for editable details; hooks or plugins for their separate exact revisions and component definitions; project_instructions for the current project's root AGENTS.md and exact file revision. Native entries are immutable.","parameters":{"type":"object","additionalProperties":false,"required":["view"],"properties":{"view":{"type":"string","enum":["overview","agent","flow","hooks","plugins","project_instructions"]},"id":{"type":"string","description":"Required for agent or flow detail."}}}}),
+        json!({"type":"function","name":"jarvis_catalog","description":"Inspect Jarvis capabilities and configured agents, flows, MCPs, hooks and plugins before proposing changes. Use overview first; agent/flow by ID for editable details; mcp by ID for public connection configuration, exact revision, last check and local code maintenance guidance without stored private values; hooks or plugins for separate revisions; project_instructions for the current project's root AGENTS.md. Native entries are immutable.","parameters":{"type":"object","additionalProperties":false,"required":["view"],"properties":{"view":{"type":"string","enum":["overview","agent","flow","mcp","hooks","plugins","project_instructions"]},"id":{"type":"string","description":"Required for agent, flow or mcp detail."}}}}),
         proposal_definition("jarvis_propose_agent", "Propose creating or editing one user-owned Jarvis agent. The call waits for explicit approval in a Jarvis drawer; it never changes built-in agents. Call jarvis_catalog immediately beforehand and use its exact revision. For create, generate a new 32-character hexadecimal ID. For update, preserve the existing ID. Choose whether it runs solo, only in flows, or both. A null model inherits the current chat model.", "agent", agent_schema()),
         proposal_definition("jarvis_propose_flow", "Propose creating or editing one user-owned Jarvis workflow. The call waits for explicit approval in a Jarvis drawer; it never changes built-in flows. Call jarvis_catalog immediately beforehand and use its exact revision. A flow may reference immutable builtin:* agents or mixed/flow_only custom agents from that revision. Generate stable 32-character hexadecimal IDs for a new flow and its steps; preserve existing IDs when editing.", "flow", flow_schema()),
         mcp::definition(),
         hook::definition(),
         plugin::definition(),
         project_instructions::definition(),
+        mcp::test_definition(),
     ]
 }
 
@@ -272,9 +276,21 @@ pub(in crate::agent) fn mcp_metadata(
     home: &Path,
 ) -> Result<Value, AgentError> {
     let servers: Vec<_> = mcp_state.list(state, home)?.into_iter().map(|server|
-        json!({"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured,"revision":server.revision})
+        json!({"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured,"revision":server.revision,"mutable":server.source.is_none(),"detailView":"mcp"})
     ).collect();
     Ok(json!(servers))
+}
+
+pub(in crate::agent) fn mcp_output(
+    mcp_state: &crate::mcp::McpState,
+    state: &AppState,
+    home: &Path,
+    args: &Value,
+) -> Result<Value, AgentError> {
+    let id = args["id"]
+        .as_str()
+        .ok_or_else(|| invalid("Informe o ID do MCP."))?;
+    mcp::catalog(mcp_state, state, home, id)
 }
 
 fn overview(catalog: &workflow::catalog::Catalog) -> Value {
@@ -540,6 +556,12 @@ pub(super) async fn execute(
     tool: &ToolCall,
     mut signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
+    if tool.name == "jarvis_test_mcp" {
+        if *signal.borrow() {
+            return Err(AgentError::cancelled());
+        }
+        return mcp::test(mcp_state, state, home, &session.root, &tool.args, signal).await;
+    }
     let (mut request, mutation) = if tool.name == "jarvis_propose_publication" {
         let question_answered = session
             .data
@@ -677,34 +699,12 @@ pub(super) async fn execute(
         let (request, change) = hook::prepare(state, home, tool)?;
         (request, Mutation::Hook(change))
     } else if tool.name == "jarvis_propose_mcp" {
-        if sanitize_mcp_args(&tool.name, tool.args.clone()) != tool.args {
-            return Err(invalid("A proposta deve conter apenas a configuração pública. Use envKeys/headerKeys para preencher credenciais privadamente no painel de aprovação."));
-        }
-        let draft: McpRequest = serde_json::from_value(tool.args.clone())
-            .map_err(|_| invalid("Proposta de MCP inválida."))?;
-        draft.server.validate()?;
-        if mcp_state
-            .list(state, home)?
-            .iter()
-            .any(|server| server.name == draft.server.name)
-        {
-            return Err(invalid("Este MCP já está cadastrado. Consulte jarvis_catalog; esta ferramenta apenas adiciona servidores."));
-        }
-        (
-            PendingProposal {
-                turn_id: String::new(),
-                tool_id: tool.id.clone(),
-                action: Action::Create,
-                summary: bounded_summary(draft.summary)?,
-                catalog_revision: None,
-                target: Target::Mcp {
-                    server: draft.server.clone(),
-                },
-                agent_references: vec![],
-            },
-            Mutation::Mcp(draft.server),
-        )
+        let (request, change) = mcp::prepare(mcp_state, state, home, tool)?;
+        (request, Mutation::Mcp(Box::new(change)))
     } else {
+        if tool.name == "jarvis_catalog" && tool.args["view"] == "mcp" {
+            return Ok(mcp_output(mcp_state, state, home, &tool.args)?.to_string());
+        }
         if tool.name == "jarvis_catalog" && tool.args["view"] == "project_instructions" {
             return Ok(project_instructions::catalog(&session.root)?.to_string());
         }
@@ -943,14 +943,15 @@ pub(super) fn answer(
                 ),
                 false,
             )),
-            Mutation::Mcp(draft) => {
-                let config =
-                    draft.config(mcp_values.as_ref().unwrap_or(&mcp::Values::default()))?;
-                let server =
-                    app.state::<crate::mcp::McpState>()
-                        .add(state, home, &draft.name, &config)?;
+            Mutation::Mcp(change) => {
+                let server = change.apply(
+                    &app.state::<crate::mcp::McpState>(),
+                    state,
+                    home,
+                    mcp_values.as_ref().unwrap_or(&mcp::Values::default()),
+                )?;
                 let _ = app.emit("mcp-servers:changed", ());
-                Ok((json!({"approved":true,"status":"applied","kind":"mcp","server":{"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured},"next":"Use MCP discovery/activation in a project conversation where those tools are available to connect this registered server. Registration does not grant approval for every MCP operation."}).to_string(), false))
+                Ok((json!({"approved":true,"status":"applied","kind":"mcp","server":{"id":server.id,"name":server.name,"kind":server.kind,"enabled":server.enabled,"configured":server.configured,"revision":server.revision},"next":"Test this exact id+revision with jarvis_test_mcp when available. Saving does not prove connection, authentication or tool execution. Use current MCP discovery/activation schemas to operate it. Updated configurations invalidate old connections; continue with the current registration and never replay uncertain operations."}).to_string(), false))
             }
             Mutation::Hook(change) => {
                 let revision = catalog_revision.ok_or_else(AgentError::internal)?;

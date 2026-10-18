@@ -31,7 +31,8 @@ function ReviewProposal({ request, agentId, conversationId, onAction, busy, form
   const publication = request.target.kind === "publication";
   const projectInstructions = request.target.kind === "project_instructions";
   const mcpServer = request.target.kind === "mcp" ? request.target.server : null;
-  const credentialsReady = !mcpServer || hasMcpAuthoringValues(mcpServer, mcpValues);
+  const mcpBefore = request.target.kind === "mcp" ? request.target.before : null;
+  const credentialsReady = !mcpServer || hasMcpAuthoringValues(mcpServer, mcpValues, mcpBefore);
   const decision = (approved: boolean) => approved && !credentialsReady ? Promise.resolve(false) : onAction(publication ? "validation" : "authoring", {
     conversationId, agentId, ...(publication ? { kind: "publication" } : {}),
     decision: { turnId: request.turnId, toolId: request.toolId, approved, note: note.trim() || null, ...(approved && mcpServer ? { mcpValues } : {}) },
@@ -62,11 +63,11 @@ function ReviewProposal({ request, agentId, conversationId, onAction, busy, form
             {repository.pullRequest.merge && <Alert><AlertTitle>Merge após criar ou localizar</AlertTitle><AlertDescription>{repository.pullRequest.merge.method}{repository.pullRequest.merge.deleteBranch ? " · Excluir branch após o merge" : ""}</AlertDescription></Alert>}
           </section>}
         </CardContent>
-      </Card>) : request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : mcpServer ? <McpProposalFields server={mcpServer} values={mcpValues} disabled={busy} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <section><p className="micro-label">Proposta completa</p><pre className="remote-code">{JSON.stringify(request.target, null, 2)}</pre></section>}
+      </Card>) : request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : mcpServer ? <McpProposalFields server={mcpServer} before={mcpBefore} values={mcpValues} disabled={busy} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <section><p className="micro-label">Proposta completa</p><pre className="remote-code">{JSON.stringify(request.target, null, 2)}</pre></section>}
       <FieldGroup><Field><FieldLabel htmlFor={`note-${agentId}-${request.toolId}`}>Orientação para o agente (opcional)</FieldLabel><Textarea id={`note-${agentId}-${request.toolId}`} maxLength={2000} disabled={busy} value={note} onChange={event => { formDrafts.set(draftKey, event.target.value); setNote(event.target.value); }} /></Field></FieldGroup>
       {publication && note.trim() && <Alert><AlertTitle>Solicitar revisão</AlertTitle><AlertDescription>O agente incorporará sua orientação e apresentará outra proposta antes de executar as ações.</AlertDescription></Alert>}
     </CardContent>
-    <CardFooter className="remote-review-actions flex-wrap gap-2"><Button variant="outline" className="min-w-0 cursor-pointer" disabled={busy} onClick={() => { void decision(false); }}>Recusar</Button><Button className="min-w-0 cursor-pointer" disabled={busy || !credentialsReady} onClick={() => { void decision(true); }}>{publication ? note.trim() ? "Enviar para revisão" : "Aprovar e executar" : mcpServer ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button></CardFooter>
+    <CardFooter className="remote-review-actions flex-wrap gap-2"><Button variant="outline" className="min-w-0 cursor-pointer" disabled={busy} onClick={() => { void decision(false); }}>Recusar</Button><Button className="min-w-0 cursor-pointer" disabled={busy || !credentialsReady} onClick={() => { void decision(true); }}>{publication ? note.trim() ? "Enviar para revisão" : "Aprovar e executar" : mcpServer && request.action === "create" ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button></CardFooter>
   </Card>;
 }
 

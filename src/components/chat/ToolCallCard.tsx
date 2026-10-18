@@ -80,6 +80,7 @@ const tools = {
   jarvis_propose_agent: { label: "Proposta de agente", icon: Bot },
   jarvis_propose_flow: { label: "Proposta de fluxo", icon: Bot },
   jarvis_propose_mcp: { label: "MCP · Proposta de servidor", icon: Wrench },
+  jarvis_test_mcp: { label: "MCP · Teste de conexão e catálogo", icon: Wrench },
   jarvis_propose_hook: { label: "Hooks · Proposta de configuração", icon: Wrench },
   jarvis_propose_plugin: { label: "Plugins · Proposta de configuração", icon: Wrench },
   jarvis_propose_project_instructions: { label: "AGENTS.md · Proposta de instruções", icon: Wrench },

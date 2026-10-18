@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { PendingAuthoring } from "@/core/authoring";
+import { pendingAuthoringSchema, type PendingAuthoring } from "@/core/authoring";
 
 import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 
@@ -76,6 +76,41 @@ function mcpRequest(transport: "stdio" | "http" = "stdio"): PendingAuthoring {
     } },
   };
 }
+
+it("reviews MCP updates and preserves stored credentials unless the user replaces them", async () => {
+  const user = userEvent.setup();
+  const answer = vi.fn().mockResolvedValue(true);
+  const original = mcpRequest("http");
+  if (original.target.kind !== "mcp") throw new Error("Missing MCP fixture");
+  const before = original.target.server;
+  const request = pendingAuthoringSchema.parse({ ...original, action: "update", catalogRevision: 2,
+    target: { kind: "mcp", before, server: { ...before, name: "docs-corrigido" } },
+  });
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const approve = screen.getByRole("button", { name: "Aprovar e salvar" });
+  expect(approve).toBeEnabled();
+  expect(screen.getByText(/Valores já configurados serão preservados/)).toBeVisible();
+  expect(screen.getByLabelText("Cabeçalho Authorization")).not.toBeRequired();
+  await user.click(approve);
+  expect(answer).toHaveBeenCalledExactlyOnceWith(true, null, { environment: {}, headers: {} });
+});
+
+it("allows replacing only an existing MCP credential after private input", async () => {
+  const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
+  const original = mcpRequest("http");
+  if (original.target.kind !== "mcp") throw new Error("Missing MCP fixture");
+  const request = pendingAuthoringSchema.parse({ ...original, action: "update", catalogRevision: 2,
+    target: { ...original.target, before: original.target.server },
+  });
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const approve = screen.getByRole("button", { name: "Aprovar e salvar" });
+  expect(approve).toBeDisabled();
+  await user.type(screen.getByLabelText("Cabeçalho Authorization"), "Bearer replacement-private");
+  expect(approve).toBeEnabled();
+  await user.click(approve);
+  expect(answer).toHaveBeenCalledExactlyOnceWith(true, null, { environment: {}, headers: { Authorization: "Bearer replacement-private" } });
+  expect(JSON.stringify(request)).not.toContain("replacement-private");
+});
 
 it("reviews exact MCP process scope without connecting before explicit approval", async () => {
   const user = userEvent.setup();

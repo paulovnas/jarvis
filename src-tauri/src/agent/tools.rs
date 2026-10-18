@@ -67,7 +67,7 @@ fn argument<'a>(args: &'a Value, key: &str) -> Result<&'a str, AgentError> {
 pub(super) fn needs_approval(name: &str) -> bool {
     matches!(
         name,
-        "write" | "edit" | "apply_patch" | "bash" | "terminal_start"
+        "write" | "edit" | "apply_patch" | "bash" | "terminal_start" | "jarvis_test_mcp"
     ) || super::browser::mutating(name)
         || super::http::mutating(name)
         || super::video::mutating(name)
@@ -119,6 +119,7 @@ pub(super) fn instructions(root: &Path, mode: Mode, approval_mode: ApprovalMode)
         root.display()
     );
     instructions.push_str("When a material user preference or clarification is needed, use ask_user through the Jarvis interface. Before asking for access, credentials or environment details, inspect the relevant project configuration, existing integrations and prior verified results without exposing secrets. Ask only what available evidence cannot resolve, name the missing fact and explain why it prevents progress. Wait for the tool result; cancellation is not an answer or permission.\n");
+    instructions.push_str("File tools remain project-scoped. When the user explicitly requests maintenance of a local MCP installed outside this project, inspect jarvis_catalog view=mcp first, then use bash through the existing external-path/native approval policy with a precise installation path and justification. This is the approved command route for external source work, not permission to bypass a denied tool. Preserve unrelated files, read before editing, and test the server's code and fresh MCP connection separately.\n");
     instructions.push_str("Preserve the user's unresolved objective across follow-ups. A correction, status question or supplied evidence normally steers the existing task; it does not replace it with explaining that one detail. Answer briefly and continue the authorized work. Replace or stop the objective only when the user changes scope, cancels it or explicitly requests an answer or diagnosis without implementation. In Build mode, carry an action request through investigation, implementation and relevant verification; do not end with a plan or a partial finding when the next useful action is available.\n");
     instructions.push_str("Before the first tool, identify the exact requested outcome, what is outside scope, evidence already available and the smallest safe sequence to completion. Use a tool only to close an unresolved evidence gap, perform the requested change or verify a concrete risk. Do not add exploration, alternate approaches or validation for hypothetical concerns. Once the requested outcome and its necessary checks are satisfied, stop.\n");
     instructions.push_str("For libraries and frameworks, prefer Context7 or official project documentation before installed dependency source. Do not recursively explore node_modules, vendor, build output, caches or generated trees. An explicit dependency file remains readable only when a concrete unresolved behavior requires the exact installed implementation.\n");

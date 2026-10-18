@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useGroupRef } from "react-resizable-panels";
-import { visiblePanels, rememberPanelResize } from "@/core/desktop-layout";
+import { COMPACT_LAYOUT_WIDTH, visiblePanels, rememberPanelResize } from "@/core/desktop-layout";
 import { PanelToggle } from "./PanelToggle";
 import { TitleBarSlot } from "./TitleBar";
 import { StatusBar } from "./StatusBar";
@@ -38,6 +38,7 @@ import { toast } from "sonner";
 
 const SettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then(module => ({ default: module.SettingsDialog })));
 const ProjectDashboard = lazy(() => import("@/components/dashboard/ProjectDashboard").then(module => ({ default: module.ProjectDashboard })));
+type SidePanel = "sidebar" | InspectorSection;
 
 export function Home() {
   const bootstrapResources = useBootstrapResources();
@@ -92,8 +93,8 @@ export function Home() {
   const availableWidth = Math.max(0, windowWidth - 32);
   const groupRef = useGroupRef();
   const [animating, setAnimating] = useState(false);
-  const [closingInspector, setClosingInspector] = useState(false);
-  const pendingSection = useRef<InspectorSection | null>(null);
+  const [closingPanel, setClosingPanel] = useState(false);
+  const pendingPanel = useRef<SidePanel | null>(null);
   const layoutKey = JSON.stringify(panelLayout);
   useEffect(() => {
     // Let the panel group finish registering its resized pixel constraints.
@@ -105,33 +106,47 @@ export function Home() {
     const timer = setTimeout(() => setAnimating(false), 240);
     return () => clearTimeout(timer);
   }, [animating, layout.sidebarCollapsed, layout.inspectorCollapsed]);
-  const toggleSidebar = () => {
+  const openPanel = useCallback((panel: SidePanel) => {
     setAnimating(true);
-    setPreferredPanel("sidebar");
-    updateLayout({ sidebarCollapsed: !sidebarCollapsed });
-  };
-  const leftToggle = <TitleBarSlot side="left"><PanelToggle side="left" collapsed={sidebarCollapsed} onToggle={toggleSidebar} /></TitleBarSlot>;
-  const selectInspector = (section: InspectorSection) => {
-    if (closingInspector) { pendingSection.current = pendingSection.current === section ? null : section; return; }
+    setPreferredPanel(panel === "sidebar" ? "sidebar" : "inspector");
+    updateLayout(panel === "sidebar" ? { sidebarCollapsed: false } : { inspectorTab: panel, inspectorCollapsed: false });
+  }, [updateLayout]);
+  const requestPanel = (panel: SidePanel) => {
+    const compact = windowWidth < COMPACT_LAYOUT_WIDTH;
+    if (!compact && panel === "sidebar") {
+      if (pendingPanel.current === "sidebar") pendingPanel.current = null;
+      setAnimating(true);
+      if (sidebarCollapsed) openPanel(panel);
+      else updateLayout({ sidebarCollapsed: true });
+      return;
+    }
+    if (closingPanel) { pendingPanel.current = pendingPanel.current === panel ? null : panel; return; }
     setAnimating(true);
-    setPreferredPanel("inspector");
-    if (inspectorCollapsed) { updateLayout({ inspectorTab: section, inspectorCollapsed: false }); return; }
     const global = library.snapshot?.conversations.find(item => item.id === conversationId)?.projectId === null;
     const current = global || layout.inspectorTab === "details" ? "activities" : layout.inspectorTab;
-    pendingSection.current = current === section ? null : section;
-    setClosingInspector(true);
-    updateLayout({ inspectorCollapsed: true });
+    const same = panel === "sidebar" ? !sidebarCollapsed : !inspectorCollapsed && current === panel;
+    const closeLeft = !sidebarCollapsed && (panel === "sidebar" || compact);
+    const closeRight = !inspectorCollapsed && (panel !== "sidebar" || compact);
+    if (!closeLeft && !closeRight) { openPanel(panel); return; }
+    pendingPanel.current = same ? null : panel;
+    setClosingPanel(true);
+    updateLayout(compact ? { sidebarCollapsed: true, inspectorCollapsed: true } : {
+      ...(closeLeft ? { sidebarCollapsed: true } : {}),
+      ...(closeRight ? { inspectorCollapsed: true } : {}),
+    });
   };
+  const leftToggle = <TitleBarSlot side="left"><PanelToggle side="left" collapsed={sidebarCollapsed} onToggle={() => requestPanel("sidebar")} /></TitleBarSlot>;
+  const selectInspector = (section: InspectorSection) => requestPanel(section);
   useEffect(() => {
-    if (!closingInspector) return;
+    if (!closingPanel) return;
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const timer = setTimeout(() => {
-      const section = pendingSection.current;
-      setClosingInspector(false);
-      if (section) { setAnimating(true); updateLayout({ inspectorTab: section, inspectorCollapsed: false }); }
+      const panel = pendingPanel.current;
+      setClosingPanel(false);
+      if (panel) openPanel(panel);
     }, reducedMotion ? 0 : 240);
-    return () => { clearTimeout(timer); pendingSection.current = null; };
-  }, [closingInspector, conversationId, conversationScope, updateLayout]);
+    return () => { clearTimeout(timer); pendingPanel.current = null; };
+  }, [closingPanel, conversationId, conversationScope, openPanel]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => {
     void openAuxiliaryWindow("settings").then(native => { if (!native) setSettingsOpen(true); }).catch(() => toast.error("Não foi possível abrir Configurações."));
@@ -211,7 +226,7 @@ export function Home() {
   const canRefreshModels = accounts.some(account => account.enabled && (account.providerKind === "openai-codex" || account.providerKind === "antigravity" || account.providerKind === "opencode-go" || account.providerKind === "charm-hyper"));
 
   if (emptyWorkspace) {
-    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground">{leftToggle}<InspectorNavigation section="activities" collapsed disabled onSelect={selectInspector} /><div className="flex min-h-0 flex-1 gap-2 px-2 pb-2"><div inert={sidebarCollapsed} aria-hidden={sidebarCollapsed} className={`shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "w-0" : "w-64"}`}><div id="workspace-panel-content" className="h-full w-64 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div></div><EmptyWorkspace workspace={emptyWorkspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
+    return <div data-testid="home-shell" className="desktop-shell dark flex h-full min-h-0 w-full flex-col bg-background text-foreground">{leftToggle}<InspectorNavigation section="activities" collapsed disabled onSelect={selectInspector} /><div className="flex min-h-0 flex-1 gap-2 px-2 pb-2"><div inert={sidebarCollapsed} aria-hidden={sidebarCollapsed} className={`shrink-0 overflow-hidden transition-[width] duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "w-0" : "w-64"}`}><div id="workspace-panel-content" className="h-full w-64 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm"><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} conversationProblems={references.conversationProblems} /></div></div><EmptyWorkspace workspace={emptyWorkspace} library={library} /></div><StatusBar accounts={accounts} onOpenSettings={openSettings} /><Suspense fallback={<SettingsSkeleton open={settingsOpen} onOpenChange={setSettingsOpen} />}><SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onAccountsChange={updateAccounts} /></Suspense></div>;
   }
 
   return (
@@ -244,13 +259,14 @@ export function Home() {
           maxSize="500px"
           className="h-full min-h-0 min-w-0"
         >
-          <div id="workspace-panel-content" inert={sidebarCollapsed} aria-hidden={sidebarCollapsed} className={`h-full min-w-0 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm transition-transform duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} /></div>
+          <div id="workspace-panel-content" inert={sidebarCollapsed} aria-hidden={sidebarCollapsed} className={`h-full min-w-0 overflow-hidden rounded-xl border border-border bg-sidebar shadow-sm transition-transform duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "-translate-x-full" : ""}`}><AppSidebar library={sidebarLibrary} runningConversationIds={runningConversationIds} unreadConversationIds={unreadConversationIds} terminalCounts={terminalCounts} conversationProblems={references.conversationProblems} /></div>
         </ResizablePanel>
 
         {/* Keep each separator in geometric order: display:none breaks the panel
             library's adjacency map when a collapsed layout is restored. */}
         <ResizableHandle
           aria-label="Redimensionar barra lateral"
+          disabled={sidebarCollapsed}
           aria-hidden={sidebarCollapsed}
           inert={sidebarCollapsed}
           className={`panel-separator cursor-col-resize bg-transparent hover:bg-accent/50 ${sidebarCollapsed ? "invisible w-0 pointer-events-none" : "w-2"}`}
@@ -267,6 +283,7 @@ export function Home() {
 
         {!dashboardProject && <><ResizableHandle
           aria-label="Redimensionar inspector"
+          disabled={inspectorCollapsed}
           aria-hidden={inspectorCollapsed}
           inert={inspectorCollapsed}
           className={`panel-separator cursor-col-resize bg-transparent hover:bg-accent/50 ${inspectorCollapsed ? "invisible w-0 pointer-events-none" : "w-2"}`}

@@ -186,6 +186,7 @@ impl Capabilities {
             || name.starts_with("jarvis_propose_")
             || name == "jarvito_propose_project";
         let stateful = name.starts_with("process_")
+            || name == "jarvis_test_mcp"
             || name.starts_with("terminal_")
             || name.starts_with("browser_")
             || name.starts_with("hub_")
@@ -484,6 +485,11 @@ mod tests {
         assert_eq!(proposal.capabilities.effect, Effect::Interactive);
         assert_eq!(proposal.capabilities.approval, ApprovalPolicy::Never);
         assert!(!proposal.capabilities.parallel_safe);
+        let test = catalog.specs.get("jarvis_test_mcp").unwrap();
+        assert_eq!(test.handler, Handler::JarvisAuthoring);
+        assert_eq!(test.capabilities.effect, Effect::Stateful);
+        assert_eq!(test.capabilities.approval, ApprovalPolicy::AccordingToTurn);
+        assert!(!test.capabilities.parallel_safe);
         let hook = catalog.specs.get("jarvis_propose_hook").unwrap();
         assert_eq!(hook.handler, Handler::JarvisAuthoring);
         assert_eq!(hook.capabilities.effect, Effect::Interactive);

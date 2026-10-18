@@ -41,6 +41,8 @@ fn credential_argument(arguments: &[String]) -> bool {
                 (flag, Some(value))
             });
         credential_assignment(argument)
+            || credential_url(argument)
+            || inline.is_some_and(credential_url)
             || (matches!(
                 flag,
                 "--api-key"
@@ -63,6 +65,12 @@ fn credential_argument(arguments: &[String]) -> bool {
     })
 }
 
+fn credential_url(value: &str) -> bool {
+    value.contains('?')
+        || url::Url::parse(value)
+            .is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
+}
+
 pub(in crate::agent) fn sanitize_mcp_args(name: &str, args: Value) -> Value {
     if name != "jarvis_propose_mcp" {
         return args;
@@ -73,11 +81,7 @@ pub(in crate::agent) fn sanitize_mcp_args(name: &str, args: Value) -> Value {
         return rejected();
     };
     let server = request.server;
-    let credential_url = server.url.as_deref().is_some_and(|value| {
-        value.contains('?')
-            || url::Url::parse(value)
-                .is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
-    });
+    let credential_url = server.url.as_deref().is_some_and(credential_url);
     // ponytail: exact credential forms only; arbitrary prose or wrapped shell
     // strings cannot be classified safely. Private values belong in the panel.
     if credential_url
@@ -120,6 +124,11 @@ mod tests {
             json!(["--access-token", "private-test-value"]),
             json!(["-H", "Authorization: Bearer private-test-value"]),
             json!(["GITHUB_TOKEN=private-test-value"]),
+            json!([
+                "mcp-remote",
+                "https://example.test/mcp?token=private-test-value"
+            ]),
+            json!(["--endpoint=https://user:private-test-value@example.test/mcp"]),
         ] {
             let mut args = proposal();
             args["server"]["args"] = cli;
@@ -128,6 +137,8 @@ mod tests {
         for url in [
             "https://example.test/mcp?api_key=private-test-value",
             "https://user:private-test-value@example.test/mcp",
+            "example.test/mcp?token=private-test-value",
+            "${MCP_URL}?token=private-test-value",
         ] {
             let mut args = proposal();
             args["server"]["url"] = json!(url);

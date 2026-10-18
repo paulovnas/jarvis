@@ -16,6 +16,7 @@ import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
 import { DesktopLayoutProvider } from "./DesktopLayoutProvider";
 import type { FilePreview } from "@/core/project-files";
 import { clearChatStore } from "@/core/chat-store";
+import { providerReference, referenceAccount } from "@/test/provider-reference-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -37,6 +38,33 @@ async function openProjectDetails(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Home shell", () => {
+  it.each([false, true])("shows startup model warnings in the sidebar, including an empty workspace (%s)", async empty => {
+    const stored = populatedLibrary();
+    const id = empty ? "global" : "c1";
+    const title = empty ? "Conversa global" : "Primeira conversa";
+    if (empty) {
+      stored.projects = [];
+      stored.conversations = [{ id, title, projectId: null, createdAt: 1 }];
+      stored.selection = { workspaceId: "w1", projectId: null, conversationId: null };
+    }
+    accountsMock.mockResolvedValue([referenceAccount()]);
+    let references = [providerReference({ kind: "conversation", itemKey: `chat:${id}`, label: title })];
+    const original = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((command, args, options) => {
+      if (command === "get_library_snapshot") return Promise.resolve(stored);
+      if (command === "get_provider_model_references") return Promise.resolve({ references, bindings: [] });
+      return original(command, args, options);
+    });
+    render(<Home />);
+    const chat = await screen.findByRole("button", { name: new RegExp(`^${title}`) });
+    expect(await within(chat).findByRole("img", { name: "Modelo indisponível" })).toBeVisible();
+    references = [];
+    const changed = vi.mocked(tauriEvents.listen).mock.calls.filter(([name]) => name === "chat-agent-models:changed");
+    expect(changed.length).toBeGreaterThan(0);
+    await act(async () => { changed.forEach(([, callback]) => callback({ event: "chat-agent-models:changed", id: 1, payload: { conversationId: id } })); });
+    await waitFor(() => expect(within(chat).queryByRole("img", { name: "Modelo indisponível" })).not.toBeInTheDocument());
+  });
+
   it("keeps navigation available in a narrow empty workspace without reserving an inspector", async () => {
     vi.stubGlobal("innerWidth", 768);
     const snapshot = populatedLibrary();
@@ -69,6 +97,68 @@ describe("Home shell", () => {
     expect(await screen.findByRole("menu")).toBeVisible();
     await user.keyboard("{Escape}");
     expect(invokeMock.mock.calls.some(([command]) => command === "start_agent_turn")).toBe(false);
+  });
+
+  it("closes each portrait sidebar before opening the opposite side and never reveals it on dismissal", async () => {
+    vi.stubGlobal("innerWidth", 768);
+    const user = userEvent.setup();
+    render(<Home />);
+    const composer = await screen.findByRole("textbox", { name: "Mensagem" });
+    composer.focus();
+    await user.paste("Preserve o rascunho durante a troca de laterais.");
+    const left = screen.getByRole("button", { name: "Abrir barra lateral" });
+    const inspector = screen.getByRole("button", { name: "Inspector" });
+    const leftContent = () => document.getElementById("workspace-panel-content");
+    const rightContent = () => document.getElementById("inspector-panel-content");
+    await user.click(left);
+    expect(leftContent()).toHaveAttribute("aria-hidden", "true");
+    expect(rightContent()).toHaveAttribute("aria-hidden", "true");
+    await waitFor(() => expect(leftContent()).toHaveAttribute("aria-hidden", "false"));
+    expect(rightContent()).toHaveAttribute("aria-hidden", "true");
+    await user.click(inspector);
+    expect(leftContent()).toHaveAttribute("aria-hidden", "true");
+    expect(rightContent()).toHaveAttribute("aria-hidden", "true");
+    await waitFor(() => expect(rightContent()).toHaveAttribute("aria-hidden", "false"));
+    expect(leftContent()).toHaveAttribute("aria-hidden", "true");
+    await user.click(inspector);
+    await waitFor(() => expect(inspector).toHaveAttribute("aria-expanded", "false"));
+    expect(leftContent()).toHaveAttribute("aria-hidden", "true");
+    expect(rightContent()).toHaveAttribute("aria-hidden", "true");
+    expect(composer).toHaveTextContent("Preserve o rascunho durante a troca de laterais.");
+  });
+
+  it("discards queued portrait navigation after an explicit wide-window dismissal", async () => {
+    vi.stubGlobal("innerWidth", 768);
+    const user = userEvent.setup();
+    render(<Home />);
+    await screen.findByRole("textbox", { name: "Mensagem" });
+    await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
+    vi.stubGlobal("innerWidth", 1440);
+    act(() => window.dispatchEvent(new Event("resize")));
+    await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
+    await user.click(screen.getByRole("button", { name: "Recolher barra lateral" }));
+    await waitFor(() => expect(document.getElementById("home-shell-panels")).not.toHaveClass("panels-animating"));
+    expect(document.getElementById("workspace-panel-content")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Abrir barra lateral" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("disables closed sidebar drag targets and enables them again only after opening", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+    await screen.findByRole("textbox", { name: "Mensagem" });
+    const leftHandle = () => document.querySelector('[aria-label="Redimensionar barra lateral"]');
+    const rightHandle = () => document.querySelector('[aria-label="Redimensionar inspector"]');
+    expect(leftHandle()).not.toHaveAttribute("aria-disabled");
+    expect(rightHandle()).not.toHaveAttribute("aria-disabled");
+    await user.click(screen.getByRole("button", { name: "Recolher barra lateral" }));
+    expect(leftHandle()).toHaveAttribute("aria-disabled", "true");
+    expect(leftHandle()).toHaveProperty("tabIndex", -1);
+    expect(rightHandle()).not.toHaveAttribute("aria-disabled");
+    await user.click(screen.getByRole("button", { name: "Inspector" }));
+    expect(rightHandle()).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("button", { name: "Abrir barra lateral" }));
+    expect(leftHandle()).not.toHaveAttribute("aria-disabled");
+    expect(rightHandle()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("moves navigation into the titlebar and closes the current panel before opening another", async () => {

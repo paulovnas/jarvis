@@ -226,6 +226,7 @@ struct Manager {
     guard: Mutex<()>,
     secrets: Arc<dyn Secrets>,
     apps_context: Mutex<Option<crate::plugins::apps::Context>>,
+    connection_checks: Mutex<std::collections::HashMap<String, (i64, u64)>>,
 }
 #[derive(Clone)]
 pub struct McpState(Arc<Manager>);
@@ -235,6 +236,7 @@ impl Default for McpState {
             guard: Mutex::new(()),
             secrets: Arc::new(Keychain),
             apps_context: Mutex::new(None),
+            connection_checks: Mutex::default(),
         }))
     }
 }
@@ -266,10 +268,39 @@ fn find(connection: &Connection, id: &str) -> Result<Server, McpError> {
         .ok_or_else(|| error("Este MCP não está mais cadastrado."))
 }
 impl McpState {
+    #[cfg(test)]
+    pub(crate) fn isolated_for_test() -> Self {
+        Self(Arc::new(Manager {
+            guard: Mutex::new(()),
+            secrets: Arc::new(tests::MemorySecrets::default()),
+            apps_context: Mutex::new(None),
+            connection_checks: Mutex::default(),
+        }))
+    }
     pub(crate) fn configure_apps(&self, context: crate::plugins::apps::Context) {
         if let Ok(mut stored) = self.0.apps_context.lock() {
             *stored = Some(context);
         }
+    }
+
+    pub(crate) fn connection_check(&self, id: &str) -> (i64, u64) {
+        self.0
+            .connection_checks
+            .lock()
+            .ok()
+            .and_then(|checks| checks.get(id).copied())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn refresh_after_check(&self, server: &Server) -> Result<(), McpError> {
+        let mut checks = self
+            .0
+            .connection_checks
+            .lock()
+            .map_err(|_| storage_error())?;
+        let check = checks.entry(server.id.clone()).or_default();
+        *check = (server.revision, check.1.saturating_add(1));
+        Ok(())
     }
     pub(crate) fn apps_context(&self) -> Option<crate::plugins::apps::Context> {
         self.0
@@ -396,6 +427,15 @@ impl McpState {
         Ok(config)
     }
     fn edit(&self, state: &AppState, home: &Path, id: &str) -> Result<String, McpError> {
+        let (server, config) = self.inspect_config(state, home, id)?;
+        Ok(config.named(&server.name))
+    }
+    pub(crate) fn inspect_config(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: &str,
+    ) -> Result<(Server, Config), McpError> {
         if id.starts_with("plugin-") {
             return Err(coded_error(
                 "plugin_owned_mcp",
@@ -404,7 +444,8 @@ impl McpState {
         }
         let _guard = self.0.guard.lock().map_err(|_| storage_error())?;
         let server = state.with_connection(home, |connection| find(connection, id))?;
-        Ok(self.config(home, &server)?.named(&server.name))
+        let config = self.config(home, &server)?;
+        Ok((server, config))
     }
     pub(crate) fn add(
         &self,
@@ -425,6 +466,35 @@ impl McpState {
         id: Option<&str>,
         raw: &str,
     ) -> Result<Vec<Server>, McpError> {
+        self.save_checked(state, home, id, raw, None)
+    }
+    pub(crate) fn update_config(
+        &self,
+        state: &AppState,
+        home: &Path,
+        expected: &Server,
+        name: &str,
+        config: &Config,
+    ) -> Result<Server, McpError> {
+        self.save_checked(
+            state,
+            home,
+            Some(&expected.id),
+            &config.named(name),
+            Some(expected),
+        )?
+        .into_iter()
+        .find(|server| server.id == expected.id)
+        .ok_or_else(storage_error)
+    }
+    fn save_checked(
+        &self,
+        state: &AppState,
+        home: &Path,
+        id: Option<&str>,
+        raw: &str,
+        expected: Option<&Server>,
+    ) -> Result<Vec<Server>, McpError> {
         if id.is_some_and(|id| id.starts_with("plugin-")) {
             return Err(coded_error(
                 "plugin_owned_mcp",
@@ -436,6 +506,9 @@ impl McpState {
         state.with_connection(home, |connection| {
             let transaction = connection.transaction()?;
             let previous = id.map(|id| find(&transaction, id)).transpose()?;
+            if expected.is_some_and(|expected| previous.as_ref().is_none_or(|current| current.revision != expected.revision || current.enabled != expected.enabled)) {
+                return Err(coded_error("stale_mcp_proposal", "Este MCP mudou durante a revisão. Consulte o catálogo novamente antes de propor outra alteração."));
+            }
             if previous.is_none() && rows(&transaction)?.len() >= 32 { return Err(error("Você pode cadastrar até 32 MCPs.")); }
             let duplicate: Option<String> = transaction.query_row("SELECT id FROM mcp_servers WHERE name = ?1", [&name], |row| row.get(0)).optional()?;
             if duplicate.as_deref().is_some_and(|existing| Some(existing) != id) { return Err(error("Já existe um MCP com esse nome.")); }

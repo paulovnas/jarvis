@@ -18,11 +18,60 @@ import { DEFAULT_DESKTOP_LAYOUT } from "@/core/desktop-layout";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
-function Harness({ runningIds, unreadIds, terminalCounts }: { runningIds?: ReadonlySet<string>; unreadIds?: ReadonlySet<string>; terminalCounts?: ReadonlyMap<string, number> }) {
-  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} unreadConversationIds={unreadIds} terminalCounts={terminalCounts} />;
+function Harness({ runningIds, unreadIds, terminalCounts, conversationProblems }: { runningIds?: ReadonlySet<string>; unreadIds?: ReadonlySet<string>; terminalCounts?: ReadonlyMap<string, number>; conversationProblems?: ReadonlyMap<string, string> }) {
+  return <AppSidebar library={useLibrary()} runningConversationIds={runningIds} unreadConversationIds={unreadIds} terminalCounts={terminalCounts} conversationProblems={conversationProblems} />;
 }
 
 describe("Persistent sidebar", () => {
+  it("marks affected global and project chats in red, keeps them selectable, and clears repaired warnings", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.projects.push({ id: "p3", workspaceId: "w1", name: "Website", path: "/projects/site", createdAt: 3 });
+    stored.conversations.push(
+      { id: "global", projectId: null, title: "Global indisponível", createdAt: 3 },
+      { id: "healthy", projectId: null, title: "Global saudável", createdAt: 2 },
+      { id: "hidden", projectId: "p3", title: "Conversa recolhida", createdAt: 3 },
+    );
+    call.mockResolvedValue(stored);
+    const problems = new Map(["c1", "global", "hidden"].map(id => [id, "O modelo anterior não está mais disponível."]));
+    const props = { runningIds: new Set(["c1"]), unreadIds: new Set(["c1"]) };
+    const view = render(<Harness {...props} conversationProblems={problems} />);
+    const chat = await screen.findByRole("button", { name: /Primeira conversa/, current: "page" });
+    const marker = within(chat).getByRole("img", { name: "Modelo indisponível" });
+    expect(marker).toHaveClass("text-destructive");
+    expect(within(chat).getByLabelText("Conversa em execução")).toBeInTheDocument();
+    expect(within(chat).getByRole("img", { name: "Mensagem não lida" })).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "Global saudável" })).queryByRole("img", { name: "Modelo indisponível" })).not.toBeInTheDocument();
+    await user.hover(marker);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("O modelo anterior não está mais disponível.");
+    await user.unhover(marker);
+    const global = screen.getByRole("button", { name: /^Global indisponível/ });
+    expect(within(global).getByRole("img", { name: "Modelo indisponível" })).toBeInTheDocument();
+    await user.click(global);
+    expect(call).toHaveBeenCalledWith("select_library_item", { target: { kind: "conversation", id: "global" } });
+    const project = screen.getByRole("button", { name: /^Website/ });
+    expect(project).toHaveAttribute("aria-expanded", "false");
+    expect(within(project).getByRole("img", { name: "Modelo indisponível" })).toBeVisible();
+    await user.click(project);
+    expect(within(await screen.findByRole("button", { name: /^Conversa recolhida/ })).getByRole("img", { name: "Modelo indisponível" })).toBeVisible();
+    view.rerender(<Harness {...props} conversationProblems={new Map()} />);
+    expect(screen.queryByRole("img", { name: "Modelo indisponível" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Conversa em execução")).toBeInTheDocument();
+  });
+
+  it("signals unavailable global chats even when they are hidden behind Ver mais", async () => {
+    const user = userEvent.setup();
+    const stored = populatedLibrary();
+    stored.conversations.push(...Array.from({ length: 5 }, (_, index) => ({ id: `g${index}`, projectId: null, title: `Global ${index}`, createdAt: index })));
+    call.mockResolvedValue(stored);
+    render(<Harness conversationProblems={new Map([["g0", "Escolha outro modelo."]])} />);
+    const globals = await screen.findByRole("region", { name: "Global" });
+    expect(within(globals).queryByRole("button", { name: /^Global 0/ })).not.toBeInTheDocument();
+    expect(within(globals).getByRole("img", { name: "Modelo indisponível" })).toBeVisible();
+    await user.click(within(globals).getByRole("button", { name: /Ver mais/ }));
+    expect(within(within(globals).getByRole("button", { name: /^Global 0/ })).getByRole("img", { name: "Modelo indisponível" })).toBeVisible();
+  });
+
   it("moves a global conversation by dropping it on a project and ignores unrelated drops", async () => {
     const stored = populatedLibrary();
     const global = { id: "shared", projectId: null, title: "Chat compartilhado", createdAt: 1 };

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -12,6 +12,19 @@ export function useProviderReferences(accounts: ProviderAccount[], ready: boolea
   const [loading, setLoading] = useState(true);
   const [settledAccounts, setSettledAccounts] = useState<ProviderAccount[] | null>(null);
   const lastNotice = useRef("");
+  const issues = useMemo(() => ready && data && data.accounts === accounts
+    ? data.references.flatMap(item => { const problem = modelProblem(item.choice, accounts, item.kind); return problem ? [{ item, problem }] : []; })
+    : [], [accounts, ready, data]);
+  const conversationProblems = useMemo(() => {
+    const problems = new Map<string, string>();
+    for (const { item, problem } of issues) {
+      if (item.kind !== "conversation") continue;
+      // Chat choices, agent overrides and fallbacks share this prefix.
+      const id = /^chat:([^:]+)/.exec(item.itemKey)?.[1];
+      if (id && !problems.has(id)) problems.set(id, problem);
+    }
+    return problems;
+  }, [issues]);
   useEffect(() => {
     if (!ready) return;
     let active = true; let request = 0;
@@ -27,14 +40,13 @@ export function useProviderReferences(accounts: ProviderAccount[], ready: boolea
   }, [accounts, ready]);
   useEffect(() => {
     if (!ready || loading || !data || data.accounts !== accounts) return;
-    const issues = data.references.flatMap(item => { const problem = modelProblem(item.choice, accounts, item.kind); return problem ? [{ item, problem }] : []; });
     const fingerprint = JSON.stringify(issues.map(({ item, problem }) => [item.id, problem]));
     if (fingerprint === lastNotice.current) return;
     lastNotice.current = fingerprint;
     if (issues.length) toast.error(`${issues.length} ${issues.length === 1 ? "configuração precisa" : "configurações precisam"} de outro provedor ou modelo`, { id: "provider-invalid-models", description: issues.slice(0, 3).map(({ item, problem }) => `${item.label}: ${problem}`).join(" ") + (issues.length > 3 ? ` E mais ${issues.length - 3}.` : ""), duration: 10000 });
     else toast.dismiss("provider-invalid-models");
-  }, [accounts, ready, loading, data]);
-  return { bindings: data?.bindings ?? emptyBindings, loading: settledAccounts !== accounts };
+  }, [accounts, ready, loading, data, issues]);
+  return { bindings: data?.bindings ?? emptyBindings, loading: settledAccounts !== accounts, conversationProblems };
 }
 
 export function useModelProblemNotice(label: string, problem: string | null, key = label) {

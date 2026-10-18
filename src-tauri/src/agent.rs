@@ -3406,7 +3406,7 @@ fn append_direct_task_instructions(instructions: &mut String) {
     }
 }
 
-const MCP_REGISTRATION_INSTRUCTIONS: &str = "\nWhen the user asks to configure an MCP, inspect the public mcpServers metadata in jarvis_catalog and submit jarvis_propose_mcp. The native panel requires explicit approval, even in YOLO. Never include credentials in the proposal, command arguments, URL or summary: declare envKeys/headerKeys and let the user fill their values privately in the panel. Registration only saves the new global server; it does not install or connect it. To use an enabled server for the current request, use the advertised MCP discovery controls and exact loaded tool schemas. Respect rejection and do not resubmit an unchanged proposal.\n";
+const MCP_REGISTRATION_INSTRUCTIONS: &str = "\nFor MCP setup or repair, inspect mcpServers in jarvis_catalog and view=mcp with the exact ID for public configuration and revision. Use jarvis_propose_mcp to create or update registration with explicit native approval, even in YOLO. Updates require id+revision and preserve retained private values; new/replaced values belong only in the private panel. Never put credentials in model arguments, command arguments, URLs or summaries. Local server source can be inspected and repaired with normal file/command tools under existing scope and approvals; use native bash admission for an explicitly needed external installation path, never bypass a denial or rewrite Jarvis settings through files. Test repaired code with its own relevant tests, then jarvis_test_mcp for fresh initialization and complete catalog discovery. Saving alone proves neither connection nor functionality. Actual MCP operations use the advertised discovery controls and exact loaded schemas. Respect rejection and uncertain outcomes.\n";
 
 fn authoring_tools_for_turn(mode: Mode, publication: bool) -> Vec<Value> {
     authoring::definitions()
@@ -3417,11 +3417,16 @@ fn authoring_tools_for_turn(mode: Mode, publication: bool) -> Vec<Value> {
                 || !matches!(
                     name,
                     "jarvis_propose_mcp"
+                        | "jarvis_test_mcp"
                         | "jarvis_propose_hook"
                         | "jarvis_propose_plugin"
                         | "jarvis_propose_project_instructions"
                 ))
-                && (!publication || matches!(name, "jarvis_catalog" | "jarvis_propose_mcp"))
+                && (!publication
+                    || matches!(
+                        name,
+                        "jarvis_catalog" | "jarvis_propose_mcp" | "jarvis_test_mcp"
+                    ))
         })
         .collect()
 }
@@ -5147,7 +5152,8 @@ fn run_turn_once<'a>(
                             )),
                         },
                         Some(tool_contract::Handler::JarvisAuthoring) => {
-                            authoring::execute(
+                            mcp_clients.ensure_connection_test_scope(&tool.name, &tool.args)?;
+                            let result = authoring::execute(
                                 session,
                                 owner,
                                 state,
@@ -5157,7 +5163,11 @@ fn run_turn_once<'a>(
                                 &tool,
                                 signal.clone(),
                             )
-                            .await
+                            .await;
+                            if let Ok(output) = &result {
+                                mcp_clients.observe_connection_test(&tool.name, &tool.args, output);
+                            }
+                            result
                         }
                         Some(tool_contract::Handler::Context7) => crate::core::context7::execute(
                             home,

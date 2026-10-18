@@ -8,6 +8,7 @@ import {
   Plus,
   SquareTerminal,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -70,16 +71,23 @@ const sidebarStyle = {
 
 const globalChatDragType = "application/x-jarvis-global-conversation";
 
+function ModelProblemIndicator({ problem }: { problem?: string }) {
+  if (!problem) return null;
+  return <Hint content={problem}><span role="img" aria-label="Modelo indisponível" aria-description={problem} className="flex size-4 shrink-0 cursor-pointer items-center justify-center text-destructive"><TriangleAlert aria-hidden="true" className="size-3.5" /></span></Hint>;
+}
+
 export function AppSidebar({
   library,
   runningConversationIds,
   unreadConversationIds,
   terminalCounts,
+  conversationProblems,
 }: {
   library: LibraryController;
   runningConversationIds?: ReadonlySet<string>;
   unreadConversationIds?: ReadonlySet<string>;
   terminalCounts?: ReadonlyMap<string, number>;
+  conversationProblems?: ReadonlyMap<string, string>;
 }) {
   const [dialog, setDialog] = useState<NameDialog | null>(null);
   const [moving, setMoving] = useState<Project | null>(null);
@@ -132,6 +140,7 @@ export function AppSidebar({
             >
               {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="motion-reduce:animate-none" style={{ color: accent }} /> : <MessageSquare className="text-muted-foreground" style={item.id === selected?.conversationId ? { color: accent } : undefined} />}
               <Hint content={item.title} whenTruncated><span className="min-w-0 flex-1 truncate">{item.title}</span></Hint>
+              <ModelProblemIndicator problem={conversationProblems?.get(item.id)} />
               {unreadConversationIds?.has(item.id) && <Hint content="Mensagem não lida"><Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent }} /></Hint>}
             </SidebarMenuButton>
           </LibraryItemMenu>
@@ -155,7 +164,7 @@ export function AppSidebar({
         <Sidebar collapsible="none" className="h-full w-full bg-sidebar">
           <SidebarHeader className="gap-2 border-b border-border px-3 py-3">
             <section aria-label="Global" className="mb-1 border-b border-border pb-3">
-              <div className="mb-1 flex h-7 items-center justify-between px-1"><span className="text-xs font-medium text-muted-foreground">Global</span><Hint content="Nova conversa global"><Button variant="ghost" size="icon" aria-label="Nova conversa global" disabled={busy} className="size-6 cursor-pointer text-muted-foreground" onClick={() => void library.createGlobalConversation()}><Plus aria-hidden="true" className="size-3.5" /></Button></Hint></div>
+              <div className="mb-1 flex h-7 items-center justify-between px-1"><span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">Global<ModelProblemIndicator problem={globalChats.map(item => conversationProblems?.get(item.id)).find(Boolean)} /></span><Hint content="Nova conversa global"><Button variant="ghost" size="icon" aria-label="Nova conversa global" disabled={busy} className="size-6 cursor-pointer text-muted-foreground" onClick={() => void library.createGlobalConversation()}><Plus aria-hidden="true" className="size-3.5" /></Button></Hint></div>
               <div className="max-h-64 overflow-y-auto"><SidebarMenu aria-label="Conversas globais">
                 {loading && <SidebarMenuItem role="status" aria-label="Carregando conversas globais"><div className="space-y-1">{[0, 1, 2].map(index => <div key={index} className="flex h-[34px] items-center gap-2 px-2"><Skeleton className="size-4 shrink-0" /><Skeleton className="h-3 w-3/4" /></div>)}</div></SidebarMenuItem>}
                 {globalChats.slice(0, globalCount).map(item => <SidebarMenuItem key={item.id}>
@@ -163,6 +172,7 @@ export function AppSidebar({
                     <SidebarMenuButton className="native-navigation-row h-[34px] cursor-pointer pr-8 text-[13px] text-muted-foreground data-active:text-foreground!" disabled={busy} isActive={item.id === selected?.conversationId} aria-current={item.id === selected?.conversationId ? "page" : undefined} draggable={!busy && !runningConversationIds?.has(item.id)} onDragStart={event => { event.dataTransfer.setData(globalChatDragType, item.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDropProject(null)} onClick={() => void library.select({ kind: "conversation", id: item.id })}>
                       {runningConversationIds?.has(item.id) ? <Spinner aria-label="Conversa em execução" className="text-primary motion-reduce:animate-none" /> : <MessageSquare aria-hidden="true" className="text-muted-foreground" />}
                       <Hint content={item.title} whenTruncated><span className="min-w-0 flex-1 truncate">{item.title}</span></Hint>
+                      <ModelProblemIndicator problem={conversationProblems?.get(item.id)} />
                       {unreadConversationIds?.has(item.id) && <Badge role="img" aria-label="Mensagem não lida" className="size-2 shrink-0 rounded-full border-0 bg-primary p-0" />}
                     </SidebarMenuButton>
                   </LibraryItemMenu>
@@ -300,6 +310,7 @@ export function AppSidebar({
                                     {item.name}
                                   </span>
                                 </span></Hint>
+                                <ModelProblemIndicator problem={conversations.map(entry => conversationProblems?.get(entry.id)).find(Boolean)} />
                                 {(terminalCounts?.get(item.id) ?? 0) > 0 && <Hint content={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`}><span role="img" aria-label={`${terminalCounts?.get(item.id)} ${terminalCounts?.get(item.id) === 1 ? "terminal aberto" : "terminais abertos"}`} className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] text-onedark-green"><SquareTerminal aria-hidden="true" className="size-3.5" />{(terminalCounts?.get(item.id) ?? 0) > 1 && terminalCounts?.get(item.id)}</span></Hint>}
                                 {conversations.some(entry => unreadConversationIds?.has(entry.id)) && <Hint content="Mensagens não lidas"><Badge role="img" aria-label="Projeto com mensagens não lidas" className="mr-1 size-2 shrink-0 rounded-full border-0 p-0" style={{ backgroundColor: accent }} /></Hint>}
                               </CollapsibleTrigger>

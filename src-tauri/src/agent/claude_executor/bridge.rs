@@ -714,6 +714,7 @@ impl<'a> Bridge<'a> {
             tool.name.as_str(),
             "mcp_activate" | "mcp_search_tools" | "mcp_load_tool"
         );
+        let checked = tool.name == "jarvis_test_mcp" && status == "completed";
         let unavailable = status == "error"
             && serde_json::from_str::<Value>(output).is_ok_and(|result| {
                 matches!(
@@ -721,7 +722,7 @@ impl<'a> Bridge<'a> {
                     Some("tool_unavailable" | "mcp_scope_violation")
                 )
             });
-        if !(discovery && status != "error" || unavailable || registered) {
+        if !(discovery && status != "error" || unavailable || registered || checked) {
             return Ok(None);
         }
         let definitions = self.definitions().await?;
@@ -733,7 +734,7 @@ impl<'a> Bridge<'a> {
             self.clients
                 .discovery_schemas(&tool.name, &tool.args, output, &definitions)
         };
-        if !tool.name.starts_with("mcp_") && !registered && schemas.is_empty() {
+        if !tool.name.starts_with("mcp_") && !registered && !checked && schemas.is_empty() {
             return Ok(None);
         }
         let capability_context = if (registered || unavailable)
@@ -875,7 +876,9 @@ impl<'a> Bridge<'a> {
                 .await
             }
             Handler::JarvisAuthoring => {
-                authoring::execute(
+                self.clients
+                    .ensure_connection_test_scope(&tool.name, &tool.args)?;
+                let result = authoring::execute(
                     self.session,
                     self.owner(),
                     state,
@@ -885,7 +888,12 @@ impl<'a> Bridge<'a> {
                     tool,
                     signal,
                 )
-                .await
+                .await;
+                if let Ok(output) = &result {
+                    self.clients
+                        .observe_connection_test(&tool.name, &tool.args, output);
+                }
+                result
             }
             Handler::Beads => {
                 if let Some(exec) = &self.execution {
@@ -1266,6 +1274,95 @@ pub(in crate::agent) mod tests {
             delivered_wire: 0,
             request_scope: "gateway-test".into(),
             accepted_live: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_connection_diagnostics_can_finish_without_forcing_an_advertised_tool_call() {
+        for broken in [false, true] {
+            let fixture = crate::agent::tests::Fixture::new();
+            let session = crate::agent::tests::session(&fixture);
+            let state = AppState::default();
+            let oauth = OpenAiCodexState::default();
+            let mcp = crate::mcp::McpState::isolated_for_test();
+            let script = if broken {
+                fixture.root.join("missing.mjs")
+            } else {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/mcp/fixtures/server.mjs")
+            };
+            let (name, config) = crate::mcp::config::parse(
+                &json!({"audio":{"type":"local","command":["node",script]}}).to_string(),
+            )
+            .unwrap();
+            let server = mcp.add(&state, &fixture.root, &name, &config).unwrap();
+            let intent: crate::mcp::McpIntent = serde_json::from_value(
+                json!({"mode":"explicit","servers":[{"id":server.id,"name":server.name}]}),
+            )
+            .unwrap();
+            let grants = execution_grants::GrantStore::default();
+            let options = crate::agent::tests::options(ApprovalMode::Yolo);
+            let signal = session
+                .reserve("Verifique a conexão do MCP".into(), options.clone())
+                .unwrap();
+            session
+                .update(true, |data| {
+                    data.turns.last_mut().unwrap().mcp_intent = Some(intent.clone())
+                })
+                .unwrap();
+            let mut bridge = fixture_bridge(
+                &session,
+                TurnRuntime {
+                    grants: &grants,
+                    state: &state,
+                    oauth: &oauth,
+                    mcp: &mcp,
+                    home: &fixture.root,
+                },
+                options,
+                signal.clone(),
+            );
+            bridge.clients = crate::mcp::runtime::TurnClients::discover_for_intent(
+                &mcp,
+                &state,
+                &fixture.root,
+                &session.root,
+                &intent,
+                signal,
+            )
+            .await
+            .unwrap();
+            bridge.mcp_intent = intent;
+            let definitions = bridge.definitions().await.unwrap();
+            assert!(definitions
+                .iter()
+                .any(|tool| tool["name"] == "jarvis_test_mcp"));
+            let mut tool = ToolCall {
+                id: "diagnostic".into(),
+                name: "jarvis_test_mcp".into(),
+                args: json!({"id":"unrelated","revision":server.revision}),
+                status: "running".into(),
+                output: String::new(),
+                duration_ms: 0,
+            };
+            assert_eq!(
+                bridge
+                    .dispatch(&tool, Handler::JarvisAuthoring, None, false)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "mcp_scope_violation"
+            );
+            tool.args = json!({"id":server.id,"revision":server.revision});
+            let checked: Value = serde_json::from_str(
+                &bridge
+                    .dispatch(&tool, Handler::JarvisAuthoring, None, false)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(checked["ok"], !broken);
+            assert_eq!(checked["toolsExecuted"], false);
+            assert!(bridge.completion_feedback().await.unwrap().is_none());
         }
     }
 

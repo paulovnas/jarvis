@@ -96,7 +96,10 @@ fn description(name: &str) -> &'static str {
             "Propor a criação ou edição supervisionada de um fluxo customizado."
         }
         "jarvis_propose_mcp" => {
-            "Propor o cadastro global de um servidor MCP para aprovação explícita."
+            "Propor o cadastro ou a edição de um servidor MCP para aprovação explícita."
+        }
+        "jarvis_test_mcp" => {
+            "Testar a conexão e o catálogo de um MCP cadastrado, sem executar suas ferramentas."
         }
         "jarvis_propose_hook" => {
             "Propor a criação, edição ou remoção de hooks manuais para aprovação explícita."

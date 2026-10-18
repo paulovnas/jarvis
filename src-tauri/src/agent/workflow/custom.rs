@@ -194,6 +194,7 @@ pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
             | "workflow_check"
             | "jarvis_propose_publication"
             | "jarvis_propose_mcp"
+            | "jarvis_test_mcp"
             | "jarvis_propose_hook"
             | "jarvis_propose_plugin"
             | "impeccable"

@@ -27,7 +27,12 @@ type Decision = (approved: boolean, note: string | null, mcpValues?: McpAuthorin
 function changedFields(request: PendingAuthoring): string[] {
   const target = request.target;
   if (target.kind === "project_instructions") return target.before === target.after ? [] : ["content"];
-  if (target.kind === "publication" || target.kind === "mcp" || target.kind === "plugin") return [];
+  if (target.kind === "publication" || target.kind === "plugin") return [];
+  if (target.kind === "mcp") {
+    const before = target.before;
+    if (!before) return [];
+    return (Object.keys(target.server) as (keyof typeof target.server)[]).filter(field => JSON.stringify(before[field]) !== JSON.stringify(target.server[field]));
+  }
   if (target.kind === "hook") {
     if (!target.before || !target.after) return [];
     const fields = ["name", "event", "command", "matcher", "timeoutSeconds", "enabled"] as const;
@@ -53,6 +58,7 @@ const fieldLabels: Record<string, string> = {
   maxSteps: "Limite", steps: "Etapas",
   event: "Evento", command: "Comando", matcher: "Matcher", timeoutSeconds: "Tempo limite", enabled: "Ativação",
   content: "Instruções do projeto",
+  transport: "Transporte", args: "Argumentos", url: "Endereço", cwd: "Pasta de trabalho", envKeys: "Variáveis", headerKeys: "Cabeçalhos",
 };
 
 function ModelSummary({ agent }: { agent: CustomAgent }) {
@@ -176,7 +182,8 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
   const isHook = request.target.kind === "hook";
   const isPlugin = request.target.kind === "plugin";
   const isProjectInstructions = request.target.kind === "project_instructions";
-  const credentialsReady = request.target.kind !== "mcp" || hasMcpAuthoringValues(request.target.server, mcpValues);
+  const credentialsReady = request.target.kind !== "mcp" || hasMcpAuthoringValues(request.target.server, mcpValues, request.target.before);
+  const privateValuesChanged = isMcp && [...Object.values(mcpValues.environment), ...Object.values(mcpValues.headers)].some(value => value.trim());
   const requestsRevision = isPublication && note.trim().length > 0;
   const action = isMcp ? "Adicionar" : request.action === "delete" ? "Remover" : request.action === "create" ? "Criar" : request.action === "update" ? "Editar" : "Executar";
   const target = isProjectInstructions ? "AGENTS.md" : isPublication ? "ações" : isMcp ? "MCP" : isHook ? "hook" : isPlugin ? "plugin" : isAgent ? "agente" : "fluxo";
@@ -201,20 +208,20 @@ export function AuthoringApprovalDrawer({ request, owner, onAnswer }: { request:
         </Alert>
         {request.action === "update" && !isPlugin && <section className="mb-5 rounded-md border border-border bg-card/60 p-4">
           <p className="micro-label mb-2 flex items-center gap-2 text-muted-foreground"><GitCompareArrows className="size-3.5" />Campos alterados</p>
-          <div className="flex flex-wrap gap-1.5">{changes.length ? changes.map(field => <Badge key={field} variant="outline" className="text-[10px] text-onedark-yellow">{fieldLabels[field] ?? field}</Badge>) : <span className="text-xs text-muted-foreground">A proposta não altera nenhum campo.</span>}</div>
+          <div className="flex flex-wrap gap-1.5">{changes.length ? changes.map(field => <Badge key={field} variant="outline" className="text-[10px] text-onedark-yellow">{fieldLabels[field] ?? field}</Badge>) : <span className="text-xs text-muted-foreground">{privateValuesChanged ? "Substituir valores privados" : "A proposta não altera nenhum campo."}</span>}</div>
         </section>}
-        {request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : request.target.kind === "mcp" ? <McpProposalFields server={request.target.server} values={mcpValues} disabled={pending} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <PublicationReview proposal={request.target.after} />}
+        {request.target.kind === "project_instructions" ? <ProjectInstructionsReview target={request.target} /> : request.target.kind === "agent" ? <AgentReview agent={request.target.after} /> : request.target.kind === "flow" ? <FlowReview flow={request.target.after} references={request.agentReferences} /> : request.target.kind === "hook" ? <HookProposalFields target={request.target} /> : request.target.kind === "plugin" ? <PluginChangeReview preview={request.target.preview} /> : request.target.kind === "mcp" ? <McpProposalFields server={request.target.server} before={request.target.before} values={mcpValues} disabled={pending} onChange={(group, key, value) => setMcpValues(current => ({ ...current, [group]: { ...current[group], [key]: value } }))} /> : <PublicationReview proposal={request.target.after} />}
         <Separator className="my-5" />
         <div className="space-y-2">
           <Label htmlFor={`authoring-note-${request.toolId}`}>Orientação para o agente <span className="font-normal text-muted-foreground">(opcional)</span></Label>
           <Textarea id={`authoring-note-${request.toolId}`} value={note} onChange={event => setNote(event.target.value)} maxLength={2000} disabled={pending} placeholder={isPublication ? "Descreva o ajuste que o agente deve incorporar antes de apresentar uma nova proposta." : "Explique um ajuste se preferir recusar ou deixe uma observação para a aprovação."} className="min-h-20 resize-y" />
           {isPublication && <p className="text-xs leading-5 text-muted-foreground">Ao adicionar uma orientação, nenhuma ação será executada agora. O agente GitHub revisará a proposta e pedirá sua aprovação novamente.</p>}
         </div>
-        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isProjectInstructions ? "A autorização vale apenas para o AGENTS.md deste projeto. Se o arquivo mudar durante a revisão, será necessário preparar outra proposta." : isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : isMcp ? "A autorização vale apenas para adicionar este novo servidor MCP. Configurações existentes não serão substituídas." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-border bg-sidebar/55 p-3 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-onedark-yellow" /><span>{isProjectInstructions ? "A autorização vale apenas para o AGENTS.md deste projeto. Se o arquivo mudar durante a revisão, será necessário preparar outra proposta." : isPublication ? "A autorização vale uma vez e somente para os repositórios, arquivos e operações exibidos. Uma falha parcial precisa ser revisada antes de qualquer nova tentativa." : isMcp ? request.action === "update" ? "A autorização vale apenas para atualizar este MCP na revisão exibida. Alterações concorrentes exigem outra proposta." : "A autorização vale apenas para adicionar este novo servidor MCP. Configurações existentes não serão substituídas." : "Agentes e fluxos nativos permanecem protegidos. Esta autorização vale apenas para a proposta exibida, neste turno."}</span></div>
       </div>
       <SheetFooter className="shrink-0 flex-row items-center justify-end gap-3 border-t border-border bg-card/70 p-4">
         <Button variant="outline" className="cursor-pointer" disabled={pending} onClick={() => { void answer(false); }}><X />Recusar</Button>
-        <Button className="cursor-pointer" disabled={pending || !credentialsReady || (!isPlugin && request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : isMcp ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button>
+        <Button className="cursor-pointer" disabled={pending || !credentialsReady || (!isPlugin && !privateValuesChanged && request.action === "update" && changes.length === 0)} onClick={() => { void answer(true); }}>{pending ? <Spinner /> : requestsRevision ? <MessageSquareText /> : <Sparkles />}{requestsRevision ? "Enviar para revisão" : isPublication ? "Aprovar e executar" : isMcp && request.action === "create" ? "Aprovar e adicionar" : request.action === "delete" ? "Aprovar e remover" : "Aprovar e salvar"}</Button>
       </SheetFooter>
     </SheetContent>
   </Sheet>;

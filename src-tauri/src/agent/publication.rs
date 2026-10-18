@@ -894,7 +894,13 @@ fn validate_branch(directory: &Path, branch: &str) -> Result<(), AgentError> {
 }
 
 fn current_branch(directory: &Path) -> Result<String, AgentError> {
-    git(directory, ["rev-parse", "--abbrev-ref", "HEAD"])
+    let branch = git(directory, ["branch", "--show-current"])?;
+    // Keep the existing sentinel for detached HEAD without requiring a first commit.
+    Ok(if branch.is_empty() {
+        "HEAD".into()
+    } else {
+        branch
+    })
 }
 
 fn branch_exists(directory: &Path, branch: &str) -> Result<bool, AgentError> {
@@ -1973,15 +1979,30 @@ struct RepositoryResult {
 #[serde(rename_all = "camelCase")]
 struct RepositoryState {
     branch: String,
-    head: String,
+    head: Option<String>,
 }
 
 fn repository_state(root: &Path, path: &str) -> Option<RepositoryState> {
     let directory = resolve_repository(root, path).ok()?;
-    Some(RepositoryState {
-        branch: current_branch(&directory).ok()?,
-        head: git(&directory, ["rev-parse", "HEAD"]).ok()?,
-    })
+    let branch = current_branch(&directory).ok()?;
+    let output = run(
+        &directory,
+        "git",
+        ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+    )
+    .ok()?;
+    let head = if output.status.success() {
+        Some(String::from_utf8(output.stdout).ok()?.trim().to_owned())
+    } else if output.status.code() == Some(1)
+        && branch != "HEAD"
+        && !branch_exists(&directory, &branch).ok()?
+    {
+        // Only a missing branch reference is a valid unborn HEAD.
+        None
+    } else {
+        return None;
+    };
+    Some(RepositoryState { branch, head })
 }
 
 fn push_attempt(directory: &Path, branch: &str, lease: Option<&str>) -> Result<Output, AgentError> {

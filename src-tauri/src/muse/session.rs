@@ -649,7 +649,7 @@ async fn run_config(
                 "session/start",
                 &json!({
                     "commandId":command_id()?, "providerId":"meta", "modelId":model,
-                    "workspaceRoot":root, "approvalMode":"denyUnmatched",
+                    "workspaceRoot":crate::library::strip_verbatim(&root.to_string_lossy()), "approvalMode":"denyUnmatched",
                     "config":{"mcpServers":{}}
                 }),
             )

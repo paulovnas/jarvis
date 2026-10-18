@@ -186,7 +186,10 @@ impl Role {
                 && flow != Flow::Publication
                 && matches!(self, Self::Builder | Self::Designer | Self::Planner);
         }
-        if matches!(tool, "jarvis_propose_mcp" | "jarvis_propose_hook") {
+        if matches!(
+            tool,
+            "jarvis_propose_mcp" | "jarvis_test_mcp" | "jarvis_propose_hook"
+        ) {
             return broad
                 && matches!(
                     self,

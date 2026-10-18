@@ -3,13 +3,15 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import type { McpAuthoringValues, McpProposalServer } from "@/core/authoring";
+import { retainedMcpKeys, type McpAuthoringValues, type McpProposalServer } from "@/core/authoring";
 
-export function McpProposalFields({ server, values, onChange, disabled }: {
+export function McpProposalFields({ server, before, values, onChange, disabled }: {
   server: McpProposalServer; values: McpAuthoringValues; disabled: boolean;
+  before?: McpProposalServer | null;
   onChange: (group: keyof McpAuthoringValues, key: string, value: string) => void;
 }) {
   const id = useId();
+  const retained = retainedMcpKeys(server, before);
   const groups = [{ group: "environment", keys: server.envKeys, label: "Variável" }, { group: "headers", keys: server.headerKeys, label: "Cabeçalho" }] as const;
   return <Card>
     <CardHeader>
@@ -17,6 +19,11 @@ export function McpProposalFields({ server, values, onChange, disabled }: {
       <CardDescription>{server.transport === "stdio" ? "Local · stdio" : "Remoto · HTTP"}</CardDescription>
     </CardHeader>
     <CardContent className="flex min-w-0 flex-col gap-4">
+      {before && <section aria-label="Configuração anterior do MCP" className="min-w-0">
+        <p className="micro-label mb-2 text-muted-foreground">Configuração anterior</p>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-3 font-mono text-xs">{JSON.stringify(before, null, 2)}</pre>
+        <p className="mt-2 text-xs text-muted-foreground">Valores já configurados serão preservados nas chaves mantidas. Preencha um campo abaixo somente para substituir seu valor. Um novo endereço HTTP exige novos valores privados.</p>
+      </section>}
       <dl className="flex min-w-0 flex-col gap-3 text-xs">
         <div><dt className="micro-label mb-1 text-muted-foreground">Escopo</dt><dd>Global · disponível nos projetos e chats do Jarvis</dd></div>
         {server.transport === "stdio" ? <>
@@ -33,7 +40,7 @@ export function McpProposalFields({ server, values, onChange, disabled }: {
         <FieldDescription>Preencha os valores diretamente aqui. Eles serão enviados somente ao aprovar; não serão incluídos na proposta nem enviados à IA.</FieldDescription>
         <FieldGroup>{groups.flatMap(({ group, keys, label }) => keys.map((key, index) => <Field key={`${group}-${key}`} data-disabled={disabled}>
           <FieldLabel htmlFor={`${id}-${group}-${index}`} className="cursor-pointer break-all">{label} {key}</FieldLabel>
-          <Input id={`${id}-${group}-${index}`} type="password" required autoComplete="new-password" spellCheck={false} value={Object.prototype.hasOwnProperty.call(values[group], key) ? values[group][key] : ""} disabled={disabled} onChange={event => onChange(group, key, event.target.value)} />
+          <Input id={`${id}-${group}-${index}`} type="password" required={!retained[group].includes(key)} placeholder={retained[group].includes(key) ? "Manter valor configurado" : undefined} autoComplete="new-password" spellCheck={false} value={Object.prototype.hasOwnProperty.call(values[group], key) ? values[group][key] : ""} disabled={disabled} onChange={event => onChange(group, key, event.target.value)} />
         </Field>))}</FieldGroup>
       </FieldSet>}
     </CardContent>

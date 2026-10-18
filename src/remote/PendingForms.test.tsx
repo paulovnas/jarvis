@@ -76,6 +76,23 @@ it("reviews the exact hook being removed and forwards a single explicit remote d
   expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: { turnId: "hook-turn", toolId: "hook-delete", approved: true, note: null } });
 });
 
+it("reviews an MCP update remotely without asking again for retained private values", async () => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  const request = mcpProposal();
+  if (request.target.kind !== "mcp") throw new Error("Missing MCP fixture");
+  bundle.chat.pendingAuthoring = { ...request, action: "update", catalogRevision: 2,
+    target: { ...request.target, before: request.target.server, server: { ...request.target.server, name: "docs-repaired" } },
+  };
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} focused />);
+  const approve = screen.getByRole("button", { name: "Aprovar e salvar" });
+  expect(approve).toBeEnabled();
+  expect(screen.getByLabelText("Cabeçalho Authorization")).not.toBeRequired();
+  await user.click(approve);
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: {
+    turnId: "mcp-turn", toolId: "mcp-tool", approved: true, note: null, mcpValues: { environment: {}, headers: {} },
+  } });
+});
+
 it.each([true, false])("reviews MCP scope and sends credential values only for approval %s", async approved => {
   const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
   const request = mcpProposal(); const original = JSON.stringify(request); const formDrafts = new Map<string, string>();

@@ -31,13 +31,31 @@ export function rememberTerminalPanel(layout: DesktopLayout, key: string, update
   return { terminalPanels: { ...layout.terminalPanels, [key]: { ...DEFAULT_TERMINAL_PANEL, ...layout.terminalPanels[key], ...update } } };
 }
 
+// Reserve 220px + 360px + 280px for content, plus 32px of gutters.
+export const COMPACT_LAYOUT_WIDTH = 892;
+
 export function visiblePanels(layout: DesktopLayout, dashboard: boolean, windowWidth = Infinity, preferred: "sidebar" | "inspector" = "inspector") {
-  let sidebar = layout.sidebarCollapsed ? 0 : layout.panels["home-sidebar-panel"] ?? 20;
-  let inspector = dashboard || layout.inspectorCollapsed ? 0 : layout.panels["home-inspector-panel"] ?? 24;
-  // Reserve 220px + 360px + 280px for content, plus 32px of gutters.
-  if (windowWidth < 892 && sidebar > 0 && inspector > 0) {
+  let sidebar = layout.sidebarCollapsed ? 0 : layout.panels["home-sidebar-panel"] || 20;
+  let inspector = dashboard || layout.inspectorCollapsed ? 0 : layout.panels["home-inspector-panel"] || 24;
+  if (windowWidth < COMPACT_LAYOUT_WIDTH && sidebar > 0 && inspector > 0) {
     if (preferred === "sidebar") inspector = 0;
     else sidebar = 0;
+  }
+  if (Number.isFinite(windowWidth)) {
+    const available = Math.max(1, windowWidth - 32);
+    const sidebarMin = sidebar > 0 ? Math.min(60, 220 / available * 100) : 0;
+    const inspectorMin = inspector > 0 ? Math.min(60, 280 / available * 100) : 0;
+    // Clamp for display only: restored percentages can otherwise snap an open
+    // collapsible panel to zero pixels while its controls still report it open.
+    if (sidebar > 0) sidebar = Math.min(500 / available * 100, Math.max(sidebarMin, sidebar));
+    if (inspector > 0) inspector = Math.min(550 / available * 100, Math.max(inspectorMin, inspector));
+    const budget = 100 - Math.min(40, 360 / available * 100);
+    const extra = sidebar - sidebarMin + inspector - inspectorMin;
+    if (sidebar + inspector > budget && extra > 0) {
+      const scale = Math.max(0, budget - sidebarMin - inspectorMin) / extra;
+      sidebar = sidebarMin + (sidebar - sidebarMin) * scale;
+      inspector = inspectorMin + (inspector - inspectorMin) * scale;
+    }
   }
   return { "home-sidebar-panel": sidebar, "home-main-panel": 100 - sidebar - inspector, ...(!dashboard ? { "home-inspector-panel": inspector } : {}) };
 }

@@ -34,6 +34,18 @@ it("requires user values even when an MCP key matches an Object prototype proper
   expect(hasMcpAuthoringValues(config, { environment: {}, headers: { toString: "test-only-value" } })).toBe(true);
 });
 
+it("requires values for new MCP keys and never forwards retained headers to a changed endpoint", () => {
+  const target = pendingAuthoringSchema.parse(proposal).target;
+  if (target.kind !== "mcp") throw new Error("Missing MCP fixture");
+  const before = target.server;
+  const empty = { environment: {}, headers: {} };
+  expect(hasMcpAuthoringValues(before, empty, before)).toBe(true);
+  expect(hasMcpAuthoringValues({ ...before, url: "https://other.example/mcp" }, empty, before)).toBe(false);
+  expect(hasMcpAuthoringValues({ ...before, headerKeys: [...before.headerKeys, "X-Api-Key"] }, empty, before)).toBe(false);
+  expect(hasMcpAuthoringValues({ ...before, headerKeys: [...before.headerKeys, "X-Api-Key"] }, { environment: {}, headers: { "X-Api-Key": "new-private" } }, before)).toBe(true);
+  expect(pendingAuthoringSchema.safeParse({ ...proposal, target: { ...target, before: { ...before, headers: { Authorization: "never-export-this" } } } }).success).toBe(false);
+});
+
 it("accepts a typed manual hook deletion and rejects an empty target or native event", () => {
   const hook = { id: "a".repeat(32), name: "Verificar comandos", event: "PreToolUse", command: "node hook.js", matcher: "bash", timeoutSeconds: 30, enabled: true };
   const pending = { ...proposal, action: "delete", catalogRevision: 3, target: { kind: "hook", before: hook, after: null } };

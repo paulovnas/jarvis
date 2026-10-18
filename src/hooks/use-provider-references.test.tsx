@@ -16,6 +16,53 @@ beforeEach(() => {
   vi.mocked(listen).mockImplementation(async (name, callback) => { listeners.set(name, callback); return () => { listeners.delete(name); }; });
 });
 
+it("identifies unavailable chat, fallback and agent choices, and clears their markers after repair", async () => {
+  const healthy = { account: "novo", model: "gpt-test", reasoning: "high" };
+  const references = [
+    providerReference({ itemKey: "chat:c1", kind: "conversation" }),
+    providerReference({ id: "primary", itemKey: "chat:c2", kind: "conversation", choice: { ...healthy, fallback: item.choice } }),
+    providerReference({ id: "fallback", itemKey: "chat:c2:fallback", kind: "conversation" }),
+    providerReference({ id: "agent", itemKey: "chat:c3:agent:standard/builder", kind: "conversation" }),
+    providerReference({ id: "healthy", itemKey: "chat:c4", kind: "conversation", choice: healthy }),
+    providerReference({ id: "other", itemKey: "invalid", kind: "conversation" }),
+    item,
+  ];
+  call.mockResolvedValue({ references, bindings: [] });
+  const { result, rerender } = renderHook(({ ready }) => useProviderReferences(accounts, ready), { initialProps: { ready: false } });
+  expect(result.current.conversationProblems).toEqual(new Map());
+  rerender({ ready: true });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect([...result.current.conversationProblems.keys()]).toEqual(["c1", "c2", "c3"]);
+  expect(result.current.conversationProblems.get("c1")).toContain("antigo");
+  expect(result.current.conversationProblems.get("c2")).toContain("Modelo secundário:");
+
+  let finish!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => { listeners.get("chat-agent-models:changed")?.({ event: "chat-agent-models:changed", id: 1, payload: null }); });
+  expect(result.current.conversationProblems.size).toBe(3);
+  await act(async () => { finish({ references: references.map(reference => ({ ...reference, choice: healthy })), bindings: [] }); });
+  expect(result.current.conversationProblems.size).toBe(0);
+});
+
+it("waits for matching references and a fresh catalog before marking a model as unavailable", async () => {
+  const cached: ProviderAccount = { ...referenceAccount(), modelsStale: true };
+  const reference = providerReference({ itemKey: "chat:c1", kind: "conversation", choice: { account: "novo", model: "retired", reasoning: null } });
+  call.mockResolvedValue({ references: [reference], bindings: [] });
+  const { result, rerender } = renderHook(({ providers }) => useProviderReferences(providers, true), { initialProps: { providers: [cached] } });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.conversationProblems.size).toBe(0);
+  let finish!: (value: unknown) => void;
+  call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  rerender({ providers: accounts });
+  expect(result.current.conversationProblems.size).toBe(0);
+  await waitFor(() => expect(call).toHaveBeenCalledTimes(2));
+  await act(async () => { finish({ references: [reference], bindings: [] }); });
+  expect(result.current.conversationProblems.get("c1")).toContain("retired");
+  rerender({ providers: [{ ...accounts[0], models: [...accounts[0].models, { ...accounts[0].models[0], id: "retired" }] }] });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.conversationProblems.size).toBe(0);
+});
+
 it("waits for accounts, reports missing references once and clears the notice after repair", async () => {
   const { result, rerender, unmount } = renderHook(({ ready }) => useProviderReferences(accounts, ready), { initialProps: { ready: false } });
   expect(call).not.toHaveBeenCalled(); expect(toast.error).not.toHaveBeenCalled();
