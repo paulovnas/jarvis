@@ -1,6 +1,84 @@
 use super::*;
 
 #[test]
+fn custom_stages_report_delegated_activity_and_pause_only_while_workers_wait() {
+    use crate::agent::turn_state::TurnPhase;
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = adaptive_definition();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.custom_definition = Some(definition.clone());
+        state.custom_cursor = Some(Cursor::start(&definition));
+        Ok(())
+    })
+    .unwrap();
+    let wire = hub.root.data.lock().unwrap().turns[0].wire.clone();
+    let mut planner = super::super::tests::job(&hub, Role::Custom, ".");
+    planner.custom_agent = Some(definition.agents[0].clone());
+    planner.custom_agent.as_mut().unwrap().name = "RPG/Planejador".into();
+    activate_step(&hub, &planner).unwrap();
+    let (session, _) = storage::worker(&hub, &planner, None).unwrap();
+    hub.live
+        .lock()
+        .unwrap()
+        .insert(planner.id.clone(), session.clone());
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+    session.transition(TurnPhase::Sampling).unwrap();
+    let root = hub.root.snapshot().unwrap();
+    assert_eq!(
+        root.turns[0].steps[0].text,
+        "Etapa 1 · RPG/Planejador em execução."
+    );
+    assert!(root.turns[0].steps[0].summary.is_empty());
+    assert!(root.turns[0].active_since.is_some());
+    std::thread::sleep(Duration::from_millis(15));
+    session.transition(TurnPhase::WaitingForApproval).unwrap();
+    let paused = hub.root.snapshot().unwrap().turns[0].duration_ms;
+    assert!(paused > 0);
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+    std::thread::sleep(Duration::from_millis(15));
+    assert_eq!(hub.root.snapshot().unwrap().turns[0].duration_ms, paused);
+    session.transition(TurnPhase::ExecutingTools).unwrap();
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_some());
+    crate::agent::finish(&session, Err(AgentError::cancelled()));
+    assert!(hub.root.snapshot().unwrap().turns[0].active_since.is_none());
+    hub.mutate(|state| {
+        state
+            .custom_cursor
+            .as_mut()
+            .unwrap()
+            .results
+            .push(handoff(Verdict::Completed));
+        Ok(())
+    })
+    .unwrap();
+    let mut artist = planner.clone();
+    artist.id = library::new_id().unwrap();
+    artist.custom_agent.as_mut().unwrap().name = "RPG/Artista Técnico 3D".into();
+    activate_step(&hub, &artist).unwrap();
+    activate_step(&hub, &artist).unwrap();
+    let (session, _) = storage::worker(&hub, &artist, None).unwrap();
+    hub.live
+        .lock()
+        .unwrap()
+        .insert(artist.id.clone(), session.clone());
+    session.transition(TurnPhase::Sampling).unwrap();
+    let root = hub.root.snapshot().unwrap();
+    assert_eq!(root.turns[0].steps.len(), 2);
+    assert_eq!(
+        root.turns[0].steps[1].text,
+        "Etapa 2 · RPG/Artista Técnico 3D em execução."
+    );
+    assert!(root.turns[0].active_since.is_some());
+    assert!(root.turns[0].duration_ms >= paused);
+    assert_eq!(hub.root.data.lock().unwrap().turns[0].wire, wire);
+    let stored = crate::agent::journal::load_all(&hub.root.journal)
+        .unwrap()
+        .0;
+    assert_eq!(stored[0].turn.steps.len(), 2);
+}
+
+#[test]
 fn marketplace_inspection_is_read_only_but_installation_keeps_command_capability() {
     assert!(capability_allows(
         Capability::ReadOnly,

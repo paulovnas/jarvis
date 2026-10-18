@@ -18,8 +18,10 @@ export function ActiveExecutionStatus({ turn, waitingForUser = false }: { turn: 
   const waitingForAgents = turn.steps[turn.steps.length - 1]?.tools.some(tool => tool.name === "hub_wait" && tool.status === "running");
   const waiting = status.waiting || waitingForAgents;
   const generation = combineGeneration(turn.steps.map(step => step.generation));
+  const workflowStage = turn.options.workflow === "custom" && turn.options.customWorkflowId ? turn.steps[turn.steps.length - 1]?.text.trim() : undefined;
   const heading = status.retry || status.waiting ? status.heading
     : waitingForAgents ? "Aguardando agentes"
+    : workflowStage ? workflowStage
     : !turn.steps.length && turn.activeSince === null ? "Preparando execução…" : status.heading;
 
   return <section

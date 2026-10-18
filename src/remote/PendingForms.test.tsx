@@ -9,6 +9,19 @@ import { PendingForms, type RemoteAction } from "./PendingForms";
 const emptyBundle = (): RemoteChat => ({ chat: emptyChat(), workflow: null, options: null });
 const action = () => vi.fn<RemoteAction>().mockResolvedValue(true);
 
+it.each([true, false])("reviews a skill removal batch remotely and forwards one decision: %s", async approved => {
+  const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
+  const skill = { id: "a".repeat(64), name: "Modelagem Blender", description: "Modelagem 3D", origin: "jarvis" as const, path: "C:/Users/test/.jarvis/skills/blender", linked: false, reason: "Não é mais usada.", files: ["SKILL.md"], digest: "d".repeat(64) };
+  bundle.chat.pendingAuthoring = { turnId: "remove-turn", toolId: "remove-tool", action: "delete", catalogRevision: null, summary: "Remover skills antigas", agentReferences: [], target: { kind: "skill_removal", skills: [skill, { ...skill, id: "b".repeat(64), name: "Materiais Blender" }] } };
+  render(<PendingForms bundle={bundle} projectPath="/projeto" busy={false} onAction={onAction} focused />);
+  expect(screen.getByText("Revisar remoção de skills")).toBeVisible();
+  expect(screen.getByText("Modelagem Blender")).toBeVisible();
+  expect(screen.getByText("Materiais Blender")).toBeVisible();
+  expect(onAction).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: approved ? "Aprovar e remover" : "Recusar" }));
+  expect(onAction).toHaveBeenCalledExactlyOnceWith("authoring", { conversationId: "c1", agentId: "main", decision: { turnId: "remove-turn", toolId: "remove-tool", approved, note: null } });
+});
+
 it("reviews creating project instructions remotely before forwarding approval", async () => {
   const user = userEvent.setup(); const onAction = action(); const bundle = emptyBundle();
   bundle.chat.pendingAuthoring = { turnId: "instructions-turn", toolId: "instructions-tool", action: "create", catalogRevision: null, summary: "Criar instruções do projeto", agentReferences: [], target: { kind: "project_instructions", path: "AGENTS.md", before: null, after: "# Instruções\nUse os testes do projeto." } };

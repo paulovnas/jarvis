@@ -3,6 +3,7 @@ mod cache;
 mod catalog;
 pub(crate) mod installation;
 mod marketplace;
+pub(crate) mod removal;
 mod runtime_cache;
 mod store;
 #[cfg(test)]
@@ -628,8 +629,11 @@ pub async fn set_skill_enabled(
     .await
 }
 
-fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, SkillError> {
-    let skill = find(home, project, id)?;
+fn removal_target(
+    home: &Path,
+    project: Option<&Path>,
+    skill: &Skill,
+) -> Result<PathBuf, SkillError> {
     if skill.managed {
         return Err(error("Skills nativas do Jarvis não podem ser excluídas."));
     }
@@ -639,6 +643,7 @@ fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, Ski
         "project" => project
             .ok_or_else(|| error("Projeto indisponível."))?
             .join(".agents/skills"),
+        "plugin" => return Err(error("Gerencie esta skill na seção Plugins.")),
         _ => return Err(error("Origem da skill inválida.")),
     }
     .canonicalize()?;
@@ -652,18 +657,56 @@ fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, Ski
             "Não é possível excluir a pasta raiz ou uma skill dentro de um vínculo externo.",
         ));
     }
+    Ok(target.clone())
+}
+
+fn delete_skill_files(target: &Path) -> Result<(), SkillError> {
     let metadata = fs::symlink_metadata(target)?;
     if metadata.file_type().is_symlink() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTypeExt;
+            if metadata.file_type().is_symlink_dir() {
+                fs::remove_dir(target)?;
+            } else {
+                fs::remove_file(target)?;
+            }
+        }
+        #[cfg(not(windows))]
         fs::remove_file(target)?;
     } else if metadata.is_dir() {
         fs::remove_dir_all(target)?;
     } else {
         return Err(error("Pasta de skill inválida."));
     }
-    update_config(home, |config| {
-        config.disabled.remove(id);
-    })?;
+    Ok(())
+}
+
+fn remove(home: &Path, project: Option<&Path>, id: &str) -> Result<Snapshot, SkillError> {
+    let skill = find(home, project, id)?;
+    let target = removal_target(home, project, &skill)?;
+    delete_skill_files(&target)?;
+    cleanup_removed_skill(home, project, id, skill.linked)?;
     snapshot(home, project)
+}
+
+fn cleanup_removed_skill(
+    home: &Path,
+    project: Option<&Path>,
+    id: &str,
+    linked: bool,
+) -> Result<Option<Skill>, SkillError> {
+    let remaining = snapshot(home, project)?
+        .skills
+        .into_iter()
+        .find(|s| s.id == id);
+    // A link in another project can expose this global ID; never re-enable it by unlinking.
+    if remaining.is_none() && !linked {
+        update_config(home, |config| {
+            config.disabled.remove(id);
+        })?;
+    }
+    Ok(remaining)
 }
 
 #[tauri::command]

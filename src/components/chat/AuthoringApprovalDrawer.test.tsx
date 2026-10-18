@@ -25,6 +25,28 @@ function agentRequest(): PendingAuthoring {
   };
 }
 
+it("reviews exact skill removal paths as one batch and requires one explicit decision", async () => {
+  const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
+  const request = pendingAuthoringSchema.parse({
+    turnId: "remove-turn", toolId: "remove-batch", action: "delete", catalogRevision: null,
+    summary: "Remover skills que não usamos mais.", agentReferences: [],
+    target: { kind: "skill_removal", skills: [
+      { id: "a".repeat(64), name: "Blender modeling", description: "Modelagem 3D", origin: "jarvis", path: "C:/Users/test/.jarvis/skills/modeling", linked: false, reason: "Não usamos mais modelagem.", files: ["SKILL.md", "references/guide.md"], digest: "c".repeat(64) },
+      { id: "b".repeat(64), name: "Linked materials", description: "Materiais 3D", origin: "agents", path: "C:/Users/test/.agents/skills/materials", linked: true, reason: "Substituída pelo fluxo nativo.", files: [], digest: "d".repeat(64) },
+    ] },
+  });
+  render(<AuthoringApprovalDrawer request={request} onAnswer={answer} />);
+  const dialog = screen.getByRole("dialog", { name: "Revisar remoção de skills" });
+  expect(within(dialog).getByText("Blender modeling")).toBeVisible();
+  expect(within(dialog).getByText("Linked materials")).toBeVisible();
+  expect(within(dialog).getByText("C:/Users/test/.jarvis/skills/modeling")).toBeVisible();
+  expect(within(dialog).getByText(/Somente o vínculo será removido/)).toBeVisible();
+  expect(within(dialog).getByText(/Não usamos mais modelagem/)).toBeVisible();
+  expect(answer).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Aprovar e remover 2 skills" }));
+  expect(answer).toHaveBeenCalledExactlyOnceWith(true, null);
+});
+
 it("reviews all marketplace skills together and asks for one explicit installation decision", async () => {
   const user = userEvent.setup(); const answer = vi.fn().mockResolvedValue(true);
   const skill = { source: "studio/blender-skills", skillId: "modeling", name: "Blender modeling", description: "Modelagem no Blender", reason: "Validar a geometria do projeto.", content: "Use the existing Blender scene.", files: ["SKILL.md", "references/geometry.md"], digest: "a".repeat(64) };

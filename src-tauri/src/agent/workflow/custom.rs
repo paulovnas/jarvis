@@ -473,12 +473,8 @@ fn prepare(
     })
 }
 
-async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
-    let mut changed = hub.changed.subscribe();
-    if !job.status.active() {
-        return step_result(job);
-    }
-    hub.mutate(|state| {
+fn activate_step(hub: &Hub, job: &Job) -> Result<(), AgentError> {
+    let index = hub.mutate(|state| {
         // Keep the current run intact; older worker transcripts remain on disk.
         if state.jobs.len() >= MAX_JOBS {
             state.jobs.retain(|_, job| job.run_id == state.run_id);
@@ -487,13 +483,40 @@ async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
             return Err(invalid("Limite de etapas atingido."));
         }
         state.jobs.insert(job.id.clone(), job.clone());
-        state
+        let cursor = state
             .custom_cursor
             .as_mut()
-            .ok_or_else(AgentError::internal)?
-            .active = Some(job.id.clone());
-        Ok(())
+            .ok_or_else(AgentError::internal)?;
+        cursor.active = Some(job.id.clone());
+        Ok(cursor.results.len() + 1)
     })?;
+    let name = job
+        .custom_agent
+        .as_ref()
+        .map_or(job.title.as_str(), |agent| agent.name.as_str());
+    let text = format!("Etapa {index} · {name} em execução.");
+    hub.root
+        .transition(super::super::turn_state::TurnPhase::WaitingForAgents)?;
+    hub.root.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        // Resuming the same checkpoint must not duplicate its stage announcement.
+        if turn.turn.steps.last().is_none_or(|step| step.text != text) {
+            turn.turn.steps.push(super::super::Step {
+                text,
+                ..Default::default()
+            });
+        }
+    })?;
+    hub.refresh_waiting_clocks();
+    Ok(())
+}
+
+async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
+    let mut changed = hub.changed.subscribe();
+    if !job.status.active() {
+        return step_result(job);
+    }
+    activate_step(&hub, &job)?;
     if job.recovery.is_some() {
         dispatch::resume(hub.clone(), job.clone())?;
     } else {

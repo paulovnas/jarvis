@@ -51,6 +51,25 @@ it("distinguishes delegated work from a pending user response", () => {
   expect(screen.getByRole("status")).toHaveTextContent("Aguardando sua resposta");
 });
 
+it("shows the current custom workflow stage and keeps user requests ahead of delegated activity", () => {
+  const turn = { ...savedTurn(), status: "running" as const, activeSince: Date.now(),
+    options: { ...savedTurn().options, workflow: "custom" as const, customWorkflowId: "rpg" },
+    steps: [{ ...savedTurn().steps[0], summary: "", text: "Etapa 1 · RPG/Planejador em execução.", tools: [] }],
+  };
+  const { rerender } = render(<ActiveExecutionStatus turn={turn} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Etapa 1 · RPG/Planejador em execução.");
+  const routed = { ...turn, steps: [...turn.steps, { ...turn.steps[0], text: "Etapa 2 · RPG/Artista Técnico 3D em execução." }] };
+  rerender(<ActiveExecutionStatus turn={routed} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Etapa 2 · RPG/Artista Técnico 3D em execução.");
+  expect(screen.getByRole("status")).not.toHaveTextContent("Preparando execução");
+  rerender(<ActiveExecutionStatus turn={{ ...routed, activeSince: null }} waitingForUser />);
+  expect(screen.getByRole("status")).toHaveTextContent("Aguardando sua resposta");
+  rerender(<ActiveExecutionStatus turn={{ ...routed, steps: [{ ...routed.steps[1], retry: { attempt: 1, maxAttempts: 5, retryAt: 0, message: "Falha temporária" } }] }} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Reconectando 1/5");
+  rerender(<ActiveExecutionStatus turn={{ ...turn, options: { ...turn.options, customWorkflowId: null, customAgentId: "artist" } }} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Trabalhando…");
+});
+
 it("freezes the visible work time while waiting and resumes without adding absent hours", () => {
   vi.useFakeTimers();
   try {

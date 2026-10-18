@@ -111,10 +111,10 @@ fn description(name: &str) -> &'static str {
             "Propor plugins e marketplaces para revisão e aprovação explícita."
         }
         "jarvis_skill_marketplace" => {
-            "Pesquisar e inspecionar skills no marketplace, sem instalar."
+            "Pesquisar o marketplace e consultar as skills instaladas, sem alterações."
         }
         "jarvis_propose_skills" => {
-            "Propor a instalação de um conjunto de skills com aprovação explícita."
+            "Propor a instalação ou remoção de um conjunto de skills com aprovação explícita."
         }
         "jarvis_propose_project_instructions" => {
             "Propor a seção Jarvis no AGENTS.md do projeto para aprovação explícita."

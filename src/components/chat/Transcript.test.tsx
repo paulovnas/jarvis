@@ -14,6 +14,22 @@ import { Transcript, TurnBody, type LatestVisibility } from "./Transcript";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
+
+it("shows routed workflow stages instead of a provider connection and preserves the final delivery", async () => {
+  const stage = { ...savedTurn().steps[0], summary: "", tools: [], text: "Etapa 1 · RPG/Planejador em execução." };
+  const turn = { ...savedTurn(), status: "running" as const, options: { ...savedTurn().options, workflow: "custom" as const, customWorkflowId: "rpg" }, steps: [stage] };
+  const { rerender } = render(<TurnBody turn={turn} />);
+  expect(await screen.findByText(stage.text)).toBeVisible();
+  expect(screen.queryByText("Conectando ao provedor…")).not.toBeInTheDocument();
+  const routed = { ...turn, steps: [stage, { ...stage, text: "Etapa 2 · RPG/Artista Técnico 3D em execução." }] };
+  rerender(<TurnBody turn={routed} />);
+  expect(await screen.findByText(routed.steps[1].text)).toBeVisible();
+  rerender(<TurnBody turn={{ ...routed, status: "completed", steps: [...routed.steps, { ...stage, text: "Modelo 3D criado e validado." }] }} />);
+  expect(await screen.findByText("Modelo 3D criado e validado.")).toBeVisible();
+  expect(screen.queryByText(routed.steps[1].text)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Trabalhou por/ })).toBeVisible();
+});
+
 function page(start: number, id = "c1"): HistoryPage {
   return { conversationId: id, history: { start, total: 100 }, compactions: [], navigation: [0, 10, 20, 30, 40, 50, 60, 70, 80, 99].map(index => ({ id: `t${index}`, index, createdAt: 1, user: `Pedido ${index}`, assistant: `Resumo ${index}` })), turns: Array.from({ length: 20 }, (_, i) => ({ ...savedTurn(), id: `t${start + i}`, user: `Pedido ${start + i}`, steps: [{ ...savedTurn().steps[0], text: `Resposta ${start + i}`, summary: "", tools: [] }] })) };
 }

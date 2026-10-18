@@ -774,7 +774,7 @@ impl<'a> Bridge<'a> {
         } else {
             String::new()
         };
-        if schemas.is_empty() && capability_context.is_empty() {
+        if schemas.is_empty() && capability_context.is_empty() && !registered {
             return Ok(None);
         }
         let call_with = json!("mcp__jarvis__call_mcp_tool");
@@ -785,7 +785,7 @@ impl<'a> Bridge<'a> {
                 "callWith":call_with,
                 "catalogChanged":true,
                 "capabilityContext":capability_context,
-                "next":"Continue the current request in this same execution using the exact advertised schemas through callWith. No new user message or tools/list refresh is needed. Do not replay confirmed actions.",
+                "next":"Continue the current request in this same execution using the exact advertised schemas through callWith. capabilityContext describes the current authorized guidance, even when empty after removal. No new user message or tools/list refresh is needed. Do not replay confirmed actions.",
             }).to_string(),
         })))
     }
@@ -1856,6 +1856,37 @@ pub(in crate::agent) mod tests {
             .await
             .unwrap();
         assert!(result.contains("Inspect the current scene"));
+        let prepared = crate::skills::removal::prepare(
+            home,
+            Some(home),
+            vec![crate::skills::removal::Selection {
+                id: id.into(),
+                reason: "No longer needed".into(),
+            }],
+            || false,
+        )
+        .unwrap();
+        let removed = crate::skills::removal::apply(home, &prepared, || false).unwrap();
+        let content = bridge
+            .discovery_content(
+                &tool("jarvis_propose_skills", json!({"action":"remove"})),
+                &removed.to_string(),
+                "completed",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let receipt: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+        assert!(!receipt["capabilityContext"].as_str().unwrap().contains(id));
+        assert!(bridge
+            .dispatch(
+                &tool("read_skill", json!({"id":id})),
+                Handler::SkillRead,
+                None,
+                false
+            )
+            .await
+            .is_err());
     }
 
     #[cfg(unix)]

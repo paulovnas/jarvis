@@ -29,7 +29,7 @@ const mcpProposal = (): PendingAuthoring => ({ turnId: "turn-1", toolId: "mcp-ad
 } } });
 
 describe("Jarvito chat", () => {
-  it.each([false, true])("approves a global skill batch in the island with externalQuestions=%s", async externalQuestions => {
+  it.each([[false, false], [true, false], [false, true], [true, true]])("approves a global skill batch with externalQuestions=%s and removal=%s", async (externalQuestions, removal) => {
     const user = userEvent.setup(); const onQuestionChange = vi.fn();
     const original = call.getMockImplementation()!;
     call.mockImplementation(async (command, args, invokeOptions) => command === "answer_agent_authoring"
@@ -38,13 +38,17 @@ describe("Jarvito chat", () => {
     const skill = { source: "studio/blender-skills", skillId: "modeling", name: "Blender modeling", description: "Validate Blender geometry", reason: "Validar a cena do projeto.", content: "Inspect the existing scene.", files: ["SKILL.md"], digest: "a".repeat(64) };
     globalChat.chat.activeTurnId = "turn-1";
     globalChat.chat.pendingAuthoring = { turnId: "turn-1", toolId: "skills-add", action: "create", catalogRevision: null, summary: "Adicionar skills para o designer 3D", agentReferences: [], target: { kind: "skills", skills: [skill, { ...skill, skillId: "materials", name: "Blender materials" }] } };
+    if (removal) {
+      const selected = { id: "a".repeat(64), name: "Blender modeling", description: "Validate Blender geometry", origin: "jarvis" as const, path: "C:/Users/test/.jarvis/skills/modeling", linked: false, reason: "Não usada", files: ["SKILL.md"], digest: "c".repeat(64) };
+      globalChat.chat.pendingAuthoring = { ...globalChat.chat.pendingAuthoring, action: "delete", target: { kind: "skill_removal", skills: [selected, { ...selected, id: "b".repeat(64), name: "Blender materials" }] } };
+    }
     render(<CompanionChatPane externalQuestions={externalQuestions} onQuestionChange={onQuestionChange} />);
-    expect(await screen.findByRole("dialog", { name: "Revisar instalação de skills" })).toBeVisible();
+    expect(await screen.findByRole("dialog", { name: removal ? "Revisar remoção de skills" : "Revisar instalação de skills" })).toBeVisible();
     expect(screen.getByText("Blender modeling")).toBeVisible();
     expect(screen.getByText("Blender materials")).toBeVisible();
     expect(onQuestionChange).toHaveBeenLastCalledWith(null);
     expect(screen.queryByRole("button", { name: "Continuar no Jarvis" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Aprovar e instalar 2 skills" }));
+    await user.click(screen.getByRole("button", { name: removal ? "Aprovar e remover 2 skills" : "Aprovar e instalar 2 skills" }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("answer_agent_authoring", { conversationId: "global-chat", decision: { turnId: "turn-1", toolId: "skills-add", approved: true, note: null } }));
     expect(call.mock.calls.some(([command]) => command === "companion_open_conversation")).toBe(false);
   });

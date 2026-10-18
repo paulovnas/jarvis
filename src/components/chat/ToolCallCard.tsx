@@ -85,7 +85,7 @@ const tools = {
   jarvis_propose_hook: { label: "Hooks · Proposta de configuração", icon: Wrench },
   jarvis_propose_plugin: { label: "Plugins · Proposta de configuração", icon: Wrench },
   jarvis_skill_marketplace: { label: "Skills · Busca e inspeção no marketplace", icon: Search },
-  jarvis_propose_skills: { label: "Skills · Proposta de instalação", icon: Wrench },
+  jarvis_propose_skills: { label: "Skills · Proposta de alteração", icon: Wrench },
   jarvis_propose_project_instructions: { label: "AGENTS.md · Proposta de instruções", icon: Wrench },
   jarvis_inspect_publication: { label: "Git · Inspecionar repositórios", icon: FolderSearch },
   jarvis_propose_publication: { label: "GitHub · Proposta de publicação", icon: GitBranch },

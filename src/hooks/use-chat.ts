@@ -327,7 +327,7 @@ export function useChat(conversationId: string | null) {
       if (approved && proposal.target.kind === "publication" && note?.trim()) {
         toast.info("Orientação enviada para revisão", { description: "O agente GitHub apresentará uma nova proposta antes de publicar." });
       } else {
-        toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : proposal.target.kind === "mcp" ? "Aprovação do MCP enviada" : "Configuração aprovada e salva" : "Proposta recusada");
+        toast.success(approved ? proposal.target.kind === "publication" ? "Publicação processada" : proposal.target.kind === "mcp" ? "Aprovação do MCP enviada" : proposal.target.kind === "skills" || proposal.target.kind === "skill_removal" ? "Aprovação das skills enviada" : "Configuração aprovada e salva" : "Proposta recusada");
       }
       return true;
     } catch (cause) { toast.error(libraryError(cause, "Não foi possível responder à proposta.")); return false; }

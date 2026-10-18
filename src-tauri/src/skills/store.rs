@@ -9,8 +9,8 @@ use std::{
 };
 
 const META: &str = ".jarvis-source.json";
-const MAX_PACKAGE_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_PACKAGE_FILES: usize = 4096;
+pub(super) const MAX_PACKAGE_BYTES: u64 = 32 * 1024 * 1024;
+pub(super) const MAX_PACKAGE_FILES: usize = 4096;
 
 fn validate_package_limits(bytes: u64, files: usize) -> Result<(), SkillError> {
     if bytes > MAX_PACKAGE_BYTES || files > MAX_PACKAGE_FILES {
