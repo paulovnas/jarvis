@@ -336,6 +336,7 @@ pub(super) fn prepare_recovery(
     manifest.root_status = Status::Running;
     manifest.root_recovery = Some(RecoveryCheckpoint::new(root_uncertain));
     let mut resumed = Vec::new();
+    let custom_cursor = manifest.custom_cursor.clone();
     for job in manifest.jobs.values_mut().filter(|job| {
         job.run_id == run_id && matches!(job.status, Status::Interrupted | Status::Failed)
     }) {
@@ -360,6 +361,18 @@ pub(super) fn prepare_recovery(
             None
         };
         match tail {
+            Some(turn)
+                if custom_cursor
+                    .as_ref()
+                    .is_some_and(|cursor| cursor.pending_retry(job, &turn)) =>
+            {
+                // The explicit continuation was queued, but its new turn was not written yet.
+                job.status = Status::Queued;
+                job.error = None;
+                job.recovery = None;
+                job.updated_at = now();
+                resumed.push(job.clone());
+            }
             Some(turn) if super::super::resumable_workflow_turn(&turn) => {
                 job.status = Status::Queued;
                 job.error = None;

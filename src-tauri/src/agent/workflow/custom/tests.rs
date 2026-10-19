@@ -619,6 +619,353 @@ fn failed_canvas_worker_reopens_the_same_turn_and_preserves_tool_receipts() {
     );
 }
 
+fn blocked_canvas_worker(hub: &Arc<Hub>) -> (RunDefinition, Job, String) {
+    let definition = definition();
+    hub.root
+        .update(true, |data| {
+            let turn = &mut data.turns.last_mut().unwrap().turn;
+            turn.options.workflow = Some(Flow::Custom);
+            turn.options.custom_workflow_id = Some(definition.flow.id.clone());
+        })
+        .unwrap();
+    let run = hub.root.snapshot().unwrap().turns[0].id.clone();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.run_id = run;
+        state.options.workflow = Some(Flow::Custom);
+        state.options.custom_workflow_id = Some(definition.flow.id.clone());
+        state.custom_definition = Some(definition.clone());
+        let mut cursor = Cursor::start(&definition);
+        cursor.results.push(handoff(Verdict::Completed));
+        cursor.visited.push("previous-completed-stage".into());
+        state.custom_cursor = Some(cursor);
+        Ok(())
+    })
+    .unwrap();
+    let mut job = prepare(hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    let (session, _) = storage::worker(hub, &job, None).unwrap();
+    let worker_turn = session.snapshot().unwrap().turns[0].id.clone();
+    session.update(true, |data| {
+        let turn = data.turns.last_mut().unwrap();
+        turn.wire.extend([
+            json!({"type":"function_call","call_id":"saved-image","name":"generate_image","arguments":"{\"prompt\":\"Approved background\"}"}),
+            json!({"type":"function_call_output","call_id":"saved-image","output":"{\"sourceImageIds\":[\"confirmed-source\"],\"exports\":[\"background.png\"]}"}),
+            json!({"type":"function_call","call_id":"saved-export","name":"image_process","arguments":"{\"image_ids\":[\"confirmed-source\"]}"}),
+            json!({"type":"function_call_output","call_id":"saved-export","output":"{\"exports\":[\"background.png\"]}"}),
+            json!({"type":"function_call","call_id":"failed-analysis","name":"vision","arguments":"{\"ids\":[\"confirmed-source\"],\"question\":\"Inspect the export\"}"}),
+            json!({"type":"function_call_output","call_id":"failed-analysis","output":"Provider timed out awaiting headers"}),
+        ]);
+        turn.turn.steps.push(Step {
+            text: "Image and export confirmed; only Vision analysis is pending".into(),
+            ..Step::default()
+        });
+    }).unwrap();
+    super::super::super::finish(&session, Ok(()));
+    drop(session);
+    job.status = Status::Blocked;
+    let mut result = handoff(Verdict::Blocked);
+    result.summary = "Vision timed out; keep background.png and confirmed-source".into();
+    job.handoff = Some(result);
+    hub.mutate(|state| {
+        state.root_status = Status::Failed;
+        state.custom_cursor.as_mut().unwrap().active = Some(job.id.clone());
+        state.jobs.insert(job.id.clone(), job.clone());
+        Ok(())
+    })
+    .unwrap();
+    super::super::super::finish(&hub.root, Err(invalid("Vision timed out")));
+    (definition, job, worker_turn)
+}
+
+#[test]
+fn explicit_canvas_retry_continues_the_blocked_step_without_replaying_confirmed_images() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (definition, blocked, worker_turn) = blocked_canvas_worker(&hub);
+    hub.mutate(|state| {
+        state
+            .jobs
+            .get_mut(&blocked.id)
+            .unwrap()
+            .recovery_attempt_pending = true;
+        Ok(())
+    })
+    .unwrap();
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    let retried = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(retried.status, Status::Queued);
+    assert_eq!(retried.id, blocked.id);
+    assert_eq!(retried.attempts, blocked.attempts + 1);
+    assert_eq!(
+        serde_json::to_value(&retried.options).unwrap(),
+        serde_json::to_value(&blocked.options).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&retried.custom_agent).unwrap(),
+        serde_json::to_value(&blocked.custom_agent).unwrap()
+    );
+    assert_eq!(retried.scope, blocked.scope);
+    assert!(!retried.recovery_attempt_pending);
+    assert!(retried.prompt.contains("background.png"));
+    assert!(retried.prompt.contains("Vision timed out"));
+    let cursor = hub.manifest.lock().unwrap().custom_cursor.clone().unwrap();
+    assert_eq!(cursor.results.len(), 1);
+    assert_eq!(cursor.visited, vec!["previous-completed-stage"]);
+    // A crash after queuing must not reuse the old completed turn as the new result.
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    let (recovered, _) =
+        storage::prepare_recovery(&hub.directory, saved, Flow::Custom, &run, vec![]).unwrap();
+    *hub.manifest.lock().unwrap() = recovered;
+    let retried = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(retried.status, Status::Queued);
+    assert_eq!(retried.attempts, blocked.attempts + 1);
+    let (session, _) = storage::worker(&hub, &retried, None).unwrap();
+    let data = session.data.lock().unwrap();
+    assert_eq!(data.turns.len(), 2);
+    assert_eq!(data.turns[0].turn.id, worker_turn);
+    assert_eq!(data.turns[0].turn.status, TurnStatus::Completed);
+    assert_eq!(data.turns[1].turn.status, TurnStatus::Running);
+    assert!(data.turns[1].wire[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("background.png"));
+    assert_eq!(
+        data.turns
+            .iter()
+            .flat_map(|turn| &turn.wire)
+            .filter(|item| item["type"] == "function_call" && item["name"] == "generate_image")
+            .count(),
+        1
+    );
+    assert_eq!(
+        data.turns
+            .iter()
+            .flat_map(|turn| &turn.wire)
+            .filter(|item| item["type"] == "function_call" && item["name"] == "image_process")
+            .count(),
+        1
+    );
+    assert_eq!(
+        data.turns
+            .iter()
+            .flat_map(|turn| &turn.wire)
+            .filter(
+                |item| item["type"] == "function_call_output" && item["call_id"] == "saved-image"
+            )
+            .count(),
+        1
+    );
+    drop(data);
+    super::super::super::finish(&session, Ok(()));
+}
+
+#[test]
+fn canvas_retry_marker_is_consumed_once_even_if_the_new_blocked_handoff_precedes_a_crash() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (definition, blocked, _) = blocked_canvas_worker(&hub);
+    let traversal_cursor = hub.manifest.lock().unwrap().custom_cursor.clone().unwrap();
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    let first_wire_length = hub
+        .root
+        .data
+        .lock()
+        .unwrap()
+        .turns
+        .last()
+        .unwrap()
+        .wire
+        .len();
+    let retried = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    let first_retry_id = hub
+        .manifest
+        .lock()
+        .unwrap()
+        .custom_cursor
+        .as_ref()
+        .unwrap()
+        .retry
+        .as_ref()
+        .unwrap()
+        .root_retry_id
+        .clone();
+    let (session, _) = storage::worker(&hub, &retried, None).unwrap();
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().wire.extend([
+            json!({"type":"function_call","call_id":"new-analysis","name":"vision","arguments":"{}"}),
+            json!({"type":"function_call_output","call_id":"new-analysis","output":"Vision remains unavailable"}),
+        ]);
+    }).unwrap();
+    super::super::super::finish(&session, Ok(()));
+    drop(session);
+    hub.mutate(|state| {
+        // Traversal holds an older cursor while prepare consumes the durable retry.
+        traversal_cursor.checkpoint(state);
+        state.root_status = Status::Failed;
+        let job = state.jobs.get_mut(&blocked.id).unwrap();
+        job.status = Status::Blocked;
+        job.handoff = Some(handoff(Verdict::Blocked));
+        Ok(())
+    })
+    .unwrap();
+    let saved = storage::load(&hub.directory, &hub.root.id)
+        .unwrap()
+        .unwrap();
+    let (recovered, _) =
+        storage::prepare_recovery(&hub.directory, saved, Flow::Custom, &run, vec![]).unwrap();
+    *hub.manifest.lock().unwrap() = recovered;
+    let preserved = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(preserved.status, Status::Blocked);
+    assert_eq!(preserved.attempts, blocked.attempts + 1);
+    assert!(hub.live.lock().unwrap().is_empty());
+    // Only a new explicit request may retry the remaining analysis again.
+    hub.root
+        .update(true, |data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .wire
+                .push(json!({"role":"assistant","content":"Still blocked"}));
+        })
+        .unwrap();
+    super::super::super::finish(&hub.root, Err(invalid("Still blocked")));
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    hub.root
+        .update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            let marker = turn.wire.pop().unwrap();
+            assert_ne!(marker["_jarvis_retry_id"].as_str().unwrap(), first_retry_id);
+            // A history rewrite can reuse a wire length; the new retry still has its own identity.
+            turn.wire.truncate(first_wire_length - 1);
+            turn.wire.push(marker);
+            assert_eq!(turn.wire.len(), first_wire_length);
+        })
+        .unwrap();
+    let next = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(next.status, Status::Queued);
+    assert_eq!(next.attempts, blocked.attempts + 2);
+}
+
+#[test]
+fn canvas_recovery_preserves_unrequested_blocked_and_accepted_handoffs() {
+    for (verdict, explicit) in [
+        (Verdict::Blocked, false),
+        (Verdict::Completed, true),
+        (Verdict::Approved, true),
+    ] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let (definition, blocked, _) = blocked_canvas_worker(&hub);
+        hub.mutate(|state| {
+            let job = state.jobs.get_mut(&blocked.id).unwrap();
+            job.status = if verdict == Verdict::Blocked {
+                Status::Blocked
+            } else {
+                Status::Completed
+            };
+            job.handoff = Some(handoff(verdict.clone()));
+            Ok(())
+        })
+        .unwrap();
+        if explicit {
+            let run = hub.manifest.lock().unwrap().run_id.clone();
+            hub.root.retry_failed_turn(&run, None).unwrap();
+        }
+        let saved = storage::load(&hub.directory, &hub.root.id)
+            .unwrap()
+            .unwrap();
+        let run = saved.run_id.clone();
+        let (recovered, _) =
+            storage::prepare_recovery(&hub.directory, saved, Flow::Custom, &run, vec![]).unwrap();
+        *hub.manifest.lock().unwrap() = recovered;
+        let preserved = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+        assert!(!preserved.status.active());
+        assert_eq!(preserved.handoff.unwrap().verdict, verdict);
+        assert_eq!(preserved.attempts, blocked.attempts);
+    }
+}
+
+#[test]
+fn an_old_retry_marker_does_not_authorize_a_later_blocked_result() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (definition, blocked, _) = blocked_canvas_worker(&hub);
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    hub.root
+        .update(true, |data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .wire
+                .push(json!({"role":"assistant","content":"A later blocked result"}));
+        })
+        .unwrap();
+    let preserved = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(preserved.status, Status::Blocked);
+    assert_eq!(preserved.attempts, blocked.attempts);
+}
+
+#[test]
+fn explicit_canvas_retry_accepts_a_persisted_legacy_marker_once() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (definition, blocked, _) = blocked_canvas_worker(&hub);
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    hub.root
+        .update(true, |data| {
+            data.turns
+                .last_mut()
+                .unwrap()
+                .wire
+                .last_mut()
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove("_jarvis_retry_id");
+        })
+        .unwrap();
+    let retried = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(retried.status, Status::Queued);
+    assert_eq!(retried.attempts, blocked.attempts + 1);
+    let unchanged = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(unchanged.attempts, retried.attempts);
+}
+
+#[test]
+fn canvas_retry_keeps_uncertain_actions_and_cancelled_questions_blocked() {
+    for cancelled_question in [false, true] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let (definition, blocked, _) = blocked_canvas_worker(&hub);
+        let (session, _) = storage::worker(&hub, &blocked, None).unwrap();
+        session.update(true, |data| {
+            let turn = data.turns.last_mut().unwrap();
+            let name = if cancelled_question { "ask_user" } else { "write" };
+            turn.wire.push(json!({"type":"function_call","call_id":"unresolved","name":name,"arguments":"{}"}));
+            if cancelled_question {
+                let output = super::super::super::questions::cancelled_output();
+                turn.wire.push(json!({"type":"function_call_output","call_id":"unresolved","output":output}));
+                turn.turn.steps.push(Step {
+                    tools: vec![ToolCall {
+                        id: "unresolved".into(), name: name.into(), args: json!({}),
+                        status: "error".into(), output, duration_ms: 0,
+                    }],
+                    ..Step::default()
+                });
+            }
+        }).unwrap();
+        super::super::super::finish(&session, Ok(()));
+        drop(session);
+        let run = hub.manifest.lock().unwrap().run_id.clone();
+        hub.root.retry_failed_turn(&run, None).unwrap();
+        assert!(prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).is_err());
+        let state = hub.manifest.lock().unwrap();
+        assert_eq!(state.jobs[&blocked.id].status, Status::Blocked);
+        assert_eq!(state.jobs[&blocked.id].attempts, blocked.attempts);
+        assert!(state.custom_cursor.as_ref().unwrap().retry.is_none());
+    }
+}
+
 #[tokio::test]
 async fn accepted_canvas_handoff_is_reused_after_crash_before_cursor_advance() {
     let (_fixture, hub) = super::super::tests::hub();

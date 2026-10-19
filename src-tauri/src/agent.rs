@@ -1092,6 +1092,7 @@ impl Session {
             "role": "user",
             "_jarvis_runtime": true,
             "_jarvis_retry": true,
+            "_jarvis_retry_id": library::new_id()?,
             "content": notice,
         });
         if changed_model {
