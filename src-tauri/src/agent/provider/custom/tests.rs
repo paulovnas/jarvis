@@ -523,35 +523,57 @@ fn go_recovery_anthropic_empty_json_delta_preserves_initial_tool_input() {
 #[ignore = "Uses an explicitly authorized Custom account for a tiny synthetic request; never reads project content"]
 async fn live_custom_completion_smoke() {
     let alias = std::env::var("JARVIS_CUSTOM_ACCOUNT").expect("Select a configured account");
-    let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
-    let (credential, config) = tokio::task::spawn_blocking(move || {
+    let home = std::path::PathBuf::from(
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .expect("Set HOME or USERPROFILE"),
+    );
+    let (credential, config, model_id, reasoning) = tokio::task::spawn_blocking(move || {
         let state = crate::persistence::AppState::default();
-        let config = crate::openai_codex::custom::load(&state, &home, &alias).unwrap();
+        let mut config = crate::openai_codex::custom::load(&state, &home, &alias).unwrap();
+        let model_id =
+            std::env::var("JARVIS_CUSTOM_MODEL").unwrap_or_else(|_| config.models[0].id.clone());
+        let model = config
+            .models
+            .iter_mut()
+            .find(|model| model.id == model_id)
+            .expect("Select a model configured on the chosen account");
+        model.max_output_tokens = model.max_output_tokens.min(1024);
+        let reasoning = std::env::var("JARVIS_CUSTOM_REASONING")
+            .ok()
+            .or_else(|| model.default_reasoning_level.clone());
+        assert!(reasoning
+            .as_ref()
+            .is_none_or(|level| model.reasoning_levels.contains(level)));
         let auth = crate::openai_codex::OpenAiCodexState::default()
-            .inference_credential(&state, &home, &alias, &config.models[0].id, None)
+            .inference_credential(&state, &home, &alias, &model_id, None)
             .unwrap();
-        (auth, config)
+        (auth, config, model_id, reasoning)
     })
     .await
     .unwrap();
     assert_eq!(config.protocol, Protocol::OpenaiCompletions);
     let mut options = options();
     options.account = std::env::var("JARVIS_CUSTOM_ACCOUNT").unwrap();
-    options.model = config.models[0].id.clone();
-    options.reasoning = config.models[0].default_reasoning_level.clone();
+    options.model = model_id;
+    options.reasoning = reasoning;
     let (_cancel, signal) = watch::channel(false);
-    let result = stream(
-        &credential,
-        &config,
-        "synthetic-session",
-        &options,
-        "Responda apenas PONG.",
-        vec![json!({"role":"user","content":"Ping"})],
-        vec![],
-        signal.clone(),
-        |_| Ok(()),
+    let result = tokio::time::timeout(
+        Duration::from_secs(45),
+        stream(
+            &credential,
+            &config,
+            "synthetic-session",
+            &options,
+            "Responda apenas PONG.",
+            vec![json!({"role":"user","content":"Ping"})],
+            vec![],
+            signal.clone(),
+            |_| Ok(()),
+        ),
     )
     .await
+    .expect("Synthetic text request exceeded 45 seconds")
     .unwrap();
     assert!(result.text.to_uppercase().contains("PONG"));
     assert!(result
@@ -563,18 +585,22 @@ async fn live_custom_completion_smoke() {
     ];
     let mut input =
         vec![json!({"role":"user","content":"Obtenha o marcador usando a ferramenta."})];
-    let result = stream(
-        &credential,
-        &config,
-        "synthetic-session",
-        &options,
-        instructions,
-        input.clone(),
-        tools.clone(),
-        signal.clone(),
-        |_| Ok(()),
+    let result = tokio::time::timeout(
+        Duration::from_secs(45),
+        stream(
+            &credential,
+            &config,
+            "synthetic-session",
+            &options,
+            instructions,
+            input.clone(),
+            tools.clone(),
+            signal.clone(),
+            |_| Ok(()),
+        ),
     )
     .await
+    .expect("Synthetic tool request exceeded 45 seconds")
     .unwrap();
     let calls = super::super::tool_calls(&result.output).unwrap();
     assert_eq!(calls.len(), 1);
@@ -583,18 +609,22 @@ async fn live_custom_completion_smoke() {
     input.push(
         json!({"type":"function_call_output","call_id":calls[0].id,"output":"JARVIS_SMOKE_OK"}),
     );
-    let result = stream(
-        &credential,
-        &config,
-        "synthetic-session",
-        &options,
-        instructions,
-        input,
-        tools,
-        signal,
-        |_| Ok(()),
+    let result = tokio::time::timeout(
+        Duration::from_secs(45),
+        stream(
+            &credential,
+            &config,
+            "synthetic-session",
+            &options,
+            instructions,
+            input,
+            tools,
+            signal,
+            |_| Ok(()),
+        ),
     )
     .await
+    .expect("Synthetic tool result request exceeded 45 seconds")
     .unwrap();
     assert!(result.text.contains("JARVIS_SMOKE_OK"));
     assert!(super::super::tool_calls(&result.output).unwrap().is_empty());
@@ -1828,11 +1858,26 @@ fn incomplete_streams_never_return_dispatchable_tools() {
 }
 
 #[test]
-fn openrouter_duplicate_terminal_usage_is_accepted_without_accepting_late_content() {
+fn terminal_metadata_and_trailing_text_preserve_usage_without_accepting_late_tools() {
     let finish = json!({"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":66}});
-    for late in [
-        finish.clone(),
-        json!({"usage":{"prompt_tokens":12,"completion_tokens":66}}),
+    let terminal = json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null},"finish_reason":"stop"}]});
+    for (terminal, late, expected) in [
+        (terminal.clone(), finish.clone(), "PONG"),
+        (
+            terminal,
+            json!({"usage":{"prompt_tokens":12,"completion_tokens":66}}),
+            "PONG",
+        ),
+        (
+            finish.clone(),
+            json!({"choices":[{"index":0,"delta":{"content":" tail"},"finish_reason":"stop"}]}),
+            "PONG tail",
+        ),
+        (
+            finish.clone(),
+            json!({"choices":[{"index":0,"delta":{"refusal":" declined"}}]}),
+            "PONG declined",
+        ),
     ] {
         let mut stream = completions::Stream::default();
         stream
@@ -1841,16 +1886,26 @@ fn openrouter_duplicate_terminal_usage_is_accepted_without_accepting_late_conten
                 &mut |_| Ok(()),
             )
             .unwrap();
-        stream.event(&json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null},"finish_reason":"stop"}]}), &mut |_| Ok(())).unwrap();
+        stream.event(&terminal, &mut |_| Ok(())).unwrap();
         stream.event(&late, &mut |_| Ok(())).unwrap();
         let response = stream.finish(&json!({})).unwrap();
-        assert_eq!(response.text, "PONG");
-        assert_eq!(response.usage.unwrap().output_tokens, 66);
+        assert_eq!(response.text, expected);
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 66);
     }
     for delta in [
-        json!({"content":"unexpected"}),
+        json!({"content":0}),
+        json!({"content":[]}),
+        json!({"content":{}}),
+        json!({"refusal":false}),
+        json!({"refusal":[]}),
         json!({"tool_calls":[{"index":0}]}),
+        json!({"content":"not emitted","tool_calls":[{"index":0,"id":"late","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"}}]}),
         json!({"reasoning":"late"}),
+        json!({"reasoning_details":[{"text":"late"}]}),
+        json!({"role":"system","content":"not emitted"}),
+        json!({"unknown":"late"}),
         json!("malformed delta"),
     ] {
         let mut stream = completions::Stream::default();
@@ -1858,7 +1913,7 @@ fn openrouter_duplicate_terminal_usage_is_accepted_without_accepting_late_conten
         assert!(stream
             .event(
                 &json!({"choices":[{"index":0,"delta":delta,"finish_reason":"stop"}]}),
-                &mut |_| Ok(())
+                &mut |_| panic!("Malformed terminal payload must not emit deltas")
             )
             .is_err());
     }

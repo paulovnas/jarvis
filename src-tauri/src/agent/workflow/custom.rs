@@ -631,7 +631,7 @@ fn activate_step(hub: &Hub, job: &Job) -> Result<(), AgentError> {
 async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
     let mut changed = hub.changed.subscribe();
     if !job.status.active() {
-        return step_result(job);
+        return step_result(&hub, job);
     }
     activate_step(&hub, &job)?;
     if job.recovery.is_some() {
@@ -643,7 +643,7 @@ async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
         changed.borrow_and_update();
         let current = hub.job(&job.id)?;
         if !current.status.active() {
-            return step_result(current);
+            return step_result(&hub, current);
         }
         changed
             .changed()
@@ -652,15 +652,40 @@ async fn execute_step(hub: Arc<Hub>, job: Job) -> Result<Handoff, AgentError> {
     }
 }
 
-fn step_result(job: Job) -> Result<Handoff, AgentError> {
+fn step_result(hub: &Hub, job: Job) -> Result<Handoff, AgentError> {
     if job.status == Status::Cancelled {
         return Err(AgentError::cancelled());
     }
     if let Some(error) = job.error {
         return Err(invalid(&error));
     }
-    job.handoff
-        .ok_or_else(|| invalid("O agente encerrou sem entregar um resultado estruturado."))
+    let handoff = job
+        .handoff
+        .ok_or_else(|| invalid("O agente encerrou sem entregar um resultado estruturado."))?;
+    if job.status != Status::Blocked || handoff.verdict != Verdict::Blocked {
+        return Ok(handoff);
+    }
+    let Some(latest) = journal::read_only(&hub.directory.join(format!("{}.jsonl", job.id)))
+        .ok()
+        .and_then(|(mut turns, _)| turns.pop())
+    else {
+        return Ok(handoff);
+    };
+    let Some(vision) = latest
+        .turn
+        .steps
+        .iter()
+        .rev()
+        .flat_map(|step| step.tools.iter().rev())
+        .find(|tool| tool.name == "vision")
+        .filter(|tool| tool.status == "error" && tool.output.starts_with("Falha no Vision"))
+    else {
+        return Ok(handoff);
+    };
+    Err(invalid(&format!(
+        "{}\n\nFluxo bloqueado: {}",
+        vision.output, handoff.summary
+    )))
 }
 
 pub(super) async fn run(

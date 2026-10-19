@@ -645,6 +645,7 @@ fn blocked_canvas_worker(hub: &Arc<Hub>) -> (RunDefinition, Job, String) {
     let mut job = prepare(hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
     let (session, _) = storage::worker(hub, &job, None).unwrap();
     let worker_turn = session.snapshot().unwrap().turns[0].id.clone();
+    let vision_error = "Falha no Vision (visual-model · conta visual-account): O provedor ficou 60 segundos sem responder. Revise Vision em Configurações → Provedores → Vision.";
     session.update(true, |data| {
         let turn = data.turns.last_mut().unwrap();
         turn.wire.extend([
@@ -653,10 +654,18 @@ fn blocked_canvas_worker(hub: &Arc<Hub>) -> (RunDefinition, Job, String) {
             json!({"type":"function_call","call_id":"saved-export","name":"image_process","arguments":"{\"image_ids\":[\"confirmed-source\"]}"}),
             json!({"type":"function_call_output","call_id":"saved-export","output":"{\"exports\":[\"background.png\"]}"}),
             json!({"type":"function_call","call_id":"failed-analysis","name":"vision","arguments":"{\"ids\":[\"confirmed-source\"],\"question\":\"Inspect the export\"}"}),
-            json!({"type":"function_call_output","call_id":"failed-analysis","output":"Provider timed out awaiting headers"}),
+            json!({"type":"function_call_output","call_id":"failed-analysis","output":vision_error}),
         ]);
         turn.turn.steps.push(Step {
             text: "Image and export confirmed; only Vision analysis is pending".into(),
+            tools: vec![ToolCall {
+                id: "failed-analysis".into(),
+                name: "vision".into(),
+                args: json!({"ids":["confirmed-source"],"question":"Inspect the export"}),
+                status: "error".into(),
+                output: vision_error.into(),
+                duration_ms: 60000,
+            }],
             ..Step::default()
         });
     }).unwrap();
@@ -675,6 +684,68 @@ fn blocked_canvas_worker(hub: &Arc<Hub>) -> (RunDefinition, Job, String) {
     .unwrap();
     super::super::super::finish(&hub.root, Err(invalid("Vision timed out")));
     (definition, job, worker_turn)
+}
+
+#[tokio::test]
+async fn blocked_canvas_notice_identifies_the_failed_vision_model() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (_, blocked, _) = blocked_canvas_worker(&hub);
+    let error = execute_step(hub.clone(), blocked.clone())
+        .await
+        .unwrap_err();
+    assert!(error.message.starts_with("Falha no Vision"));
+    assert!(error
+        .message
+        .contains("visual-model · conta visual-account"));
+    assert!(error.message.contains("60 segundos"));
+    assert!(error
+        .message
+        .contains("Configurações → Provedores → Vision"));
+    assert!(error.message.contains(&blocked.handoff.unwrap().summary));
+    assert!(hub.live.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn canvas_rework_keeps_its_route_after_a_recoverable_vision_failure() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (_, mut job, _) = blocked_canvas_worker(&hub);
+    job.handoff.as_mut().unwrap().verdict = Verdict::Rework;
+    let result = execute_step(hub, job).await.unwrap();
+    assert_eq!(result.verdict, Verdict::Rework);
+    assert!(result.summary.contains("background.png"));
+}
+
+#[tokio::test]
+async fn completed_canvas_and_new_attempts_do_not_reuse_an_old_vision_failure() {
+    for completed in [false, true] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let (_, mut job, _) = blocked_canvas_worker(&hub);
+        if completed {
+            job.status = Status::Completed;
+            job.handoff = Some(handoff(Verdict::Completed));
+        } else {
+            let (session, _) = storage::worker(&hub, &job, None).unwrap();
+            session
+                .update(true, |data| {
+                    data.turns.last_mut().unwrap().turn.steps.push(Step {
+                        tools: vec![ToolCall {
+                            id: "successful-analysis".into(),
+                            name: "vision".into(),
+                            args: json!({}),
+                            status: "completed".into(),
+                            output: "Image inspected successfully".into(),
+                            duration_ms: 1,
+                        }],
+                        ..Step::default()
+                    });
+                })
+                .unwrap();
+            super::super::super::finish(&session, Ok(()));
+        }
+        let expected = job.handoff.as_ref().unwrap().summary.clone();
+        let result = execute_step(hub, job).await.unwrap();
+        assert_eq!(result.summary, expected);
+    }
 }
 
 #[test]

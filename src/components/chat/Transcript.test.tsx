@@ -562,6 +562,18 @@ describe("estado do turno", () => {
     expect(screen.getByRole("list", { name: "Etapas da execução" })).toBeVisible();
   });
 
+  it("identifies a Vision failure instead of presenting it as a generic chat-model failure", () => {
+    const message = "Falha no Vision (gemini-3.1-flash-image · conta Gemini): O provedor ficou 60 segundos sem responder. Revise Vision em Configurações → Provedores → Vision.";
+    render(<TurnBody turn={{ ...savedTurn(), status: "error", error: { code: "workflow_error", message } }} onRetry={vi.fn()} />);
+
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText("Falha no Vision")).toBeVisible();
+    expect(alert).toHaveTextContent("gemini-3.1-flash-image · conta Gemini");
+    expect(alert).toHaveTextContent("60 segundos");
+    expect(alert).toHaveTextContent("Configurações → Provedores → Vision");
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeEnabled();
+  });
+
   it("retains the interrupted warning for ordinary user cancellation", () => {
     render(<TurnBody turn={{ ...savedTurn(), status: "cancelled", error: { code: "cancelled", message: "Execução interrompida." } }} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Execução interrompida");

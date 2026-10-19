@@ -192,9 +192,13 @@ pub(super) async fn execute(
     signal: watch::Receiver<bool>,
 ) -> Result<String, AgentError> {
     let response_language = crate::system::response_language(home);
+    let mut selected = String::new();
     let operation = async {
         let stored = load(state, home)?;
         let config = stored.resolve(executing);
+        if let Some((model, alias)) = config.model.as_deref().zip(config.account_alias.as_deref()) {
+            selected = format!(" ({model} · conta {alias})");
+        }
         let alias = config
             .account_alias
             .clone()
@@ -246,7 +250,13 @@ pub(super) async fn execute(
         Ok(json!({"accountAlias":alias,"model":model,"analysis":response.text.chars().take(20000).collect::<String>(),"usage":response.usage}).to_string())
     };
     let mut cancel_signal = signal.clone();
-    tokio::select! { biased; _ = cancelled(&mut cancel_signal) => Err(AgentError::cancelled()), result = tokio::time::timeout(Duration::from_secs(180), operation) => result.map_err(|_| invalid("A análise de imagem excedeu 3 minutos."))? }
+    let result = tokio::select! { biased; _ = cancelled(&mut cancel_signal) => Err(AgentError::cancelled()), result = tokio::time::timeout(Duration::from_secs(180), operation) => result.unwrap_or_else(|_| Err(invalid("A análise de imagem excedeu 3 minutos."))) };
+    result.map_err(|mut error| {
+        if error.code != "cancelled" {
+            error.message = format!("Falha no Vision{selected}: {} Revise Vision em Configurações → Provedores → Vision.", error.message);
+        }
+        error
+    })
 }
 
 #[cfg(test)]
@@ -332,6 +342,68 @@ mod tests {
             "vendor/visual-model"
         ));
     }
+    #[tokio::test]
+    async fn vision_failure_identifies_the_selected_service_and_model() {
+        let home = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        let config = json!({"baseUrl":"https://gateway.example/v1","protocol":"openai-completions","authMode":"bearer","tokenField":"max_tokens","models":[{"id":"vendor/visual-model","name":"Visual","contextWindow":64000,"maxOutputTokens":4000,"supportsImages":true,"supportsTools":true,"reasoning":"none","reasoningLevels":[],"defaultReasoningLevel":null,"thinkingBudget":null}]});
+        state.with_connection(home.path(), |db| {
+            db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('vision-fixture','custom','custom:vision')", []).map_err(|_| AgentError::storage())?;
+            db.execute("INSERT INTO custom_provider_configs(alias,config) VALUES ('vision-fixture',?1)", [config.to_string()]).map_err(|_| AgentError::storage())?;
+            Ok::<_, AgentError>(())
+        }).unwrap();
+        save(
+            &state,
+            home.path(),
+            Config {
+                inherit_chat: false,
+                account_alias: Some("vision-fixture".into()),
+                model: Some("vendor/visual-model".into()),
+                ..Config::default()
+            },
+        )
+        .unwrap();
+        let (_send, signal) = watch::channel(false);
+        let error = execute(
+            &state,
+            &OpenAiCodexState::default(),
+            home.path(),
+            &"a".repeat(32),
+            &crate::agent::tests::options(ApprovalMode::Yolo),
+            &json!({"ids":["unused"],"question":"Read the image"}),
+            signal,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.message.contains("Vision"));
+        assert!(error.message.contains("vendor/visual-model"));
+        assert!(error.message.contains("vision-fixture"));
+        assert!(error.message.contains("Configurações"));
+        assert_eq!(
+            load(&state, home.path()).unwrap().model.as_deref(),
+            Some("vendor/visual-model")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_vision_keeps_the_interruption_without_a_model_failure_notice() {
+        let home = tempfile::tempdir().unwrap();
+        let (_send, signal) = watch::channel(true);
+        let error = execute(
+            &AppState::default(),
+            &OpenAiCodexState::default(),
+            home.path(),
+            &"a".repeat(32),
+            &crate::agent::tests::options(ApprovalMode::Yolo),
+            &json!({"ids":["unused"],"question":"Read the image"}),
+            signal,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "cancelled");
+        assert_eq!(error.message, AgentError::cancelled().message);
+    }
+
     #[tokio::test]
     async fn disabled_vision_never_resolves_credentials() {
         let home = tempfile::tempdir().unwrap();

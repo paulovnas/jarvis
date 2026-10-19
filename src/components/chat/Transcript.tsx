@@ -34,7 +34,9 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, 
     ? "Execução pausada"
     : turn.status === "cancelled" || turn.status === "interrupted"
       ? "Execução interrompida"
-      : "Falha na execução";
+      : turn.error?.message.startsWith("Falha no Vision")
+        ? "Falha no Vision"
+        : "Falha na execução";
   const response = finalTurnResponse(turn);
   const stageOnlyResponse = Boolean(workflowStage(response.text));
   const responseFirstStep = stageOnlyResponse ? turn.steps.length : response.firstStep;

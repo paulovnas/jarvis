@@ -42,8 +42,7 @@ impl Stream {
             }
             let delta = &choice["delta"];
             if let Some(stopped) = &self.stop {
-                // OpenRouter repeats the terminal choice in its trailing usage
-                // envelope, including role:"assistant" and content:"".
+                // Gateways may repeat terminal metadata or send trailing text.
                 let changed_stop = !choice["finish_reason"].is_null()
                     && choice["finish_reason"].as_str() != Some(stopped.as_str());
                 let payload = !delta.is_null()
@@ -51,6 +50,9 @@ impl Stream {
                         map.iter().any(|(key, value)| {
                             if key == "role" {
                                 return !value.is_null() && value != "assistant";
+                            }
+                            if matches!(key.as_str(), "content" | "refusal") {
+                                return !value.is_null() && !value.is_string();
                             }
                             match value {
                                 Value::Null => false,
@@ -63,14 +65,17 @@ impl Stream {
                 if changed_stop || payload {
                     return Err(protocol_error());
                 }
-                continue;
             }
             if let Some(content) = delta["content"]
                 .as_str()
                 .or_else(|| delta["refusal"].as_str())
+                .filter(|content| self.stop.is_none() || !content.is_empty())
             {
                 self.text.push_str(content);
                 on_delta(Delta::Text(content.into()))?;
+            }
+            if self.stop.is_some() {
+                continue;
             }
             if let Some(reasoning) = delta["reasoning_content"]
                 .as_str()
@@ -164,6 +169,115 @@ impl Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Captured Devhub frame order with synthetic request and call identifiers.
+    const DEVHUB_TOOL_TEXT_TAIL: &str = r#"data: {"choices":[{"delta":{"content":"I'll list your project files and pull the requested docs in parall","role":"assistant"},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"","name":"list"},"id":"call-list","index":0,"type":"function"}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"path\":\"/\"}"},"index":0}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"","name":"read"},"id":"call-readme","index":1,"type":"function"}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"path\":\"README.md\"}"},"index":1}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"","name":"read"},"id":"call-overview","index":2,"type":"function"}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"path\":\"docs/overview.md\"}"},"index":2}]},"finish_reason":null,"index":0}],"created":1792372600,"id":"chatcmpl-fixture","model":"glm-5.3","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"completion_tokens":341,"completion_tokens_details":{"reasoning_tokens":176},"prompt_tokens":922,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":1263}}
+
+data: {"choices":[{"delta":{"content":"el to build your summary."},"index":0}]}
+
+data: [DONE]
+
+"#;
+
+    fn devhub_events() -> Vec<Value> {
+        let mut parser = Sse::default();
+        let events = parser.push(DEVHUB_TOOL_TEXT_TAIL.as_bytes()).unwrap();
+        assert!(parser.done);
+        events
+    }
+
+    #[test]
+    fn devhub_trailing_text_preserves_complete_tools_and_usage() {
+        let mut stream = Stream::default();
+        let mut text = String::new();
+        for event in devhub_events() {
+            stream
+                .event(&event, &mut |delta| {
+                    assert!(!matches!(delta, Delta::ToolReady(_)));
+                    if let Delta::Text(fragment) = delta {
+                        text.push_str(&fragment);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let response = stream.finish(&json!({})).unwrap();
+        assert_eq!(
+            text,
+            "I'll list your project files and pull the requested docs in parallel to build your summary."
+        );
+        assert_eq!(response.text, text);
+        let calls = response.tool_calls();
+        assert_eq!(calls.len(), 3);
+        for (call, (id, name, path)) in calls.iter().zip([
+            ("call-list", "list", "/"),
+            ("call-readme", "read", "README.md"),
+            ("call-overview", "read", "docs/overview.md"),
+        ]) {
+            assert_eq!(call.id, id);
+            assert_eq!(call.name, name);
+            assert_eq!(call.args, json!({"path":path}));
+            assert_eq!(call.status, "pending");
+        }
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.input_tokens, 922);
+        assert_eq!(usage.output_tokens, 341);
+        assert_eq!(usage.cache_read_tokens, Some(0));
+    }
+
+    #[test]
+    fn trailing_text_preserves_malformed_argument_errors_without_dispatching_tools() {
+        for arguments in ["{\"path\":\"README.md\"", "null", "[\"README.md\"]"] {
+            let mut events = devhub_events();
+            events[4]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] =
+                json!(arguments);
+            let mut stream = Stream::default();
+            for event in events {
+                stream
+                    .event(&event, &mut |delta| {
+                        assert!(!matches!(delta, Delta::ToolReady(_)));
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+            let response = stream.finish(&json!({})).unwrap();
+            let call = &response.tool_calls()[1];
+            assert_eq!(call.status, "error");
+            assert_eq!(call.args, json!({}));
+            assert!(!call.output.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_metadata_without_visible_content_is_still_rejected() {
+        for delta in [json!({}), json!({"content":""}), json!({"refusal":""})] {
+            let mut stream = Stream::default();
+            stream
+                .event(
+                    &json!({"choices":[{"index":0,"delta":delta,"finish_reason":"stop"}]}),
+                    &mut |_| Ok(()),
+                )
+                .unwrap();
+            assert_eq!(
+                stream.finish(&json!({})).unwrap_err().code,
+                "provider_protocol"
+            );
+        }
+    }
 
     fn event(stream: &mut Stream, calls: Value) -> Result<(), AgentError> {
         stream.event(
