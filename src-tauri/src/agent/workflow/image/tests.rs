@@ -185,6 +185,53 @@ fn global_image_catalog_has_attachment_capabilities_without_project_access() {
 }
 
 #[test]
+fn project_image_workers_keep_retrieval_available_at_startup_without_command_access() {
+    for scope in [".", ".jarvis-image-attachments"] {
+        let (_fixture, hub) = hub();
+        let child = job(&hub, Role::ImageGenerator, scope);
+        hub.manifest
+            .lock()
+            .unwrap()
+            .jobs
+            .insert(child.id.clone(), child.clone());
+        let execution = Execution {
+            hub,
+            id: child.id,
+            role: Role::ImageGenerator,
+            flow: Flow::ImageGenerator,
+            scope: child.scope,
+        };
+        let mut definitions: Vec<_> = crate::core::context::TOOLS
+            .iter()
+            .chain(["write", "bash"].iter())
+            .map(|name| json!({"name":name}))
+            .collect();
+        execution.filter(&mut definitions);
+        crate::core::context::ContextMode::require_retrieval(&definitions)
+            .expect("image workers must pass the runtime's mandatory retrieval check");
+        for name in ["ctx_search", "ctx_index", "ctx_stats"] {
+            assert!(execution
+                .preflight(&tool(name, "pending", json!({})))
+                .is_none());
+        }
+        for name in [
+            "write",
+            "bash",
+            "ctx_execute",
+            "ctx_execute_file",
+            "ctx_batch_execute",
+        ] {
+            assert!(definitions
+                .iter()
+                .all(|definition| definition["name"] != name));
+            assert!(execution
+                .preflight(&tool(name, "pending", json!({})))
+                .is_some());
+        }
+    }
+}
+
+#[test]
 fn facade_retry_resumes_the_same_paid_request_and_preserves_the_specialists_model() {
     let (_fixture, hub) = hub();
     let execution = Execution {
@@ -217,9 +264,11 @@ fn facade_retry_resumes_the_same_paid_request_and_preserves_the_specialists_mode
     )
     .unwrap();
     session.update(true,|data| {
-        let completed_call = tool("generate_image","error",json!({"sourceImageIds":[original.id],"producedImageIds":[],"exports":[],"recovery":"Retry image_process only"}));
+        let mut completed_call = tool("generate_image","error",json!({"error":{"code":"image_outcome_unknown"},"sourceImageIds":[original.id],"producedImageIds":[],"exports":[],"recovery":"Retry image_process only"}));
+        let receipt = completed_call.output.clone();
+        completed_call.output = "A geração não foi confirmada; preserve as originais.".into();
         let turn = data.turns.last_mut().unwrap();
-        turn.wire.push(json!({"type":"function_call_output","call_id":completed_call.id,"output":completed_call.output}));
+        turn.wire.push(json!({"type":"function_call_output","call_id":completed_call.id,"output":receipt}));
         turn.turn.steps.push(Step { tools:vec![completed_call],..Default::default() });
     }).unwrap();
     finish(&session, Err(AgentError::internal()));
@@ -345,6 +394,105 @@ fn an_uncertain_paid_generation_is_not_repeated_in_the_same_request() {
 }
 
 #[tokio::test]
+async fn a_provider_timeout_receipt_is_not_retried_as_a_new_paid_job() {
+    let (_fixture, hub) = hub();
+    let execution = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Builder,
+        flow: Flow::Standard,
+        scope: vec![".".into()],
+    };
+    let args = json!({"prompt":"Create a robot"});
+    let (mut child, _) = dispatch::image_job(&execution, &args).unwrap();
+    child.status = Status::Failed;
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(child.id.clone(), child.clone());
+    let (session, _) = storage::worker(&hub, &child, None).unwrap();
+    let invocation = tool("generate_image", "running", json!({}));
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![invocation.clone()],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+    let (message, status, receipt) = crate::agent::settle_tool_result(Err(
+        crate::agent::image_generation::uncertain("Provider response timed out"),
+    ))
+    .unwrap();
+    crate::agent::core_runtime::checkpoint_tool(
+        &session,
+        &invocation,
+        &message,
+        status,
+        10,
+        receipt.as_deref(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        session
+            .data
+            .lock()
+            .unwrap()
+            .turns
+            .last()
+            .unwrap()
+            .turn
+            .steps[0]
+            .tools[0]
+            .output,
+        "Provider response timed out"
+    );
+    finish(&session, Err(AgentError::internal()));
+    assert_eq!(
+        resume_confirmed_image(&execution, &args).unwrap_err().code,
+        "image_outcome_unknown"
+    );
+    let (_, signal) = watch::channel(false);
+    let changed = json!({"prompt":"Use another prompt","aspect_ratio":"16:9"});
+    assert_eq!(
+        execution
+            .delegate_image(&hub.root, &changed, signal)
+            .await
+            .unwrap_err()
+            .code,
+        "image_outcome_unknown"
+    );
+    child.status = Status::Running;
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(child.id.clone(), child.clone());
+    let mut commands = crate::agent::command_sessions::CommandSessions::default();
+    let (_, signal) = watch::channel(false);
+    let error = crate::agent::image_generation::execute_pipeline(
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        &hub.env.home,
+        &hub.root.id,
+        &session,
+        Some(&execution),
+        &mut commands,
+        None,
+        &changed,
+        signal,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "image_outcome_unknown");
+    assert_eq!(hub.manifest.lock().unwrap().jobs.len(), 1);
+    hub.manifest.lock().unwrap().run_id = "new-explicit-request".into();
+    assert!(resume_confirmed_image(&execution, &args).unwrap().is_none());
+}
+
+#[tokio::test]
 async fn a_cancelled_parent_does_not_schedule_an_image_request() {
     let (_fixture, hub) = hub();
     let execution = Execution {
@@ -361,4 +509,203 @@ async fn a_cancelled_parent_does_not_schedule_an_image_request() {
         .unwrap_err();
     assert_eq!(error.code, "cancelled");
     assert!(hub.manifest.lock().unwrap().jobs.is_empty());
+}
+
+#[tokio::test]
+async fn inline_canvas_generation_preserves_uncertain_receipts_across_steps() {
+    let (_fixture, hub) = hub();
+    let mut agent = catalog::tests::example().agents[0].clone();
+    agent.capability = catalog::Capability::WriteFiles;
+    let mut child = job(&hub, Role::Custom, ".");
+    child.custom_step_id = Some("configured-image-stage".into());
+    child.custom_agent = Some(agent);
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(child.id.clone(), child.clone());
+    let execution = Execution {
+        hub: hub.clone(),
+        id: child.id.clone(),
+        role: child.role,
+        flow: Flow::Custom,
+        scope: child.scope.clone(),
+    };
+    // A queued graph step has no journal until its worker starts.
+    let queued = job(&hub, Role::Custom, ".");
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(queued.id.clone(), queued);
+    assert!(execution.ensure_image_generation_ready().is_ok());
+    let (session, _) = storage::worker(&hub, &child, None).unwrap();
+    let invocation = tool("generate_image", "running", json!({}));
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![invocation.clone()],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+    let (message, status, receipt) = crate::agent::settle_tool_result(Err(
+        crate::agent::image_generation::uncertain("Provider response timed out"),
+    ))
+    .unwrap();
+    crate::agent::core_runtime::checkpoint_tool(
+        &session,
+        &invocation,
+        &message,
+        status,
+        10,
+        receipt.as_deref(),
+    )
+    .await
+    .unwrap();
+    finish(&session, Err(AgentError::internal()));
+    assert_eq!(
+        execution.ensure_image_generation_ready().unwrap_err().code,
+        "image_outcome_unknown"
+    );
+    assert!(execution.allowed("image_process"));
+    let mut next = child.clone();
+    next.id = library::new_id().unwrap();
+    next.status = Status::Queued;
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(next.id.clone(), next.clone());
+    let next_execution = Execution {
+        id: next.id,
+        ..execution.clone()
+    };
+    assert_eq!(
+        next_execution
+            .ensure_image_generation_ready()
+            .unwrap_err()
+            .code,
+        "image_outcome_unknown"
+    );
+    let (_, signal) = watch::channel(false);
+    assert!(execution
+        .delegate_image(&session, &json!({"prompt":"Changed prompt"}), signal)
+        .await
+        .is_err());
+    assert_eq!(hub.manifest.lock().unwrap().jobs.len(), 3);
+    hub.manifest.lock().unwrap().run_id = "new-explicit-request".into();
+    assert!(execution.ensure_image_generation_ready().is_ok());
+}
+
+#[tokio::test]
+async fn inline_canvas_recovers_paid_originals_without_regenerating() {
+    let (_fixture, hub) = hub();
+    let mut child = job(&hub, Role::Custom, ".");
+    let mut agent = catalog::tests::example().agents[0].clone();
+    agent.capability = catalog::Capability::WriteFiles;
+    child.custom_agent = Some(agent);
+    child.custom_step_id = Some("image-stage".into());
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(child.id.clone(), child.clone());
+    let execution = Execution {
+        hub: hub.clone(),
+        id: child.id.clone(),
+        role: child.role,
+        flow: Flow::Custom,
+        scope: child.scope.clone(),
+    };
+    let receipt = json!({"error":{"code":"image_processing","message":"ComfyUI export failed"},"sourceImageIds":["confirmed-original"],"recovery":"Use image_process"});
+    let (session, _) = storage::worker(&hub, &child, None).unwrap();
+    let invocation = tool("generate_image", "running", json!({}));
+    session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![invocation.clone()],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+    crate::agent::core_runtime::checkpoint_tool(
+        &session,
+        &invocation,
+        "ComfyUI export failed",
+        "error",
+        10,
+        Some(&receipt.to_string()),
+    )
+    .await
+    .unwrap();
+    let mut commands = crate::agent::command_sessions::CommandSessions::default();
+    let (_, signal) = watch::channel(false);
+    let error = crate::agent::image_generation::execute_pipeline(
+        &AppState::default(),
+        &OpenAiCodexState::default(),
+        &hub.env.home,
+        &hub.root.id,
+        &session,
+        Some(&execution),
+        &mut commands,
+        None,
+        &json!({"prompt":"Changed prompt"}),
+        signal,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "image_processing");
+    assert_eq!(
+        serde_json::from_str::<Value>(&error.tool_result.unwrap()).unwrap()["sourceImageIds"],
+        json!(["confirmed-original"])
+    );
+    assert!(execution.allowed("image_process"));
+    assert_eq!(hub.manifest.lock().unwrap().jobs.len(), 1);
+}
+
+#[test]
+fn processing_only_blocks_regeneration_after_a_confirmed_paid_call_in_any_step() {
+    let (_fixture, hub) = hub();
+    let child = job(&hub, Role::Custom, ".");
+    let (session, _) = storage::worker(&hub, &child, None).unwrap();
+    session.update(true, |data| {
+        data.turns.last_mut().unwrap().turn.steps.push(Step { tools: vec![tool("image_process", "error", json!({"error":{"code":"image_processing","message":"Invalid export"},"sourceImageIds":["uploaded-original"]}))], ..Default::default() });
+    }).unwrap();
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(child.id.clone(), child.clone());
+    let execution = Execution {
+        hub: hub.clone(),
+        id: child.id,
+        role: child.role,
+        flow: Flow::Custom,
+        scope: child.scope,
+    };
+    assert!(execution.ensure_image_generation_ready().is_ok());
+    let source_job = job(&hub, Role::Custom, ".");
+    let (source_session, _) = storage::worker(&hub, &source_job, None).unwrap();
+    source_session
+        .update(true, |data| {
+            data.turns.last_mut().unwrap().turn.steps.push(Step {
+                tools: vec![tool(
+                    "generate_image",
+                    "completed",
+                    batch(&["uploaded-original"], &[]),
+                )],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(source_job.id.clone(), source_job);
+    assert_eq!(
+        execution.ensure_image_generation_ready().unwrap_err().code,
+        "image_processing"
+    );
 }

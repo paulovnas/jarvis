@@ -333,6 +333,7 @@ pub async fn finish_charm_hyper_panel_connection(
         windows: vec![],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     super::quotas::apply(dashboard, &mut validation)?;

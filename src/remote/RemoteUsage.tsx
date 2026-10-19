@@ -9,11 +9,11 @@ import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { CardsSkeleton } from "@/components/layout/LoadingSkeletons";
 import { providerDisplayName, providerKindLabels } from "@/core/provider-accounts";
-import { expectedQuotaRemaining, planLabel, quotaPercent, quotaReserve, remainingTime, type AccountUsage, type UsageWindow } from "@/core/provider-usage";
+import { expectedQuotaRemaining, planLabel, quotaPercent, quotaReserve, remainingTime, usdBalance, type AccountUsage, type UsageWindow } from "@/core/provider-usage";
 import { cn } from "@/lib/utils";
 import { RemoteProviderIcon } from "./RemoteProviderIcon";
 
-export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "muse-code" | "opencode-go" | "charm-hyper" };
+export type RemoteUsageAccount = AccountUsage & { providerKind: "openai-codex" | "antigravity" | "claude-code" | "muse-code" | "opencode-go" | "charm-hyper" | "openrouter" };
 
 function WindowUsage({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
@@ -45,7 +45,7 @@ function AccountCard({ account, now, failed }: { account: RemoteUsageAccount; no
     <CardContent className="flex min-w-0 flex-col gap-3">
       {account.error && <p role="status" className="text-xs text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {!account.error && !account.windows.length && account.creditBalance == null && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
-      {account.creditBalance != null && <dl className="flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">Hypercredits</dt><dd className="font-mono tabular-nums">{account.creditBalance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
+      {account.creditBalance != null && <dl className="flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">{account.openrouter ? "Disponível para esta chave" : "Hypercredits"}</dt><dd className="font-mono tabular-nums">{account.openrouter ? usdBalance(account.creditBalance) : account.creditBalance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
       <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3">{account.windows.map(window => <WindowUsage key={window.id} window={window} now={now} stale={stale} />)}</div>
       {account.resetCredits && <div className="flex items-center justify-between gap-3 text-xs"><span className="text-muted-foreground">Resets disponíveis</span><span className="font-mono text-primary">{account.resetCredits.availableCount}</span></div>}
     </CardContent>

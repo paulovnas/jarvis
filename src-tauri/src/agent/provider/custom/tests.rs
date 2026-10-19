@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn image_only_models_cannot_be_sent_to_a_chat_endpoint() {
+    let mut value = config(Protocol::OpenaiCompletions);
+    value.models[0].supports_chat = false;
+    value.models[0].supports_image_generation = true;
+    value.models[0].supports_tools = false;
+    assert!(request::body(&value, &value.models[0], &options(), "", history(), vec![]).is_err());
+}
+
+#[test]
 fn literal_model_ids_are_sent_unchanged_in_every_custom_request_body() {
     for protocol in [
         Protocol::OpenaiResponses,
@@ -922,6 +931,8 @@ fn config(protocol: Protocol) -> Config {
         models: vec![Model {
             id: "vendor/model-v4".into(),
             name: "Model".into(),
+            supports_chat: true,
+            supports_image_generation: false,
             context_window: 64_000,
             max_output_tokens: 4000,
             supports_images: true,

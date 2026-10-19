@@ -1,9 +1,10 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronRight, ExternalLink, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -16,13 +17,17 @@ import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { Hint } from "@/components/ui/hint";
 
 function emptyModel(): CustomModel {
-  return { id: "", name: "", contextWindow: 0, maxOutputTokens: 0, supportsImages: false, supportsTools: true, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null };
+  return { id: "", name: "", contextWindow: 0, maxOutputTokens: 0, supportsChat: true, supportsImageGeneration: false, supportsImages: false, supportsTools: true, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null };
 }
-export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }: { account?: ProviderAccount; onSaved: (account: ProviderAccount) => void; onCancel: () => void; onBusyChange?: (busy: boolean) => void }) {
-  const [alias, setAlias] = useState(account?.alias ?? "");
+export function CustomProviderForm({ account, providerKind = account?.providerKind ?? "custom", onSaved, onCancel, onBusyChange }: { account?: ProviderAccount; providerKind?: string; onSaved: (account: ProviderAccount) => void; onCancel: () => void; onBusyChange?: (busy: boolean) => void }) {
+  const balanceKeyId = useId();
+  const nativeRouter = providerKind === "openrouter";
+  const [alias, setAlias] = useState(account?.alias ?? (nativeRouter ? "openrouter-pessoal" : ""));
   const [apiKey, setApiKey] = useState("");
-  const [displayName, setDisplayName] = useState<string | null>(account?.displayName ?? null);
-  const [config, setConfig] = useState<CustomConfig>(account?.custom ?? { baseUrl: "", protocol: "openai-completions", authMode: "bearer", tokenField: "max_tokens", replayUnsignedThinking: false, models: [emptyModel()] });
+  const [balanceKey, setBalanceKey] = useState("");
+  const [removeBalanceKey, setRemoveBalanceKey] = useState(false);
+  const [displayName, setDisplayName] = useState<string | null>(account?.displayName ?? (nativeRouter ? "OpenRouter" : null));
+  const [config, setConfig] = useState<CustomConfig>(account?.custom ?? { baseUrl: nativeRouter ? "https://openrouter.ai/api/v1" : "", protocol: "openai-completions", authMode: "bearer", tokenField: "max_tokens", replayUnsignedThinking: false, models: [emptyModel()] });
   const [modelKeys, setModelKeys] = useState(() => config.models.map((_, index) => index));
   const nextKey = useRef(modelKeys.length);
   const [expandedModel, setExpandedModel] = useState<number | null>(account ? null : 0);
@@ -56,8 +61,8 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
     }
     lock.current = true; setSaving(true); setError(null); onBusyChange?.(true);
     try {
-      const result = await invoke<ProviderAccount>("save_custom_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), config: nextConfig, apiKey: apiKey || null, editing: !!account });
-      setApiKey(""); toast.success("Provedor salvo"); onSaved(result);
+      const result = await invoke<ProviderAccount>(nativeRouter ? "save_openrouter_provider" : "save_custom_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), config: nextConfig, apiKey: apiKey || null, editing: !!account, ...(nativeRouter ? { balanceKey: balanceKey || null, removeBalanceKey } : {}) });
+      setApiKey(""); setBalanceKey(""); toast.success("Provedor salvo"); onSaved(result);
     } catch (error) {
       setError(typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : "Não foi possível salvar o provedor.");
     } finally { lock.current = false; setSaving(false); onBusyChange?.(false); }
@@ -66,12 +71,17 @@ export function CustomProviderForm({ account, onSaved, onCancel, onBusyChange }:
     <fieldset disabled={saving} className="flex min-w-0 flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Alias completo" help="Nome desta conexão no Jarvis, escolhido por você. Use letras, números e hífens. Depois de salvar, o alias não pode ser alterado." value={alias} disabled={!!account} maxLength={64} placeholder="meu-provedor" autoComplete="off" onChange={e => setAlias(e.target.value)} />
+      {!nativeRouter && <>
         <Choice label="Endpoint" help="Formato da API oferecido pelo provedor. Confira a documentação dele: Chat Completions, Responses ou Anthropic Messages. No OpenRouter, Chat Completions é a opção mais comum." value={config.protocol} items={Object.entries(protocolLabels).map(([value, label]) => ({ value: value as CustomConfig["protocol"], label }))} onChange={protocol => setConfig(c => ({ ...c, protocol, authMode: "bearer", replayUnsignedThinking: protocol === "anthropic-messages", models: c.models.map(m => ({ ...m, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null })) }))} disabled={saving} />
+      </>}
       </div>
       <ProviderDisplayNameField value={displayName ?? alias} onChange={setDisplayName} disabled={saving} required={!account} />
+      {!nativeRouter && <>
       <Field label="URL base" help="Endereço da API informado pelo provedor. Novos endereços sem caminho recebem /v1; caminhos personalizados são preservados. Exemplo: https://openrouter.ai/api/v1. Não inclua a chave na URL." value={config.baseUrl} placeholder="https://seu-provedor.com/v1" autoComplete="off" onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))} onBlur={() => setConfig(c => ({ ...c, baseUrl: account?.custom?.baseUrl === c.baseUrl ? c.baseUrl : normalizeCustomBaseUrl(c.baseUrl) }))} />
+      </>}
       <Field label="Chave de API" help="Crie uma chave no painel do seu provedor. Ela fica protegida no cofre de credenciais do sistema; ao editar, deixe vazio para manter a chave atual." type="password" value={apiKey} autoComplete="new-password" placeholder={account ? "Manter chave atual" : "Cole sua chave"} onChange={e => setApiKey(e.target.value)} />
-      {config.protocol !== "openai-responses" && <Collapsible open={advanced} onOpenChange={setAdvanced}>
+      {nativeRouter && <div className="space-y-3"><Field label="Chave de gerenciamento (opcional)" help="Usada apenas para consultar o saldo em dólares. Use uma chave de gerenciamento da mesma conta; ela fica no cofre e nunca é usada para gerar respostas. Ao editar, deixe vazio para manter a atual. Ao trocar a chave de API, informe novamente esta chave." type="password" value={balanceKey} autoComplete="new-password" disabled={removeBalanceKey} onChange={event => setBalanceKey(event.target.value)} />{account && <div className="flex items-center gap-2"><Switch id={balanceKeyId} checked={removeBalanceKey} onCheckedChange={setRemoveBalanceKey} className="cursor-pointer" /><Label htmlFor={balanceKeyId} className="cursor-pointer text-xs">Remover chave de gerenciamento salva</Label></div>}</div>}
+      {!nativeRouter && config.protocol !== "openai-responses" && <Collapsible open={advanced} onOpenChange={setAdvanced}>
         <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" />} className="h-7 w-full cursor-pointer justify-start px-0 text-xs text-muted-foreground">Compatibilidade avançada<ChevronRight className={`ml-auto size-3.5 transition-transform ${advanced ? "rotate-90" : ""}`} /></CollapsibleTrigger>
         <CollapsibleContent className="space-y-3 pt-3">
           {config.protocol === "anthropic-messages" ? <Choice label="Autenticação" help="OpenRouter e gateways costumam usar Authorization: Bearer. A API direta da Anthropic usa x-api-key. Consulte o exemplo de requisição na documentação do provedor." value={config.authMode} items={[{ value: "bearer", label: "Bearer · gateways / OpenRouter" }, { value: "x-api-key", label: "x-api-key · Anthropic" }]} onChange={authMode => setConfig(c => ({ ...c, authMode, replayUnsignedThinking: authMode === "bearer" }))} disabled={saving} /> : <Choice label="Campo de limite de saída" help="Nome do parâmetro que limita a resposta. OpenRouter usa max_tokens; alguns modelos OpenAI exigem max_completion_tokens. Só altere se a documentação do endpoint pedir." value={config.tokenField} items={[{ value: "max_tokens", label: "max_tokens" }, { value: "max_completion_tokens", label: "max_completion_tokens" }]} onChange={tokenField => setConfig(c => ({ ...c, tokenField }))} disabled={saving} />}

@@ -145,7 +145,98 @@ const MIGRATIONS: &[Migration] = &[
         version: 33,
         sql: include_str!("../../drizzle/0032_charm_hyper.sql"),
     },
+    Migration {
+        version: 34,
+        sql: include_str!("../../drizzle/0033_image_model_selection.sql"),
+    },
+    Migration {
+        version: 35,
+        sql: include_str!("../../drizzle/0034_openrouter.sql"),
+    },
 ];
+
+#[test]
+fn native_openrouter_migration_preserves_manual_models_keys_and_preferences() {
+    let db = Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    for migration in MIGRATIONS.iter().take(34) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch(r#"INSERT INTO provider_accounts(alias,provider_kind,account_id,display_name,show_weekly_usage) VALUES ('meu-router','custom','custom:stable','Minha conta',0); INSERT INTO custom_provider_configs VALUES ('meu-router','{"baseUrl":"https://openrouter.ai/api/v1/","protocol":"openai-completions","authMode":"bearer","models":[{"id":"manual-model"}]}'); INSERT INTO provider_model_exclusions VALUES ('meu-router','excluded');"#).unwrap();
+    db.execute_batch(MIGRATIONS.last().unwrap().sql).unwrap();
+    let row: (String,String,String,i64) = db.query_row("SELECT provider_kind,account_id,display_name,show_weekly_usage FROM provider_accounts WHERE alias='meu-router'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+    assert_eq!(
+        row,
+        (
+            "openrouter".into(),
+            "custom:stable".into(),
+            "Minha conta".into(),
+            0
+        )
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM provider_model_exclusions WHERE account_alias='meu-router'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert!(db
+        .query_row(
+            "SELECT config FROM custom_provider_configs WHERE alias='meu-router'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap()
+        .contains("manual-model"));
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, i64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn image_model_migration_preserves_existing_accounts_and_disabled_generation() {
+    for alias in [Some("google"), None] {
+        let mut db = Connection::open_in_memory().unwrap();
+        for migration in MIGRATIONS.iter().take(33) {
+            db.execute_batch(migration.sql).unwrap();
+        }
+        db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES('google','antigravity','credential')", []).unwrap();
+        db.execute(
+            "INSERT INTO image_generation_config(id,account_alias) VALUES(1,?1)",
+            [alias],
+        )
+        .unwrap();
+        db.pragma_update(None, "user_version", 33).unwrap();
+        initialize_database(&mut db).unwrap();
+        let selected: (Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT account_alias,model FROM image_generation_config WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            selected,
+            (
+                alias.map(str::to_owned),
+                alias.map(|_| "gemini-3.1-flash-image".into())
+            )
+        );
+        assert_eq!(
+            list_provider_accounts(&db).unwrap()[0].account_id,
+            "credential"
+        );
+        initialize_database(&mut db).unwrap();
+    }
+}
 
 #[test]
 fn display_name_migration_preserves_long_aliases_credentials_and_model_bindings() {
@@ -377,8 +468,13 @@ fn charm_hyper_migration_preserves_accounts_preferences_catalogs_and_tool_select
         tables
             .iter()
             .map(|table| {
+                let projection = if *table == "image_generation_config" {
+                    "id, account_alias"
+                } else {
+                    "*"
+                };
                 let mut statement = db
-                    .prepare(&format!("SELECT * FROM {table} ORDER BY 1,2"))
+                    .prepare(&format!("SELECT {projection} FROM {table} ORDER BY 1,2"))
                     .unwrap();
                 let columns = statement.column_count();
                 let rows = statement
@@ -402,7 +498,7 @@ fn charm_hyper_migration_preserves_accounts_preferences_catalogs_and_tool_select
         assert_eq!(
             db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            33
+            35
         );
     }
     db.execute_batch(
@@ -1172,7 +1268,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 33);
+        assert_eq!(version, 35);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -1314,7 +1410,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 33);
+        assert_eq!(version, 35);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

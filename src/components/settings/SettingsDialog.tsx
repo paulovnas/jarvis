@@ -2,6 +2,7 @@ import { GlobalDirectorySettings } from "./GlobalDirectorySettings";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ProviderRemovalDialog } from "./ProviderRemovalDialog";
 import type { ProviderRemovalResult } from "@/core/provider-references";
+import { compatibleModels } from "@/core/provider-references";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { readResource } from "@/core/resource-request";
@@ -250,10 +251,10 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
     [onAccountsChange],
   );
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (cached = false) => {
     const requestId = ++listRequestRef.current;
     try {
-      const result = await readResource<ProviderAccount[]>("list_provider_accounts");
+      const result = await readResource<ProviderAccount[]>("list_provider_accounts", cached ? { cached: true } : undefined);
       if (requestId !== listRequestRef.current) return;
       updateAccounts(result);
     } catch (error) {
@@ -262,6 +263,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
       setListState("error");
     }
   }, [updateAccounts]);
+  const refreshImageAccounts = useCallback(() => loadAccounts(true), [loadAccounts]);
 
   useEffect(() => {
     if (!open) return;
@@ -677,7 +679,7 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
               />
             ))}
           </div>
-        {(!embeddedProviders || accounts.some(account => account.enabled && account.modelsAvailable && enabledModels(account).length > 0)) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="settings-section-title text-muted-foreground">Ferramentas</h3><div className="settings-card-grid"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" /></div></section>}
+        {(!embeddedProviders || accounts.some(account => account.enabled && ((account.modelsAvailable && enabledModels(account).length > 0) || compatibleModels(account, "image_generation").length > 0))) && <section className="space-y-3" aria-label="Ferramentas"><h3 className="settings-section-title text-muted-foreground">Ferramentas</h3><div className="settings-card-grid"><WebSearchSettings accounts={accounts} onBusyChange={embeddedProviders ? setSearchBusy : undefined} /><WebSearchSettings accounts={accounts} kind="vision" onBusyChange={embeddedProviders ? setVisionBusy : undefined} /><WebSearchSettings accounts={accounts} kind="image_generation" onImageCatalogRefresh={refreshImageAccounts} /></div></section>}
       </div>
     );
   };
@@ -690,8 +692,9 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
 
   const renderAdd = () => {
     const computedAlias = `${aliasPrefix}${suffix}`;
-    const providerSelect = <FieldGroup><Field><FieldLabel htmlFor="account-provider">Provedor</FieldLabel><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{providerKindLabels[provider] ?? provider}</SelectValue></SelectTrigger><SelectContent><SelectGroup>{["openai-codex", "antigravity", "opencode-go", "charm-hyper", "custom"].map(kind => <SelectItem key={kind} value={kind} className="cursor-pointer">{providerKindLabels[kind]}</SelectItem>)}</SelectGroup></SelectContent></Select></Field></FieldGroup>;
+    const providerSelect = <FieldGroup><Field><FieldLabel htmlFor="account-provider">Provedor</FieldLabel><Select value={provider} onValueChange={value => { if (value) { setProvider(value); setConnectionError(null); } }} disabled={starting || savingCustom}><SelectTrigger id="account-provider" className="w-full cursor-pointer"><SelectValue>{providerKindLabels[provider] ?? provider}</SelectValue></SelectTrigger><SelectContent><SelectGroup>{["openai-codex", "antigravity", "opencode-go", "charm-hyper", "openrouter", "custom"].map(kind => <SelectItem key={kind} value={kind} className="cursor-pointer">{providerKindLabels[kind]}</SelectItem>)}</SelectGroup></SelectContent></Select></Field></FieldGroup>;
     if (provider === "opencode-go" || provider === "charm-hyper") return <><DialogHeader><DialogTitle>Adicionar {providerKindLabels[provider]}</DialogTitle><DialogDescription>Conecte sua conta usando uma chave de API.</DialogDescription></DialogHeader>{providerSelect}<ApiKeyProviderForm key={provider} providerKind={provider} onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
+    if (provider === "openrouter") return <><DialogHeader><DialogTitle>Adicionar OpenRouter</DialogTitle><DialogDescription>Conecte sua chave e adicione os modelos que deseja usar.</DialogDescription></DialogHeader>{providerSelect}<CustomProviderForm providerKind="openrouter" onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     if (provider === "custom") return <><DialogHeader><DialogTitle>Adicionar conta</DialogTitle><DialogDescription>Configure seu endpoint e os limites informados pelo provedor.</DialogDescription></DialogHeader>{providerSelect}<CustomProviderForm onBusyChange={setSavingCustom} onCancel={() => setView("list")} onSaved={customSaved} /></>;
     return (
       <>
@@ -871,11 +874,11 @@ function SettingsSession({ open, onOpenChange, onAccountsChange, embeddedProvide
             </div>
           </SettingsTabs.Root></>}
           <Dialog open={open && view !== "list"} onOpenChange={(nextOpen) => { if (!nextOpen && !savingCustom) handleDialogOpenChange(false, false); }}>
-            <DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${provider === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
+            <DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${(provider === "custom" || provider === "openrouter") ? "sm:max-w-2xl" : "sm:max-w-xl"}`}>
               {view === "waiting" ? renderWaiting() : view === "reauthorize" ? renderReauthorize() : renderAdd()}
             </DialogContent>
           </Dialog>
-          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${editingCustom?.providerKind === "custom" ? "sm:max-w-2xl" : "sm:max-w-xl"}`} aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>{editingCustom?.providerKind === "custom" ? "Editar provedor Custom" : `Editar ${providerKindLabels[editingCustom?.providerKind ?? ""]}`}</DialogTitle></DialogHeader>{editingCustom && (editingCustom.providerKind === "opencode-go" || editingCustom.providerKind === "charm-hyper" ? <ApiKeyProviderForm key={editingCustom.alias} account={editingCustom} providerKind={editingCustom.providerKind} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} /> : <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />)}</DialogContent></Dialog>
+          <Dialog open={open && editingCustom !== null} onOpenChange={next => { if (!next && !savingCustom) setEditingCustom(null); }}><DialogContent className={`dark max-h-[85vh] grid-cols-1 overflow-x-hidden overflow-y-auto wrap-anywhere [scrollbar-gutter:stable] ${(editingCustom?.providerKind === "custom" || editingCustom?.providerKind === "openrouter") ? "sm:max-w-2xl" : "sm:max-w-xl"}`} aria-describedby={undefined}><DialogHeader className="pr-6"><DialogTitle>{editingCustom?.providerKind === "custom" ? "Editar provedor Custom" : `Editar ${providerKindLabels[editingCustom?.providerKind ?? ""]}`}</DialogTitle></DialogHeader>{editingCustom && (editingCustom.providerKind === "opencode-go" || editingCustom.providerKind === "charm-hyper" ? <ApiKeyProviderForm key={editingCustom.alias} account={editingCustom} providerKind={editingCustom.providerKind} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} /> : <CustomProviderForm key={editingCustom.alias} account={editingCustom} onBusyChange={setSavingCustom} onCancel={() => setEditingCustom(null)} onSaved={customSaved} />)}</DialogContent></Dialog>
       </SettingsSurface>
 
       {disconnectAlias && <ProviderRemovalDialog key={disconnectAlias} alias={disconnectAlias} accounts={accounts} onClose={() => setDisconnectAlias(null)} onBusyChange={busy => setDisconnecting(busy ? disconnectAlias : null)} onRemoved={handleProviderRemoved} />}

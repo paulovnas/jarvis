@@ -148,7 +148,10 @@ fn native_image_role_separates_direct_user_execution_from_managed_child_handoff(
         let mut agent = catalog::tests::example().agents.remove(0);
         agent.capability = capability;
         assert!(custom::allowed(&agent, "generate_image"));
-        assert!(!custom::allowed(&agent, "image_process"));
+        assert_eq!(
+            custom::allowed(&agent, "image_process"),
+            capability != catalog::Capability::ReadOnly
+        );
         agent.denied_tools.push("generate_image".into());
         assert!(!custom::allowed(&agent, "generate_image"));
     }
@@ -745,6 +748,8 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
     for flow in [
         Flow::Standard,
         Flow::Designer,
+        Flow::Video,
+        Flow::ImageGenerator,
         Flow::Planned,
         Flow::Complete,
         Flow::Publication,
@@ -756,6 +761,8 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
             Role::Writer,
             Role::Orchestrator,
             Role::Designer,
+            Role::Video,
+            Role::ImageGenerator,
             Role::Builder,
             Role::Reviewer,
             Role::Custom,

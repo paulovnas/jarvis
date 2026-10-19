@@ -12,10 +12,12 @@ import { describeExecution } from "./execution-status";
 import { CoreActivitySummary } from "./CoreActivitySummary";
 import { UserMessageBubble } from "./UserMessageBubble";
 import { useStreamedText } from "./use-streamed-text";
+import { WorkflowProgress, type WorkflowProgressStage } from "./WorkflowProgress";
+import { workflowStage } from "./workflow-stage";
 
 const ChatMarkdown = lazy(() => import("./ChatMarkdown"));
 
-export function AssistantWorkCollapse({ work, isStreaming = false, streamId, renderHeader }: { work: AssistantWorkData; isStreaming?: boolean; streamId?: string; renderHeader?: (summary?: ReactNode) => ReactNode }) {
+export function AssistantWorkCollapse({ work, isStreaming = false, hasError = false, streamId, renderHeader }: { work: AssistantWorkData; isStreaming?: boolean; hasError?: boolean; streamId?: string; renderHeader?: (summary?: ReactNode) => ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const identity = streamId ?? (work.detailContext ? `${work.detailContext.conversationId}:${work.detailContext.turnId}` : "");
   const phases = useMemo(() => buildExecutionPhases(work.steps, work.auxiliaryMessages), [work.steps, work.auxiliaryMessages]);
@@ -24,7 +26,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false, streamId, ren
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
     {renderHeader?.()}
     {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
-    <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming streamId={identity} retrying={Boolean(work.retry)} />
+    <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming status={work.status} hasError={hasError} streamId={identity} retrying={Boolean(work.retry)} />
     <CoreActivitySummary steps={work.steps} />
     {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
   </section>;
@@ -41,7 +43,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false, streamId, ren
     <Collapsible open={expanded} onOpenChange={setExpanded} render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
       {renderHeader ? renderHeader(summary) : summary}
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
-        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} streamId={identity} />
+        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} status={work.status} hasError={hasError} streamId={identity} />
         <CoreActivitySummary steps={work.steps} />
         {work.steps.length === 0 && <p className="py-1 text-xs">Nenhuma atividade registrada.</p>}
       </CollapsibleContent>
@@ -117,21 +119,37 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"], messages: Assis
   return phases.filter(phase => phase.message || phase.observation || phase.activity.length > 0);
 }
 
-function ExecutionPhases({ phases, detailContext, isStreaming, streamId, retrying = false }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; streamId: string; retrying?: boolean }) {
+function ExecutionPhases({ phases, detailContext, isStreaming, status, hasError = false, streamId, retrying = false }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; status?: AssistantWorkData["status"]; hasError?: boolean; streamId: string; retrying?: boolean }) {
   if (phases.length === 0) return null;
+  const entries: ({ id: string; content: ReactNode } | { id: string; stages: WorkflowProgressStage[] })[] = [];
+  const workflowState = hasError || status === "error" || status === "cancelled" || status === "interrupted" ? "error" : isStreaming ? "running" : status === "completed" ? "completed" : "ended";
+  let latestStageId: string | undefined;
+  phases.forEach((phase, phaseIndex) => {
+    const current = isStreaming && phaseIndex === phases.length - 1;
+    const activity = phase.activity.length > 0 && <PhaseActivityGroup phase={phase} phaseIndex={phaseIndex} current={current} detailContext={detailContext} isStreaming={isStreaming} streamId={`${streamId}:${phase.id}`} retrying={retrying} />;
+    const stage = workflowStage(phase.observation);
+    if (stage) {
+      const item = { id: phase.id, ...stage, activity };
+      latestStageId = phase.id;
+      const previous = entries[entries.length - 1];
+      if (previous && "stages" in previous) previous.stages.push(item);
+      else entries.push({ id: phase.id, stages: [item] });
+      return;
+    }
+    entries.push({ id: phase.id, content: <section key={phase.id} role="listitem" data-execution-phase={phase.id} aria-current={current ? "step" : undefined} className="min-w-0">
+      {phase.message && <UserMessageBubble message={{ id: phase.message.id, role: "user", content: phase.message.content, parts: phase.message.parts, timestamp: phase.message.sentAt === undefined ? "" : new Date(phase.message.sentAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />}
+      {phase.observation && <div data-execution-observation className={`min-w-0 px-1 py-2 text-sm leading-7 text-foreground ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200" : ""}`}>
+        <div className="assistant-prose min-w-0 break-words [&_code]:font-mono [&_p]:my-0">
+          <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} isStreaming={current && !retrying} streamId={`${streamId}:${phase.id}`} /></Suspense>
+        </div>
+      </div>}
+      {activity}
+    </section> });
+  });
   return <div role="list" aria-label="Etapas da execução" className="flex min-w-0 flex-col gap-5">
-    {phases.map((phase, phaseIndex) => {
-      const current = isStreaming && phaseIndex === phases.length - 1;
-      return <section key={phase.id} role="listitem" data-execution-phase={phase.id} aria-current={current ? "step" : undefined} className="min-w-0">
-        {phase.message && <UserMessageBubble message={{ id: phase.message.id, role: "user", content: phase.message.content, parts: phase.message.parts, timestamp: phase.message.sentAt === undefined ? "" : new Date(phase.message.sentAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />}
-        {phase.observation && <div data-execution-observation className={`min-w-0 px-1 py-2 text-sm leading-7 text-foreground ${isStreaming ? "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200" : ""}`}>
-          <div className="assistant-prose min-w-0 break-words [&_code]:font-mono [&_p]:my-0">
-            <Suspense fallback={<p className="whitespace-pre-wrap">{phase.observation}</p>}><ChatMarkdown content={phase.observation} isStreaming={current && !retrying} streamId={`${streamId}:${phase.id}`} /></Suspense>
-          </div>
-        </div>}
-        {phase.activity.length > 0 && <PhaseActivityGroup phase={phase} phaseIndex={phaseIndex} current={current} detailContext={detailContext} isStreaming={isStreaming} streamId={`${streamId}:${phase.id}`} retrying={retrying} />}
-      </section>;
-    })}
+    {entries.map(entry => "stages" in entry
+      ? <section key={entry.id} role="listitem" className="min-w-0"><WorkflowProgress stages={entry.stages} state={entry.stages[entry.stages.length - 1].id !== latestStageId ? "completed" : workflowState} /></section>
+      : entry.content)}
   </div>;
 }
 

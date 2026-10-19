@@ -142,6 +142,7 @@ fn settings_can_configure_the_app_but_cannot_execute_chats() {
         "configure_plugin_mcp",
         "get_web_search_config",
         "set_image_generation_config",
+        "refresh_image_generation_models",
         "refresh_remote_pairing",
         "import_settings_backup",
     ] {

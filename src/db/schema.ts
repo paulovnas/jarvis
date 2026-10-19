@@ -34,7 +34,7 @@ export const providerAccounts = sqliteTable(
     check("provider_accounts_display_name_check", sql`${table.displayName} IS NULL OR length(trim(${table.displayName})) BETWEEN 1 AND 18`),
     check(
       "provider_accounts_provider_kind_check",
-      sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper')`,
+        sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter')`,
     ),
     check(
       "provider_accounts_usage_alert_window_check",
@@ -99,6 +99,7 @@ export const visionConfig = sqliteTable("vision_config", {
 export const imageGenerationConfig = sqliteTable("image_generation_config", {
   id: integer("id").primaryKey(),
   accountAlias: text("account_alias"),
+  model: text("model"),
 }, (table) => [check("image_generation_config_singleton", sql`${table.id} = 1`)]);
 
 export const providerModelBindings = sqliteTable("provider_model_bindings", {

@@ -1,6 +1,170 @@
 use super::*;
 
 #[test]
+fn custom_flow_nodes_generate_inline_with_their_configured_permissions() {
+    for (capability, mcp_allowed) in [
+        (Capability::ReadOnly, false),
+        (Capability::WriteFiles, false),
+        (Capability::Commands, true),
+    ] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let mut agent = catalog::tests::example().agents[0].clone();
+        agent.capability = capability;
+        agent.instructions =
+            "Call generate_image and delegate to the managed image generator.".into();
+        let mut job = super::super::tests::job(&hub, Role::Custom, ".");
+        job.custom_step_id = Some("image-stage".into());
+        job.custom_agent = Some(agent);
+        hub.manifest
+            .lock()
+            .unwrap()
+            .jobs
+            .insert(job.id.clone(), job.clone());
+        let exec = Execution {
+            hub: hub.clone(),
+            id: job.id,
+            role: Role::Custom,
+            flow: Flow::Custom,
+            scope: job.scope,
+        };
+        let mut definitions = vec![
+            image::definition(false),
+            json!({"name":"mcp_comfy_generate"}),
+        ];
+        definitions.extend(crate::agent::image_tasks::definitions());
+        exec.filter(&mut definitions);
+        let image_allowed = capability != Capability::ReadOnly;
+        for name in ["generate_image", "image_process"] {
+            assert_eq!(
+                definitions.iter().any(|tool| tool["name"] == name),
+                image_allowed
+            );
+        }
+        assert!(exec.local_image_generation());
+        assert!(!exec.image_generator());
+        assert_eq!(
+            exec.preflight(&ToolCall {
+                id: "image".into(),
+                name: "generate_image".into(),
+                args: json!({"prompt":"Generate a sprite"}),
+                status: "pending".into(),
+                output: String::new(),
+                duration_ms: 0,
+            })
+            .is_none(),
+            image_allowed
+        );
+        assert!(exec
+            .instructions()
+            .unwrap()
+            .contains("within this configured step"));
+        assert_eq!(exec.allowed("mcp_comfy_generate"), mcp_allowed);
+        let before = hub.manifest.lock().unwrap().jobs.len();
+        assert!(dispatch::image_job(&exec, &json!({"prompt":"Generate a sprite"})).is_err());
+        assert_eq!(hub.manifest.lock().unwrap().jobs.len(), before);
+    }
+}
+
+#[test]
+fn custom_canvas_image_permissions_and_export_scope_are_enforced() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let mut agent = catalog::tests::example().agents[0].clone();
+    agent.capability = Capability::WriteFiles;
+    let mut job = super::super::tests::job(&hub, Role::Custom, "assets");
+    job.custom_step_id = Some("image-stage".into());
+    job.custom_agent = Some(agent);
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(job.id.clone(), job.clone());
+    let exec = Execution {
+        hub: hub.clone(),
+        id: job.id.clone(),
+        role: job.role,
+        flow: Flow::Custom,
+        scope: job.scope,
+    };
+    for name in ["generate_image", "image_process"] {
+        let mut tool = ToolCall {
+            id: name.into(),
+            name: name.into(),
+            args: json!({"processing":{"output_directory":"outside"}}),
+            status: "pending".into(),
+            output: String::new(),
+            duration_ms: 0,
+        };
+        assert!(exec.preflight(&tool).unwrap().contains("escopo"));
+        tool.args["processing"]["output_directory"] = json!("assets/sprites");
+        assert!(exec.preflight(&tool).is_none());
+        hub.manifest
+            .lock()
+            .unwrap()
+            .jobs
+            .get_mut(&job.id)
+            .unwrap()
+            .custom_agent
+            .as_mut()
+            .unwrap()
+            .denied_tools
+            .push(name.into());
+        assert!(!exec.allowed(name));
+        assert!(exec.preflight(&tool).is_some());
+    }
+}
+
+#[test]
+fn custom_flow_image_node_keeps_its_native_pipeline_without_another_worker() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let agent = catalog::Catalog::default()
+        .resolve_agent("builtin:image_generator")
+        .unwrap();
+    let mut job = super::super::tests::job(&hub, Role::ImageGenerator, ".jarvis-image-attachments");
+    job.custom_agent = Some(agent);
+    hub.manifest
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(job.id.clone(), job.clone());
+    let exec = Execution {
+        hub: hub.clone(),
+        id: job.id,
+        role: job.role,
+        flow: Flow::Custom,
+        scope: job.scope,
+    };
+    let mut definitions = vec![image::definition(true)];
+    definitions.extend(crate::agent::image_tasks::definitions());
+    exec.filter(&mut definitions);
+    for name in ["generate_image", "image_process"] {
+        assert!(definitions.iter().any(|tool| tool["name"] == name));
+    }
+    assert!(exec.image_generator());
+    let before = hub.manifest.lock().unwrap().jobs.len();
+    assert!(dispatch::image_job(&exec, &json!({"prompt":"Generate a sprite"})).is_err());
+    assert_eq!(hub.manifest.lock().unwrap().jobs.len(), before);
+}
+
+#[test]
+fn standalone_custom_agents_can_still_delegate_images() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let mut agent = catalog::tests::example().agents[0].clone();
+    agent.capability = Capability::Commands;
+    hub.manifest.lock().unwrap().custom_agent = Some(agent);
+    let exec = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::Custom,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    assert!(exec.allowed("generate_image"));
+    let (child, _) = dispatch::image_job(&exec, &json!({"prompt":"Generate a sprite"})).unwrap();
+    assert_eq!(child.role, Role::ImageGenerator);
+    assert_eq!(child.options.workflow, Some(Flow::ImageGenerator));
+}
+
+#[test]
 fn custom_stages_report_delegated_activity_and_pause_only_while_workers_wait() {
     use crate::agent::turn_state::TurnPhase;
     let (_fixture, hub) = super::super::tests::hub();

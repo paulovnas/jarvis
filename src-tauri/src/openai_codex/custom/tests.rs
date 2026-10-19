@@ -3,6 +3,65 @@ use crate::openai_codex::InMemorySecretStore;
 use crate::persistence;
 
 #[test]
+fn legacy_models_remain_chat_models_without_implicitly_enabling_generation() {
+    let mut raw = serde_json::to_value(config(Protocol::OpenaiCompletions)).unwrap();
+    let model = raw["models"][0].as_object_mut().unwrap();
+    model.remove("supportsChat");
+    model.remove("supportsImageGeneration");
+    let restored: Config = serde_json::from_value(raw).unwrap();
+    restored.validate().unwrap();
+    assert!(restored.models[0].supports_chat);
+    assert!(!restored.models[0].supports_image_generation);
+}
+
+#[test]
+fn explicit_image_models_persist_separately_from_chat_and_refresh_on_edit() {
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let store = InMemorySecretStore::default();
+    let mut value = config(Protocol::OpenaiCompletions);
+    value.base_url = "https://openrouter.ai/api/v1".into();
+    value.models.push(Model {
+        id: "bytedance-seed/seedream-5-0-flash".into(),
+        name: "Meu Seedream".into(),
+        context_window: 0,
+        max_output_tokens: 0,
+        supports_chat: false,
+        supports_image_generation: true,
+        supports_tools: false,
+        ..value.models[0].clone()
+    });
+    value.validate().unwrap();
+    assert_eq!(value.catalog().len(), 1);
+    assert!(
+        crate::openai_codex::selected_model(&value.catalog(), &value.models[1].id, None).is_err()
+    );
+    state
+        .with_connection(home.path(), |db| {
+            save(db, &store, "router", &value, Some("test-key"), false, None)
+        })
+        .unwrap();
+    assert_eq!(load(&state, home.path(), "router").unwrap(), value);
+    let accounts = crate::openai_codex::catalog_cache::list(&state, home.path()).unwrap();
+    assert_eq!(accounts[0].models.len(), 1);
+    assert_eq!(accounts[0].image_models.len(), 1);
+    assert_eq!(accounts[0].image_models[0].id, value.models[1].id);
+    assert_eq!(accounts[0].image_models[0].name, "Meu Seedream");
+    assert_eq!(accounts[0].image_models[0].context_window, None);
+    assert!(accounts[0].image_models[0].reasoning_levels.is_empty());
+    value.models[1].supports_image_generation = false;
+    state
+        .with_connection(home.path(), |db| {
+            save(db, &store, "router", &value, None, true, None)
+        })
+        .unwrap();
+    let accounts = crate::openai_codex::catalog_cache::list(&state, home.path()).unwrap();
+    assert!(accounts[0].image_models.is_empty());
+    assert_eq!(accounts[0].models.len(), 1);
+    assert_eq!(store.load("router").unwrap().access, "test-key");
+}
+
+#[test]
 fn literal_model_ids_round_trip_for_all_protocols_without_sanitizing() {
     for protocol in [
         Protocol::OpenaiCompletions,
@@ -54,6 +113,8 @@ pub(crate) fn config(protocol: Protocol) -> Config {
             name: "My model".into(),
             context_window: 64_000,
             max_output_tokens: 4_000,
+            supports_chat: true,
+            supports_image_generation: false,
             supports_images: true,
             supports_tools: true,
             reasoning: Reasoning::None,

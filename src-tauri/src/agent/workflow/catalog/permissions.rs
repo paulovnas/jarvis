@@ -128,7 +128,7 @@ fn description(name: &str) -> &'static str {
         "web_search" => "Pesquisar na web com a conta configurada.",
         "read_attachment" => "Ler documentos anexados à conversa.",
         "vision" => "Analisar imagens usando Vision.",
-        "generate_image" => "Delegar imagens ao especialista com a conta e pipeline configuradas.",
+        "generate_image" => "Gerar imagens com a conta, o modelo e a pipeline configurados.",
         "image_process" => "Refinar anexos de imagem com a pipeline nativa do ComfyUI.",
         "video_docs" => "Consultar pipelines, direção e documentação do OpenMontage.",
         "video_tools" => "Consultar ferramentas, provedores, requisitos e custos do OpenMontage.",

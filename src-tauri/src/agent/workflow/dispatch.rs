@@ -346,7 +346,14 @@ fn spawn(exec: &Execution, input: Dispatch) -> Result<String, AgentError> {
 }
 
 fn prepare_spawn(exec: &Execution, input: Dispatch) -> Result<(Job, bool), AgentError> {
-    if !exec.role.spawns(exec.flow, input.role) {
+    if input.role == Role::ImageGenerator && exec.flow == Flow::Custom && !exec.direct() {
+        return Err(invalid(
+            "As etapas do fluxo personalizado geram imagens no próprio nó, sem criar agentes fora do grafo.",
+        ));
+    }
+    if !exec.role.spawns(exec.flow, input.role)
+        || (input.role == Role::ImageGenerator && !exec.allowed("generate_image"))
+    {
         return Err(invalid(
             "O papel solicitado não pertence às delegações deste agente.",
         ));
@@ -490,6 +497,11 @@ pub(super) fn image_job(exec: &Execution, args: &Value) -> Result<(Job, bool), A
     if exec.image_generator() {
         return Err(invalid(
             "O Gerador de imagens executa sua pipeline diretamente, sem delegar a si mesmo.",
+        ));
+    }
+    if exec.flow == Flow::Custom && !exec.direct() {
+        return Err(invalid(
+            "As etapas do fluxo personalizado geram imagens no próprio nó, sem criar agentes fora do grafo.",
         ));
     }
     let definition = super::super::image_generation::definition();
@@ -1244,6 +1256,33 @@ fn begin_recovery_attempt(hub: &Hub, id: &str) -> Result<(), AgentError> {
     })
 }
 
+fn execution_for_job(hub: Arc<Hub>, job: &Job) -> Result<Execution, AgentError> {
+    let parent_flow = hub
+        .manifest
+        .lock()
+        .map_err(|_| AgentError::internal())?
+        .flow;
+    let flow = if parent_flow == Flow::Custom
+        && job.custom_step_id.is_some()
+        && job.custom_agent.is_some()
+    {
+        Flow::Custom
+    } else if job.role == Role::ImageGenerator {
+        Flow::ImageGenerator
+    } else if job.options.workflow == Some(Flow::Publication) {
+        Flow::Publication
+    } else {
+        parent_flow
+    };
+    Ok(Execution {
+        hub,
+        id: job.id.clone(),
+        role: job.role,
+        flow,
+        scope: job.scope.clone(),
+    })
+}
+
 fn launch_inner(
     hub: Arc<Hub>,
     job: Job,
@@ -1307,24 +1346,7 @@ fn launch_inner(
                     &checkpoint,
                 )?;
             }
-            let flow = if task_job.role == Role::ImageGenerator {
-                Flow::ImageGenerator
-            } else if task_job.options.workflow == Some(Flow::Publication) {
-                Flow::Publication
-            } else {
-                task_hub
-                    .manifest
-                    .lock()
-                    .map_err(|_| AgentError::internal())?
-                    .flow
-            };
-            let exec = Execution {
-                hub: task_hub.clone(),
-                id: task_job.id.clone(),
-                role: task_job.role,
-                flow,
-                scope: task_job.scope.clone(),
-            };
+            let exec = execution_for_job(task_hub.clone(), &task_job)?;
             if recovery_attempt {
                 begin_recovery_attempt(&task_hub, &task_job.id)?;
             }
@@ -1548,3 +1570,7 @@ fn settle_generation(
 #[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "dispatch/execution_tests.rs"]
+mod execution_tests;

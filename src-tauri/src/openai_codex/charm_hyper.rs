@@ -98,6 +98,8 @@ fn catalog(data: &Value) -> Result<Config, ProviderError> {
                 name: model.name,
                 context_window: integer(model.context_window, 100_000_000)?,
                 max_output_tokens: integer(model.max_output_tokens, 10_000_000)?,
+                supports_chat: true,
+                supports_image_generation: false,
                 supports_images: model.supports_images.unwrap_or(false),
                 // Hyper documents OpenAI tool calling; OMP exposes it for this catalog.
                 supports_tools: model.supports_tools.unwrap_or(true),

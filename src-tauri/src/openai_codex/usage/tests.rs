@@ -229,6 +229,7 @@ fn usage_alerts_persist_and_notify_once_per_runtime() {
         ],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     let notices = alert_notices(&record, &usage, 1_500);
@@ -352,6 +353,7 @@ fn concurrent_refreshes_choose_the_most_depleted_bucket_and_notify_once() {
         ],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     let runtime = Arc::new(UsageCache::default());
@@ -414,6 +416,7 @@ fn antigravity_alerts_respect_third_party_visibility_and_ignore_stale_data() {
         }],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     assert!(alert_notices(&record, &usage, 1_500).is_empty());
@@ -478,6 +481,7 @@ fn codex_http_probe_is_read_only_and_scopes_requests_to_the_selected_account() {
         windows: vec![],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     codex(
@@ -555,6 +559,7 @@ fn account_usage_accepts_go_aliases_and_returns_the_account_snapshot() {
                 }],
                 reset_credits: None,
                 credit_balance: None,
+                openrouter: None,
                 error: None,
             },
             Ok(()),
@@ -655,6 +660,7 @@ fn go_http_probe_preserves_complete_stale_limits_and_explains_auth_failures() {
             windows: vec![],
             reset_credits: None,
             credit_balance: None,
+            openrouter: None,
             error: None,
         };
         let result = result.map(|windows| {
@@ -719,6 +725,7 @@ fn go_usage_alerts_save_and_identify_the_subscription_provider() {
         }],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     };
     let notices = alert_notices(&record, &usage, 1_500);

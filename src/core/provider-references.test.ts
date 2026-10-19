@@ -18,8 +18,23 @@ it("offers destinations compatible with the selected tool", () => {
   const custom = customAccountFixture();
   expect(compatibleModels(custom, "web_search")).toEqual([]);
   expect(compatibleModels(custom, "vision").map(model => model.id)).toEqual(custom.custom!.models.filter(model => model.supportsImages).map(model => model.id));
-  expect(compatibleModels(referenceAccount(), "image_generation")).toEqual([]);
+  expect(compatibleModels(referenceAccount(), "image_generation")[0].id).toBe("gpt-image-2");
   expect(compatibleModels({ ...referenceAccount(), providerKind: "antigravity" }, "image_generation")[0].id).toBe("gemini-3.1-flash-image");
+});
+
+it("uses the image catalog separately from chat models and input vision", () => {
+  const models = [{ id: "bytedance-seed/seedream-5-0-lite", name: "Seedream 5.0 Lite", reasoningLevels: [], defaultReasoningLevel: null }];
+  const router = { ...customAccountFixture(), imageModels: models, modelsAvailable: false };
+  router.custom!.baseUrl = "https://openrouter.ai/api/v1";
+  expect(compatibleModels(router, "image_generation")).toEqual([]);
+  router.custom!.models.push({ ...router.custom!.models[0], ...models[0], supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 });
+  expect(compatibleModels(router, "image_generation")).toEqual(models);
+  expect(modelProblem({ account: router.alias, model: models[0].id, reasoning: null }, [router], "image_generation")).toBeNull();
+  expect(compatibleModels({ ...router, enabled: false }, "image_generation")).toEqual([]);
+  expect(compatibleModels({ ...router, disabledModels: [models[0].id] }, "image_generation")).toEqual([]);
+  expect(compatibleModels({ ...router, custom: { ...router.custom!, models: router.custom!.models.map(model => ({ ...model, supportsImageGeneration: false })) } }, "image_generation")).toEqual([]);
+  expect(compatibleModels(router, "vision")).toEqual([]);
+  expect(compatibleModels(referenceAccount(), "image_generation").map(model => model.id)).toEqual(["gpt-image-2"]);
 });
 
 it.each(["opencode-go", "charm-hyper"])("offers only %s vision models confirmed by the catalog, independent of their name", providerKind => {

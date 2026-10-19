@@ -660,6 +660,43 @@ fn previews_all_configured_items_and_preserves_unmapped_choices_after_deletion()
 }
 
 #[test]
+fn image_replacement_keeps_the_selected_model_in_provider_inventory() {
+    let (mut db, home) = fixture();
+    db.execute("INSERT INTO image_generation_config(id,account_alias,model) VALUES(1,'openai-codex-old','gemini-3.1-flash-image')", []).unwrap();
+    let preview = plan(&db, home.path(), "openai-codex-old").unwrap();
+    let image = preview
+        .items
+        .iter()
+        .find(|item| item.kind == Kind::ImageGeneration)
+        .unwrap();
+    let replacement = Replacement {
+        id: image.id.clone(),
+        choice: ModelChoice {
+            account: "openai-codex-new".into(),
+            model: "gpt-image-2".into(),
+            ..image.choice.clone()
+        },
+    };
+    let transaction = db.transaction().unwrap();
+    apply(
+        &transaction,
+        home.path(),
+        &preview.alias,
+        &preview.revision,
+        &[replacement],
+    )
+    .unwrap();
+    transaction.commit().unwrap();
+    let items = inventory(&db, home.path()).unwrap();
+    let image = items
+        .iter()
+        .find(|item| item.kind == Kind::ImageGeneration)
+        .unwrap();
+    assert_eq!(image.choice.account, "openai-codex-new");
+    assert_eq!(image.choice.model, "gpt-image-2");
+}
+
+#[test]
 fn vision_and_image_settings_remain_visible_when_their_provider_is_removed() {
     let (mut db, home) = fixture();
     db.execute("INSERT INTO vision_config(id,account_alias,model,inherit_chat) VALUES(1,'openai-codex-old','vision-model',0)", []).unwrap();

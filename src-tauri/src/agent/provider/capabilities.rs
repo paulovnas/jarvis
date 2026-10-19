@@ -91,7 +91,10 @@ impl ModelCapabilities {
         };
 
         if let Some(config) = &credential.custom {
-            let configured = config.models.iter().find(|item| item.id == model.id);
+            let configured = config
+                .models
+                .iter()
+                .find(|item| item.supports_chat && item.id == model.id);
             let supports_tools = configured.is_some_and(|item| item.supports_tools);
             let supports_images = configured.is_some_and(|item| item.supports_images);
             let reasoning = configured.map_or(Reasoning::None, |item| item.reasoning);
@@ -210,7 +213,7 @@ impl ModelCapabilities {
             config
                 .models
                 .iter()
-                .find(|item| item.id == options.model)
+                .find(|item| item.supports_chat && item.id == options.model)
                 .map_or(
                     ProviderModel {
                         supports_fast: false,
@@ -372,6 +375,8 @@ mod tests {
                 context_window: 100_000,
                 max_output_tokens: 8_000,
                 supports_images: false,
+                supports_chat: true,
+                supports_image_generation: false,
                 supports_tools: true,
                 reasoning: Reasoning::None,
                 reasoning_levels: vec![],

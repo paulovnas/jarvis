@@ -162,6 +162,8 @@ fn model_config_from_metadata(id: &str, raw: &Value) -> Option<Config> {
             name: raw["name"].as_str()?.into(),
             context_window,
             max_output_tokens,
+            supports_chat: true,
+            supports_image_generation: false,
             supports_images: raw["modalities"]["input"]
                 .as_array()
                 .is_some_and(|m| m.iter().any(|v| v == "image")),

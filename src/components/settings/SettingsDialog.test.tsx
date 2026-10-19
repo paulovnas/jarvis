@@ -9,6 +9,7 @@ import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
 import { computerSnapshot } from "@/test/computer-fixtures";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
 const { invokeMock, usageMock, mcpListMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn(), mcpListMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -69,6 +70,14 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("oferece geração no onboarding quando a conta só contém um modelo de imagem", async () => {
+    const router = customAccountFixture();
+    router.custom = { ...router.custom!, baseUrl: "https://openrouter.ai/api/v1", models: [{ ...router.custom!.models[0], id: "bytedance-seed/seedream-5-0-flash", name: "Seedream", supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 }] };
+    router.models = [];
+    invokeMock.mockImplementation(async (command: string) => command === "list_provider_accounts" ? [router] : []);
+    render(<SettingsDialog embeddedProviders open onOpenChange={vi.fn()} />);
+    expect(await screen.findByRole("combobox", { name: "Provedor de Gerar imagens" })).toBeVisible();
+  });
   it("validates the name before opening OAuth and preserves the full internal alias", async () => {
     invokeMock.mockResolvedValue([]);
     const user = userEvent.setup();
@@ -1015,5 +1024,32 @@ describe("SettingsDialog provider accounts", () => {
       alias: first.alias,
       revision: "review-1", replacements: [],
     });
+  });
+
+  it("offers freshly discovered image models when moving provider references in the same settings session", async () => {
+    const first = account("google", { providerKind: "antigravity" });
+    const router = customAccountFixture();
+    router.custom = { ...router.custom!, baseUrl: "https://openrouter.ai/api/v1" };
+    const imageModels = [{ id: "bytedance-seed/seedream-5-0-lite", name: "Seedream 5.0 Lite", reasoningLevels: [], defaultReasoningLevel: null }];
+    router.custom.models.push({ ...router.custom.models[0], ...imageModels[0], supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 });
+    invokeMock.mockImplementation(async (command: string, args?: { cached?: boolean }) => {
+      if (command === "list_provider_accounts") return [first, args?.cached ? { ...router, imageModels } : router];
+      if (command === "refresh_image_generation_models") return imageModels;
+      if (command === "get_provider_removal_plan") return { alias: first.alias, revision: "review-image", items: [{ id: "image", itemKey: "tool:image_generation_config", kind: "image_generation", label: "Gerar imagens", details: ["Ferramentas"], choice: { account: first.alias, model: "gemini-3.1-flash-image", reasoning: null } }] };
+      return [];
+    });
+    const changed = vi.fn();
+    const user = userEvent.setup();
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await waitFor(() => expect(changed).toHaveBeenCalledWith([first, { ...router, imageModels }]));
+    const row = screen.getByTestId(`provider-account-${first.alias}`);
+    await user.click(within(row).getByRole("button", { name: `Detalhes de ${first.alias}` }));
+    await user.click(within(screen.getByRole("dialog", { name: first.alias })).getByRole("button", { name: "Desconectar" }));
+    const confirmation = await screen.findByRole("dialog", { name: "Remover provedor?" });
+    await user.click(await within(confirmation).findByRole("combobox", { name: "Novo provedor para Gerar imagens" }));
+    await user.click(await screen.findByRole("option", { name: router.alias }));
+    expect(within(confirmation).getByRole("combobox", { name: "Novo modelo para Gerar imagens" })).toHaveTextContent("Seedream 5.0 Lite");
+    expect(invokeMock).not.toHaveBeenCalledWith("disconnect_provider_account", expect.anything());
   });
 });

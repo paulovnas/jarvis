@@ -5,6 +5,17 @@ import { accountList } from "./provider-accounts";
 import { customAccountFixture } from "@/test/custom-provider-fixtures";
 
 describe("Custom provider configuration", () => {
+  it("aceita modelos exclusivos de imagem sem limites de chat e mantém os antigos como chat", () => {
+    const config = customConfigFixture();
+    config.baseUrl = "https://openrouter.ai/api/v1";
+    const image = { ...config.models[0], id: "bytedance-seed/seedream-5-0-flash", supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 };
+    expect(validateCustomProvider("router", { ...config, models: [image] }, "key", false)).toBeNull();
+    expect(customModelSchema.parse(image)).toMatchObject({ supportsChat: false, supportsImageGeneration: true });
+    expect(customModelSchema.parse({ ...config.models[0], supportsChat: undefined, supportsImageGeneration: undefined })).toMatchObject({ supportsChat: true, supportsImageGeneration: false });
+    expect(validateCustomProvider("router", { ...config, models: [{ ...image, supportsImageGeneration: false }] }, "key", false)).toBeNull();
+    expect(validateCustomProvider("router", { ...config, models: [{ ...image, supportsChat: true }] }, "key", false)).not.toBeNull();
+    expect(validateCustomProvider("router", { ...config, baseUrl: "https://other.example/v1", models: [image] }, "key", false)).not.toBeNull();
+  });
   it("completa somente novas URLs sem caminho e preserva versões e rotas explícitas", () => {
     expect(normalizeCustomBaseUrl("https://gateway.example/")).toBe("https://gateway.example/v1");
     for (const url of ["https://gateway.example/v1", "https://gateway.example/api/v2/", "http://localhost:8080/chat/completions", "not a URL"]) expect(normalizeCustomBaseUrl(url)).toBe(url);

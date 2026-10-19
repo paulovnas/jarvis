@@ -3592,6 +3592,9 @@ fn run_turn_once<'a>(
         let image_specialist = execution
             .as_ref()
             .is_some_and(workflow::Execution::image_generator);
+        let local_image_generation = execution
+            .as_ref()
+            .is_some_and(workflow::Execution::local_image_generation);
         let global_companion = execution
             .as_ref()
             .map_or(session, |exec| exec.root())
@@ -4103,11 +4106,18 @@ fn run_turn_once<'a>(
                 if search_enabled {
                     definitions.push(web_search::definition());
                 }
-                if execution.is_some() && image_generation::enabled(state, home) {
-                    definitions.push(workflow::image_definition(image_specialist));
-                    instructions.push_str(" Use generate_image for requested image creation or editing. Unless you are the immutable Gerador de imagens specialist, this delegates to that managed subagent, which uses the independently configured image-generation account/model and required ComfyUI pipeline. The final verified images appear directly in this chat; do not embed base64 or duplicate previews in Markdown. Never claim completion without a successful tool result.");
+                if execution
+                    .as_ref()
+                    .is_some_and(|exec| exec.allowed("generate_image"))
+                    && image_generation::enabled(state, home)
+                {
+                    definitions.push(workflow::image_definition(local_image_generation));
+                    instructions.push_str(" Use generate_image for requested image creation or editing with the independently configured image-generation account/model and required ComfyUI pipeline. Configured canvas steps execute it within the same step; other agents delegate to the managed image specialist. The final verified images appear directly in this chat; do not embed base64 or duplicate previews in Markdown. Never claim completion without a successful tool result.");
                 }
-                if image_specialist {
+                if execution
+                    .as_ref()
+                    .is_some_and(|exec| exec.allowed("image_process"))
+                {
                     definitions.extend(image_tasks::definitions());
                 }
                 if let Some(definition) = progress_watchdog.definition() {
@@ -5269,9 +5279,9 @@ fn run_turn_once<'a>(
                             .await
                         }
                         Some(tool_contract::Handler::ImageGeneration) => {
-                            if image_specialist {
+                            if local_image_generation {
                                 image_generation::execute_pipeline(
-                                    state, oauth, home, &owner.id, owner,
+                                    state, oauth, home, &owner.id, session, execution.as_ref(),
                                     &mut command_sessions, sandbox_plan.as_ref(),
                                     &tool.args, signal.clone(),
                                 ).await
@@ -5296,8 +5306,8 @@ fn run_turn_once<'a>(
                         }
                         Some(tool_contract::Handler::Native) => {
                             let execution =
-                                if tool.name == "image_process" && image_specialist {
-                                    image_tasks::execute(state, oauth, home, &owner.id, owner, &mut command_sessions, sandbox_plan.as_ref(), &tool.args, signal.clone())
+                                if tool.name == "image_process" && execution.as_ref().is_some_and(|exec| exec.allowed("image_process")) {
+                                    image_tasks::execute(state, oauth, home, &owner.id, session, &mut command_sessions, sandbox_plan.as_ref(), &tool.args, signal.clone())
                                         .await.map(|output| tools::ExecutionResult { output, revision: None, read: None })
                                 } else if tool.name.starts_with("video_") {
                                     video_jobs

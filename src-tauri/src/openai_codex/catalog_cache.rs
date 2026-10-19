@@ -80,6 +80,13 @@ pub(super) fn list(
                     opencode_go::account(state, home, record)?,
                 );
             }
+            if record.provider_kind == "openrouter" {
+                return attach_model_exclusions(
+                    state,
+                    home,
+                    openrouter::account(state, home, record)?,
+                );
+            }
             if record.provider_kind == "custom" {
                 return attach_model_exclusions(state, home, custom::account(state, home, record)?);
             }

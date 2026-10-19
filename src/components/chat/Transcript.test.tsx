@@ -19,15 +19,25 @@ it("shows routed workflow stages instead of a provider connection and preserves 
   const stage = { ...savedTurn().steps[0], summary: "", tools: [], text: "Etapa 1 · RPG/Planejador em execução." };
   const turn = { ...savedTurn(), status: "running" as const, options: { ...savedTurn().options, workflow: "custom" as const, customWorkflowId: "rpg" }, steps: [stage] };
   const { rerender } = render(<TurnBody turn={turn} />);
-  expect(await screen.findByText(stage.text)).toBeVisible();
+  expect(screen.getByRole("region", { name: "Progresso do fluxo" })).toHaveTextContent("RPG/Planejador");
   expect(screen.queryByText("Conectando ao provedor…")).not.toBeInTheDocument();
   const routed = { ...turn, steps: [stage, { ...stage, text: "Etapa 2 · RPG/Artista Técnico 3D em execução." }] };
   rerender(<TurnBody turn={routed} />);
-  expect(await screen.findByText(routed.steps[1].text)).toBeVisible();
+  expect(screen.getByRole("region", { name: "Progresso do fluxo" })).toHaveTextContent("RPG/Artista Técnico 3D");
   rerender(<TurnBody turn={{ ...routed, status: "completed", steps: [...routed.steps, { ...stage, text: "Modelo 3D criado e validado." }] }} />);
   expect(await screen.findByText("Modelo 3D criado e validado.")).toBeVisible();
   expect(screen.queryByText(routed.steps[1].text)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Trabalhou por/ })).toBeVisible();
+});
+
+it.each(["cancelled", "interrupted", "error"] as const)("preserves the last workflow stage as incomplete for a %s turn without an error object", async status => {
+  const stage = { ...savedTurn().steps[0], summary: "", tools: [], text: "Etapa 1 · RPG/Planejador em execução." };
+  const turn = { ...savedTurn(), status, error: null, steps: [stage, { ...stage, text: "Etapa 2 · RPG/Diretor em execução." }] };
+  render(<TurnBody turn={turn} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: /Trabalhou por/ }));
+  const disclosure = within(screen.getByRole("region", { name: "Progresso do fluxo" })).getByRole("button", { name: /Etapa 2.*RPG\/Diretor/ });
+  expect(disclosure).toHaveTextContent("Não concluída");
+  expect(screen.queryByText(turn.steps[1].text)).not.toBeInTheDocument();
 });
 
 function page(start: number, id = "c1"): HistoryPage {

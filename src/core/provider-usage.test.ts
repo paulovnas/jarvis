@@ -20,6 +20,12 @@ it("accepts a reported Hypercredits balance without creating quota windows", () 
   expect(aliasSuffix(usage.alias)).toBe("pessoal");
 });
 
+it("preserves a negative USD balance only when OpenRouter details identify the currency", () => {
+  const usage = { alias: "legacy-router", fetchedAt: 1, email: null, plan: null, windows: [], error: null, resetCredits: null, creditBalance: -1.5, openrouter: { accountBalance: -1.5, keyLimitRemaining: null, note: null } };
+  expect(accountUsageSchema.parse(usage)).toEqual(usage);
+  expect(accountUsageSchema.safeParse({ ...usage, openrouter: null }).success).toBe(false);
+});
+
 it("keeps the complete alias suffix and formats only available quota data", () => {
   expect(aliasSuffix("openai-codex-paulo-trabalho")).toBe("paulo-trabalho");
   expect(aliasSuffix("antigravity-pessoal")).toBe("pessoal");

@@ -493,9 +493,17 @@ impl<'a> Bridge<'a> {
         if self.execution.is_some()
             && image_generation::enabled(self.runtime.state, self.runtime.home)
         {
-            definitions.push(workflow::image_definition(image_specialist));
+            definitions.push(workflow::image_definition(
+                self.execution
+                    .as_ref()
+                    .is_some_and(workflow::Execution::local_image_generation),
+            ));
         }
-        if image_specialist {
+        if self
+            .execution
+            .as_ref()
+            .is_some_and(|exec| exec.allowed("image_process"))
+        {
             definitions.extend(image_tasks::definitions());
         }
         if let Some(exec) = &self.execution {
@@ -1009,14 +1017,15 @@ impl<'a> Bridge<'a> {
             ),
             Handler::ImageGeneration => {
                 let exec = self.execution.as_ref().ok_or_else(AgentError::internal)?;
-                if exec.image_generator() {
+                if exec.local_image_generation() {
                     let owner = self.owner().clone();
                     image_generation::execute_pipeline(
                         state,
                         self.runtime.oauth,
                         home,
                         &owner.id,
-                        &owner,
+                        self.session,
+                        Some(exec),
                         &mut self.commands,
                         sandbox,
                         &tool.args,
@@ -1076,7 +1085,7 @@ impl<'a> Bridge<'a> {
                     && self
                         .execution
                         .as_ref()
-                        .is_some_and(workflow::Execution::image_generator)
+                        .is_some_and(|exec| exec.allowed("image_process"))
                 {
                     let owner = self.owner().clone();
                     return image_tasks::execute(
@@ -1084,7 +1093,7 @@ impl<'a> Bridge<'a> {
                         self.runtime.oauth,
                         home,
                         &owner.id,
-                        &owner,
+                        self.session,
                         &mut self.commands,
                         sandbox,
                         &tool.args,

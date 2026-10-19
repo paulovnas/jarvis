@@ -27,7 +27,7 @@ it.each<CustomConfig["protocol"]>(["openai-completions", "openai-responses", "an
   expect(screen.getByRole("switch", { name: "Ferramentas nos modelos sem informação" })).not.toBeChecked();
   await user.click(screen.getByRole("switch", { name: "Ferramentas nos modelos sem informação" }));
   await user.click(screen.getByRole("button", { name: /Importar modelos selecionados/ }));
-  expect(options.onImport).toHaveBeenCalledWith(["Opus 5.5", "GPT-5.6", "opus 5.5"].map(id => ({ id, name: id, contextWindow: 64000, maxOutputTokens: 4000, supportsTools: true, supportsImages: false, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null })));
+  expect(options.onImport).toHaveBeenCalledWith(["Opus 5.5", "GPT-5.6", "opus 5.5"].map(id => ({ id, name: id, contextWindow: 64000, maxOutputTokens: 4000, supportsChat: true, supportsImageGeneration: false, supportsTools: true, supportsImages: false, reasoning: "none", reasoningLevels: [], defaultReasoningLevel: null, thinkingBudget: null })));
 });
 
 it("usa metadados informados, permite selecionar e não substitui a chave salva", async () => {

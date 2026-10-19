@@ -228,6 +228,7 @@ impl Role {
                     | "hub_complete"
                     | "update_tasks"
                     | "ctx_search"
+                    | "ctx_index"
                     | "ctx_stats"
                     | "read_skill"
                     | "find_skills"

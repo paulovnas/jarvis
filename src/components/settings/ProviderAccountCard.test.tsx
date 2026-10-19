@@ -8,6 +8,21 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 beforeEach(() => { invokeMock.mockReset().mockResolvedValue({ references: [], bindings: [] }); });
 
+it("mostra modelos exclusivos de imagem e permite reativá-los sem incluir modelos públicos não cadastrados", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture(); const onModelEnabledChange = vi.fn();
+  const image = { ...account.custom!.models[0], id: "bytedance-seed/seedream-5-0-flash", name: "Meu Seedream", supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 };
+  account.custom = { ...account.custom!, baseUrl: "https://openrouter.ai/api/v1", models: [image] };
+  account.models = []; account.disabledModels = [image.id];
+  render(<ProviderAccountCard account={account} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} onModelEnabledChange={onModelEnabledChange} />);
+  await user.click(screen.getByRole("button", { name: `Detalhes de ${account.alias}` }));
+  expect(screen.queryByText("Nenhum modelo cadastrado.")).not.toBeInTheDocument();
+  expect(screen.getByText("Meu Seedream")).toBeVisible();
+  expect(screen.getByRole("switch", { name: "Disponibilizar Meu Seedream" })).not.toBeChecked();
+  await user.click(screen.getByRole("switch", { name: "Disponibilizar Meu Seedream" }));
+  expect(onModelEnabledChange).toHaveBeenCalledWith(account.alias, image.id, true);
+  expect(screen.queryByText(/0 tokens/)).not.toBeInTheDocument();
+});
+
 it("mostra configuração Custom sem simular conexão ou cotas e permite editar", async () => {
   const account = customAccountFixture(); const edit = vi.fn(); const user = userEvent.setup();
   render(<ProviderAccountCard account={account} onEdit={edit} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} />);

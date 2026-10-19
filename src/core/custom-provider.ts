@@ -17,14 +17,16 @@ export const customModelIdSchema = z.string().min(1).max(200).refine(id => id.tr
 export const customModelSchema = z.object({
   id: customModelIdSchema,
   name: z.string().trim().min(1).max(120),
-  contextWindow: z.number().int().min(4096).max(100_000_000),
-  maxOutputTokens: z.number().int().positive().max(10_000_000),
+  contextWindow: z.number().int().min(0).max(100_000_000),
+  maxOutputTokens: z.number().int().min(0).max(10_000_000),
+  supportsChat: z.boolean().default(true),
+  supportsImageGeneration: z.boolean().default(false),
   supportsImages: z.boolean(), supportsTools: z.boolean(),
   reasoning: z.enum(["none", "effort", "openrouter", "deepseek", "budget", "adaptive"]),
   reasoningLevels: z.array(z.string().regex(/^[a-z0-9_-]{1,32}$/)).max(12),
   defaultReasoningLevel: z.string().nullable(),
   thinkingBudget: z.number().int().min(1024).nullable(),
-});
+}).refine(model => model.supportsChat ? model.contextWindow >= 4096 && model.maxOutputTokens > 0 : !model.supportsTools && model.reasoning === "none", "Informe os limites do chat ou desabilite os recursos de chat deste modelo.");
 export const customConfigSchema = z.object({
   baseUrl: z.string().url().max(2048),
   protocol: z.enum(["openai-completions", "openai-responses", "anthropic-messages"]),
@@ -74,6 +76,7 @@ export function validateCustomProvider(alias: string, config: CustomConfig, apiK
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password || url.search || url.hash) return "Use HTTPS (HTTP apenas local), sem credenciais ou parâmetros na URL.";
   if (new Set(config.models.map(m => m.id)).size !== config.models.length) return "Os IDs dos modelos precisam ser únicos.";
   for (const model of config.models) {
+    if (model.supportsImageGeneration && (!supportsModelLookup(config.baseUrl) || config.authMode !== "bearer")) return "A geração de imagens em provedores Custom está disponível para o OpenRouter com autenticação Bearer.";
     if (!reasoningFormats(config.protocol).includes(model.reasoning)) return `${model.name}: formato de raciocínio incompatível com o endpoint.`;
     if (model.reasoning !== "none" && (!model.reasoningLevels.length || !model.defaultReasoningLevel || !model.reasoningLevels.includes(model.defaultReasoningLevel))) return `${model.name}: informe os níveis aceitos e selecione o padrão.`;
     if (new Set(model.reasoningLevels).size !== model.reasoningLevels.length) return `${model.name}: remova níveis repetidos.`;

@@ -12,9 +12,10 @@ export const accountUsageSchema = z.object({
   alias: z.string(), fetchedAt: z.number().nullable(), email: z.string().nullable(), plan: z.string().nullable(),
   displayName: z.string().refine(value => validateProviderDisplayName(value) === null).nullable().optional(),
   windows: z.array(usageWindowSchema), error: z.string().nullable(),
-  creditBalance: z.number().finite().nonnegative().nullable().optional(),
+  creditBalance: z.number().finite().nullable().optional(),
+  openrouter: z.object({ accountBalance: z.number().finite().nullable(), keyLimitRemaining: z.number().finite().nullable(), note: z.string().nullable() }).nullable().optional(),
   resetCredits: z.object({ availableCount: z.number().int().nonnegative(), expirations: z.array(z.number().nullable()), detailsAvailable: z.boolean() }).nullable(),
-});
+}).refine(usage => usage.openrouter != null || usage.creditBalance == null || usage.creditBalance >= 0, { path: ["creditBalance"], message: "Negative credits require OpenRouter balance details" });
 export type AccountUsage = z.infer<typeof accountUsageSchema>;
 export type UsageWindow = z.infer<typeof usageWindowSchema>;
 export type UsageAlertWindow = "five_hour" | "weekly";
@@ -30,7 +31,8 @@ export function availableUsageAlertWindows(windows: UsageWindow[], includeThirdP
   const order: UsageAlertWindow[] = ["five_hour", "weekly"];
   return order.filter(window => available.has(window));
 }
-export function aliasSuffix(alias: string) { return alias.replace(/^(openai-codex|antigravity|opencode-go|charm-hyper)-/, ""); }
+export function aliasSuffix(alias: string) { return alias.replace(/^(openai-codex|antigravity|opencode-go|charm-hyper|openrouter)-/, ""); }
+export function usdBalance(value: number): string { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD" }).format(value); }
 export function planLabel(plan: string | null | undefined, accountType: string) {
   if (plan) {
     const value = plan.toLowerCase();

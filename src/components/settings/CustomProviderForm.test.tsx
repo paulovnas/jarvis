@@ -7,6 +7,78 @@ import { customAccountFixture } from "@/test/custom-provider-fixtures";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => { invoke.mockReset(); });
+it("edita o OpenRouter nativo com modelos manuais e chave de saldo separada", async () => {
+  const user = userEvent.setup();
+  const account = { ...customAccountFixture(), providerKind: "openrouter" };
+  account.custom!.baseUrl = "https://openrouter.ai/api/v1";
+  invoke.mockResolvedValue(account);
+  render(<CustomProviderForm account={account} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  expect(screen.queryByLabelText("URL base")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Endpoint")).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Chave de gerenciamento (opcional)"), "balance-only-secret");
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_openrouter_provider", expect.objectContaining({ alias: account.alias, config: account.custom, apiKey: null, balanceKey: "balance-only-secret", removeBalanceKey: false, editing: true })));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Salvar provedor" })).toBeEnabled());
+  await user.click(screen.getByRole("switch", { name: "Remover chave de gerenciamento salva" }));
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("save_openrouter_provider", expect.objectContaining({ balanceKey: null, removeBalanceKey: true })));
+});
+it("cadastra o Seedream pelo ID sem exigir tokens e permite editar a geração separadamente da entrada de imagens", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture();
+  account.custom!.baseUrl = "https://openrouter.ai/api/v1";
+  account.custom!.tokenField = "max_completion_tokens";
+  const image = { ...account.custom!.models[0], id: "bytedance-seed/seedream-5-0-flash", name: "Seedream 5.0 Flash", supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 };
+  invoke.mockImplementation(async (command: string) => command === "lookup_custom_model" ? { model: image, sourceUrl: `https://openrouter.ai/${image.id}`, tokenField: "max_tokens" } : account);
+  render(<CustomProviderForm account={account} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Adicionar modelo" }));
+  fireEvent.change(screen.getByLabelText("ID do modelo 2"), { target: { value: image.id } });
+  fireEvent.blur(screen.getByLabelText("ID do modelo 2"));
+  await screen.findByText("Seedream 5.0 Flash");
+  await user.click(screen.getByRole("button", { name: "Configurar manualmente" }));
+  expect(screen.getByRole("switch", { name: /^Geração de imagens · modelo 2/ })).toBeChecked();
+  expect(screen.getByRole("switch", { name: /^Imagens de entrada · modelo 2/ })).toBeChecked();
+  expect(screen.getByRole("switch", { name: /^Usar no chat · modelo 2/ })).not.toBeChecked();
+  expect(screen.queryByLabelText("Contexto (tokens) · modelo 2")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ apiKey: null, config: expect.objectContaining({ tokenField: "max_completion_tokens", models: [account.custom!.models[0], image] }) })));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Salvar provedor" })).toBeEnabled());
+  await user.click(screen.getByRole("switch", { name: /^Geração de imagens · modelo 2/ }));
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("save_custom_provider", expect.objectContaining({ config: expect.objectContaining({ models: [account.custom!.models[0], { ...image, supportsImageGeneration: false }] }) })));
+});
+
+it("habilita e desabilita geração ao editar um modelo sem transformar visão em geração", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture();
+  account.custom!.baseUrl = "https://openrouter.ai/api/v1";
+  invoke.mockResolvedValue(account);
+  render(<CustomProviderForm account={account} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Expandir modelo 1" }));
+  await user.click(screen.getByRole("button", { name: "Configurar manualmente" }));
+  const generation = screen.getByRole("switch", { name: /^Geração de imagens · modelo 1/ });
+  expect(generation).not.toBeChecked();
+  await user.click(generation);
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ config: expect.objectContaining({ models: [expect.objectContaining({ supportsImages: true, supportsImageGeneration: true })] }) })));
+  await waitFor(() => expect(generation).toBeEnabled());
+  await user.click(generation);
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("save_custom_provider", expect.objectContaining({ config: expect.objectContaining({ models: [expect.objectContaining({ supportsImageGeneration: false })] }) })));
+});
+
+it("preserva um modelo exclusivo de imagem desativado ao reabrir o cadastro", async () => {
+  const user = userEvent.setup(); const account = customAccountFixture();
+  account.custom!.baseUrl = "https://openrouter.ai/api/v1";
+  account.custom!.models[0] = { ...account.custom!.models[0], supportsChat: false, supportsImageGeneration: false, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 };
+  account.models = [];
+  invoke.mockResolvedValue(account);
+  render(<CustomProviderForm account={account} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Expandir modelo 1" }));
+  await user.click(screen.getByLabelText("ID do modelo 1"));
+  await user.tab();
+  expect(invoke).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_custom_provider", expect.objectContaining({ config: account.custom })));
+});
 it("salva modelos importados com IDs literais e preserva as configurações existentes", async () => {
   const user = userEvent.setup(); const account = customAccountFixture(); const onSaved = vi.fn();
   invoke.mockImplementation((command: string) => Promise.resolve(command === "discover_custom_models" ? { models: [{ id: "Opus 5.5", name: "Opus", contextWindow: 32000, maxOutputTokens: 2000, supportsTools: true, supportsImages: false }] } : account));

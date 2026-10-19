@@ -14,6 +14,7 @@ export interface ToolCallItem {
 }
 
 export interface AssistantWorkData {
+  status?: import("@/core/chat").AgentTurn["status"];
   durationSeconds: number;
   auxiliaryMessages?: import("@/core/chat").QueuedMessage[];
   retry?: import("@/core/chat").RetryStatus | null;

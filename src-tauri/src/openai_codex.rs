@@ -7,8 +7,10 @@ mod catalog_cache;
 pub(crate) mod charm_hyper;
 pub(crate) mod custom;
 pub(crate) mod display_name;
+pub(crate) mod image_models;
 mod inference_auth;
 pub(crate) mod opencode_go;
+pub(crate) mod openrouter;
 mod reauthorization;
 pub(crate) mod usage;
 
@@ -213,6 +215,8 @@ pub(crate) struct ProviderAccount {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(crate) vision_models: Vec<String>,
+    #[serde(default, rename = "imageModels", skip_serializing_if = "Vec::is_empty")]
+    pub(crate) image_models: Vec<ProviderModel>,
     #[serde(rename = "modelsAvailable")]
     pub(crate) models_available: bool,
     #[serde(default, rename = "modelsStale")]
@@ -252,6 +256,7 @@ impl ProviderAccount {
                 .map_or(ProviderAccountType::Unknown, classify_account_type),
             models,
             vision_models: vec![],
+            image_models: vec![],
             models_available,
             models_stale: false,
             disabled_models: Vec::new(),
@@ -280,6 +285,12 @@ pub(crate) struct CodexCredential {
         skip_serializing_if = "Option::is_none"
     )]
     pub(crate) hyper_panel: Option<charm_hyper::panel::Connection>,
+    #[serde(
+        default,
+        rename = "openrouterBalanceKey",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) openrouter_balance_key: Option<String>,
     #[serde(skip)]
     pub(crate) antigravity_models: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(skip)]
@@ -309,6 +320,7 @@ impl CodexCredential {
             plan_type,
             project_id: None,
             hyper_panel: None,
+            openrouter_balance_key: None,
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: None,
@@ -1038,6 +1050,7 @@ mod tests {
             account_type: ProviderAccountType::Personal,
             models: Vec::new(),
             vision_models: vec![],
+            image_models: vec![],
             models_available: false,
             models_stale: false,
             disabled_models: Vec::new(),
@@ -1654,6 +1667,8 @@ impl OAuthManager {
                     opencode_go::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "charm-hyper" {
                     charm_hyper::account(app_state, home_dir, record)?
+                } else if record.provider_kind == "openrouter" {
+                    openrouter::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "custom" {
                     custom::account(app_state, home_dir, record)?
                 } else {
@@ -2234,7 +2249,7 @@ impl OpenAiCodexState {
                 },
             )
         })?;
-        if record.provider_kind == "custom" {
+        if matches!(record.provider_kind.as_str(), "custom" | "openrouter") {
             if credential.account_id != record.account_id || credential.project_id.is_some() {
                 return Err(ProviderError::new(
                     "account_mismatch",
@@ -2242,6 +2257,9 @@ impl OpenAiCodexState {
                 ));
             }
             let config = custom::load(state, home, alias)?;
+            if record.provider_kind == "openrouter" {
+                openrouter::validate_config(&config)?;
+            }
             let disabled = state
                 .with_connection(home, |db| {
                     persistence::list_provider_model_exclusions(db, alias)
@@ -2249,6 +2267,7 @@ impl OpenAiCodexState {
                 .map_err(|_| ProviderError::database())?;
             let models = visible_models(config.catalog(), &disabled);
             credential.custom = Some(config);
+            credential.openrouter_balance_key = None;
             return Ok((credential, models));
         }
         if credential.account_id != record.account_id
@@ -3275,6 +3294,7 @@ fn attach_model_exclusions(
             persistence::list_provider_model_exclusions(db, &account.alias)
         })
         .map_err(|_| ProviderError::database())?;
+    account.image_models = image_models::for_account(&account);
     Ok(account)
 }
 

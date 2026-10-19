@@ -49,6 +49,8 @@ pub struct AccountUsage {
     pub(crate) windows: Vec<UsageWindow>,
     pub(crate) reset_credits: Option<ResetCredits>,
     pub(crate) credit_balance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) openrouter: Option<super::openrouter::Balance>,
     pub(crate) error: Option<String>,
 }
 
@@ -354,6 +356,14 @@ impl OpenAiCodexState {
                 &record.alias,
             );
         }
+        if record.provider_kind == "openrouter" {
+            return super::openrouter::credential(
+                state,
+                home,
+                self.manager.secret_store.as_ref(),
+                &record.alias,
+            );
+        }
         let mut credential = self.manager.secret_store.load(&record.alias).map_err(|_| {
             ProviderError::new(
                 "credential_missing",
@@ -381,7 +391,7 @@ impl OpenAiCodexState {
         home: &Path,
         alias: &str,
     ) -> Result<AccountUsage, ProviderError> {
-        super::validate_provider_alias(alias).map_err(|_| ProviderError::invalid_alias())?;
+        super::custom::validate_alias(alias)?;
         let record = state
             .list_provider_accounts(home)
             .map_err(|_| ProviderError::database())?
@@ -391,7 +401,11 @@ impl OpenAiCodexState {
                     && record.enabled
                     && matches!(
                         record.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
+                        "openai-codex"
+                            | "antigravity"
+                            | "opencode-go"
+                            | "charm-hyper"
+                            | "openrouter"
                     )
             })
             .ok_or_else(unavailable)?;
@@ -413,6 +427,7 @@ impl OpenAiCodexState {
             windows: vec![],
             reset_credits: None,
             credit_balance: None,
+            openrouter: None,
             error: None,
         };
         let result = (|| {
@@ -426,7 +441,12 @@ impl OpenAiCodexState {
                 .build()
                 .map_err(|_| unavailable())?;
             let now = current_time_millis()?;
-            if record.provider_kind == "charm-hyper" {
+            if record.provider_kind == "openrouter" {
+                let balance =
+                    super::openrouter::fetch(&client, super::openrouter::BASE_URL, &credential)?;
+                usage.credit_balance = balance.available();
+                usage.openrouter = Some(balance);
+            } else if record.provider_kind == "charm-hyper" {
                 usage.credit_balance = Some(super::charm_hyper::credits(
                     &client,
                     super::charm_hyper::BASE_URL,
@@ -542,7 +562,7 @@ pub async fn set_provider_usage_visibility(
     show_five_hour_usage: Option<bool>,
     show_weekly_usage: Option<bool>,
 ) -> Result<(), ProviderError> {
-    super::validate_provider_alias(&alias).map_err(|_| ProviderError::invalid_alias())?;
+    super::custom::validate_alias(&alias)?;
     let home = super::home_dir(&app)?;
     let state = persistence_state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {

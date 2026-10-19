@@ -1,4 +1,4 @@
-import { PlugZap, Sparkles, Zap } from "lucide-react";
+import { Network, PlugZap, Sparkles, Zap } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ export function RemoteProviderIcon({ kind, className }: { kind: ProviderAccount[
   const classes = cn("size-4 shrink-0", className);
   if (kind === "custom") return <PlugZap aria-hidden="true" className={classes} />;
   if (kind === "muse-code") return <Sparkles aria-hidden="true" className={classes} />;
+  if (kind === "openrouter") return <Network aria-hidden="true" className={classes} />;
   if (kind === "charm-hyper") return <Zap aria-hidden="true" className={classes} />;
   const url = kind === "claude-code" ? claudeIcon : kind === "antigravity" ? antigravityIcon : kind === "opencode-go" ? openCodeGoIcon : openaiIcon;
   return <span aria-hidden="true" className={cn(classes, "bg-current [mask-image:var(--remote-provider-icon)] [mask-position:center] [mask-size:contain] [mask-repeat:no-repeat]")} style={{ "--remote-provider-icon": `url(${JSON.stringify(url)})` } as CSSProperties} />;

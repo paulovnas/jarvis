@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 const CATALOG_URL: &str = "https://openrouter.ai/api/v1/models";
@@ -24,7 +25,7 @@ pub(crate) struct DiscoveredModel {
 fn error(message: &'static str) -> ProviderError {
     ProviderError::new("model_discovery", message)
 }
-fn validate_target(base_url: &str, model_id: &str) -> Result<(), ProviderError> {
+pub(crate) fn validate_target(base_url: &str, model_id: &str) -> Result<(), ProviderError> {
     let url = reqwest::Url::parse(base_url)
         .map_err(|_| error("Informe a URL base antes de buscar o modelo."))?;
     let path = url.path().trim_end_matches('/');
@@ -112,6 +113,10 @@ fn parse(catalog: &Value, id: &str, protocol: Protocol) -> Result<DiscoveredMode
             .into(),
         context_window,
         max_output_tokens,
+        supports_chat: true,
+        supports_image_generation: raw["architecture"]["output_modalities"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == "image")),
         supports_tools: supports("tools"),
         supports_images: raw["architecture"]["input_modalities"]
             .as_array()
@@ -128,10 +133,17 @@ fn parse(catalog: &Value, id: &str, protocol: Protocol) -> Result<DiscoveredMode
     } else {
         TokenField::MaxTokens
     };
+    discovered(model, protocol, token_field)
+}
+fn discovered(
+    model: Model,
+    protocol: Protocol,
+    token_field: TokenField,
+) -> Result<DiscoveredModel, ProviderError> {
     Config { base_url:"https://openrouter.ai/api/v1".into(), protocol, auth_mode:AuthMode::Bearer, token_field, replay_unsigned_thinking:protocol == Protocol::AnthropicMessages, models:vec![model.clone()] }.validate().map_err(|_| error("O catálogo não retornou limites ou capacidades válidos. Configure este modelo manualmente."))?;
     let mut source =
         reqwest::Url::parse("https://openrouter.ai/").map_err(|_| ProviderError::internal())?;
-    source.set_path(id);
+    source.set_path(&model.id);
     Ok(DiscoveredModel {
         model,
         source_url: source.to_string(),
@@ -188,13 +200,33 @@ async fn catalog() -> Result<Arc<Value>, ProviderError> {
 }
 #[tauri::command]
 pub async fn lookup_custom_model(
+    app: tauri::AppHandle,
     base_url: String,
     model_id: String,
     protocol: Protocol,
 ) -> Result<DiscoveredModel, ProviderError> {
-    validate_target(&base_url, &model_id)?;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| ProviderError::database())?;
+    lookup(&home, &base_url, &model_id, protocol).await
+}
+async fn lookup(
+    home: &std::path::Path,
+    base_url: &str,
+    model_id: &str,
+    protocol: Protocol,
+) -> Result<DiscoveredModel, ProviderError> {
+    validate_target(base_url, model_id)?;
     let catalog = catalog().await?;
-    parse(catalog.as_ref(), &model_id, protocol)
+    if catalog["data"]
+        .as_array()
+        .is_some_and(|models| models.iter().any(|model| model["id"] == model_id))
+    {
+        return parse(catalog.as_ref(), model_id, protocol);
+    }
+    let model = crate::openai_codex::image_models::lookup(home, model_id).await?;
+    discovered(model, protocol, TokenField::MaxTokens)
 }
 
 #[cfg(test)]
@@ -202,12 +234,36 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[tokio::test]
+    #[ignore = "Reads only public OpenRouter metadata to discover the exact image model requested by the user"]
+    async fn live_openrouter_seedream_registration() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "bytedance-seed/seedream-5-0-flash";
+        let result = lookup(
+            home.path(),
+            "https://openrouter.ai/api/v1",
+            id,
+            Protocol::OpenaiCompletions,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.model.id, id);
+        assert!(result.model.supports_image_generation);
+        assert!(!result.model.supports_chat);
+        assert!(!result.model.supports_tools);
+        assert!(result.model.supports_images);
+        assert_eq!(result.model.context_window, 0);
+        assert_eq!(result.model.max_output_tokens, 0);
+        println!("Seedream exact-ID registration passed using public metadata only.");
+    }
+    #[tokio::test]
     #[ignore = "Reads only the public OpenRouter catalog for an explicitly selected model"]
     async fn live_openrouter_metadata() {
         let id = std::env::var("JARVIS_CUSTOM_MODEL_ID").expect("Select an exact catalog ID");
-        let result = lookup_custom_model(
-            "https://openrouter.ai/api/v1".into(),
-            id.clone(),
+        let home = tempfile::tempdir().unwrap();
+        let result = lookup(
+            home.path(),
+            "https://openrouter.ai/api/v1",
+            &id,
             Protocol::OpenaiCompletions,
         )
         .await
@@ -236,6 +292,8 @@ mod tests {
         );
         assert!(result.model.supports_tools);
         assert!(!result.model.supports_images);
+        assert!(result.model.supports_chat);
+        assert!(!result.model.supports_image_generation);
         assert_eq!(result.source_url, "https://openrouter.ai/vendor/model");
     }
     #[test]
@@ -259,6 +317,24 @@ mod tests {
                 .model
                 .reasoning,
             Reasoning::None
+        );
+    }
+    #[test]
+    fn vision_input_is_independent_of_image_output() {
+        let mut catalog = fixture();
+        catalog["data"][0]["architecture"]["input_modalities"] = json!(["text", "image"]);
+        catalog["data"][0]["architecture"]["output_modalities"] = json!(["text"]);
+        let model = parse(&catalog, "vendor/model", Protocol::OpenaiCompletions)
+            .unwrap()
+            .model;
+        assert!(model.supports_images);
+        assert!(!model.supports_image_generation);
+        catalog["data"][0]["architecture"]["output_modalities"] = json!(["text", "image"]);
+        assert!(
+            parse(&catalog, "vendor/model", Protocol::OpenaiCompletions)
+                .unwrap()
+                .model
+                .supports_image_generation
         );
     }
     #[test]

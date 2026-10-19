@@ -16,6 +16,47 @@ const account = (alias: string, providerKind = "openai-codex"): ProviderAccount 
 });
 
 describe("WebSearchSettings", () => {
+  it.each(["custom", "openrouter"])("não oferece modelos de imagens não cadastrados em %s", async providerKind => {
+    const router = customAccountFixture(); router.custom!.baseUrl = "https://openrouter.ai/api/v1";
+    router.providerKind = providerKind;
+    invokeMock.mockImplementation(async (command: string) => command === "refresh_image_generation_models" ? [{ id: "uncatalogued-image", name: "Imagem não cadastrada", reasoningLevels: [], defaultReasoningLevel: null }] : { accountAlias: null, model: null, inheritChat: false });
+    const user = userEvent.setup();
+    render(<WebSearchSettings kind="image_generation" accounts={[router]} />);
+    const select = await screen.findByRole("combobox", { name: "Provedor de Gerar imagens" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Atualizar modelos de imagens" })).toBeEnabled());
+    await user.click(select);
+    await screen.findByRole("option", { name: "Desligado" });
+    expect(screen.queryByRole("option", { name: router.alias })).not.toBeInTheDocument();
+  });
+  it.each(["custom", "openrouter"])("seleciona Seedream em %s sem alterar o modelo do chat", async providerKind => {
+    const models = [
+      { id: "bytedance-seed/seedream-5-0-flash", name: "Seedream 5.0 Flash", reasoningLevels: [], defaultReasoningLevel: null },
+      { id: "bytedance-seed/seedream-5-0-lite", name: "Seedream 5.0 Lite", reasoningLevels: [], defaultReasoningLevel: null },
+    ];
+    const router = customAccountFixture();
+    router.providerKind = providerKind;
+    router.custom = { ...router.custom!, baseUrl: "https://openrouter.ai/api/v1" };
+    router.custom.models.push(...models.map(model => ({ ...router.custom!.models[0], ...model, supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 })));
+    invokeMock.mockImplementation(async (command, args) => command === "refresh_image_generation_models" ? models : command === "get_image_generation_config" ? { accountAlias: null, model: null, inheritChat: false } : args);
+    const user = userEvent.setup();
+    render(<WebSearchSettings kind="image_generation" accounts={[router, account("codex"), account("google", "antigravity")]} />);
+    const provider = await screen.findByRole("combobox", { name: "Provedor de Gerar imagens" });
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("refresh_image_generation_models"));
+    await user.click(provider);
+    await user.click(await screen.findByRole("option", { name: router.alias }));
+    const model = screen.getByRole("combobox", { name: "Modelo de Gerar imagens" });
+    await waitFor(() => expect(model).toBeEnabled());
+    await user.click(model);
+    await user.click(await screen.findByRole("option", { name: "Seedream 5.0 Lite" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_image_generation_config", { accountAlias: router.alias, model: models[1].id, inheritChat: false }));
+    expect(invokeMock.mock.calls.some(([command]) => command === "set_chat_model" || command === "set_vision_config")).toBe(false);
+    await waitFor(() => expect(provider).toBeEnabled());
+    await user.click(provider);
+    await user.click(await screen.findByRole("option", { name: "codex" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_image_generation_config", { accountAlias: "codex", model: "gpt-image-2", inheritChat: false }));
+    await waitFor(() => { expect(provider).toBeEnabled(); expect(provider).toHaveTextContent("codex"); });
+  });
+
   it.each(["opencode-go", "charm-hyper"])("selects only %s Vision models confirmed by its live catalog", async providerKind => {
     const gateway = { ...account(`${providerKind}-pessoal`, providerKind), visionModels: ["qwen-vl"], models: [
       { id: "gpt-text", name: "Texto", reasoningLevels: [], defaultReasoningLevel: null },
@@ -34,23 +75,24 @@ describe("WebSearchSettings", () => {
     expect(screen.queryByRole("option", { name: "Texto" })).not.toBeInTheDocument();
   });
 
-  it("oferece geração desligada ou Antigravity, com modelo fixo e sem herdar", async () => {
+  it("oferece geração desligada e contas ativas, sem herdar do chat", async () => {
     invokeMock.mockImplementation(async (command, args) => command === "set_image_generation_config" ? args : { accountAlias: null, model: null, inheritChat: false });
     const user = userEvent.setup();
     render(<WebSearchSettings kind="image_generation" accounts={[account("google", "antigravity"), account("codex"), { ...account("inativa", "antigravity"), enabled: false }]} />);
     const select = await screen.findByRole("combobox", { name: "Provedor de Gerar imagens" });
     expect(select).toHaveTextContent("Desligado");
     expect(screen.getByRole("combobox", { name: "Modelo de Gerar imagens" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Modelo de Gerar imagens" })).toHaveTextContent("Gemini 3.1 Flash Image");
-    await user.click(select);
+    select.focus();
+    await user.keyboard("{Enter}");
     expect(screen.queryByRole("option", { name: "Herdar do chat" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "codex" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "codex" })).toBeVisible();
     expect(screen.queryByRole("option", { name: "inativa" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("option", { name: "google" }));
     await waitFor(() => expect(select).toHaveTextContent("google"));
     expect(invokeMock).toHaveBeenCalledWith("set_image_generation_config", { accountAlias: "google", model: "gemini-3.1-flash-image", inheritChat: false });
     await waitFor(() => expect(select).toBeEnabled());
-    await user.click(select);
+    select.focus();
+    await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("option", { name: "Desligado" }));
     await waitFor(() => expect(select).toHaveTextContent("Desligado"));
   });

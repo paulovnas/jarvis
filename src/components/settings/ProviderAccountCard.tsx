@@ -60,18 +60,21 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
     return () => { active = false; };
   }, [open]);
   const custom = account.providerKind === "custom";
-  const keyProvider = account.providerKind === "opencode-go" || account.providerKind === "charm-hyper";
+  const manualModels = custom || account.providerKind === "openrouter";
+  const keyProvider = account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" || account.providerKind === "openrouter";
   const summaryId = useId();
-  const activeModels = enabledModels(account);
+  const models = manualModels && account.custom ? account.custom.models : account.models;
+  const activeModels = models.filter(model => !account.disabledModels?.includes(model.id) && (!("supportsChat" in model) || model.supportsChat || model.supportsImageGeneration));
   const activeModelIds = new Set(activeModels.map(model => model.id));
+  const chatModelIds = new Set(enabledModels(account).map(model => model.id));
   const affectedAgents = account.modelsAvailable ? (references ?? []).filter(reference =>
     reference.choice.account === account.alias
     && (reference.kind === "builtin_agent" || reference.kind === "custom_agent")
-    && !activeModelIds.has(reference.choice.model),
+    && !chatModelIds.has(reference.choice.model),
   ) : [];
   const modelSummary = !account.enabled ? "Desativada" : !account.modelsAvailable
     ? "Modelos indisponíveis"
-    : account.models.length === 0
+    : models.length === 0
       ? "Nenhum modelo"
       : `${activeModels.length} ${activeModels.length === 1 ? "modelo ativo" : "modelos ativos"}`;
 
@@ -154,18 +157,18 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="text-xs font-medium text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{account.models.length}</Badge></div>{!custom && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
-            <p className="text-xs leading-5 text-muted-foreground">{custom ? "Escolha quais modelos cadastrados neste endpoint poderão ser usados. Para mudar o catálogo, edite a conta Custom." : "A consulta pode demorar. Modelos novos são ativados automaticamente. Modelos retirados pelo provedor deixam de aparecer; agentes que ainda os usam precisam de outro modelo."}</p>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="text-xs font-medium text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{models.length}</Badge></div>{!manualModels && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
+            <p className="text-xs leading-5 text-muted-foreground">{manualModels ? "Escolha quais modelos cadastrados neste endpoint poderão ser usados. Para mudar o catálogo, edite a conexão." : "A consulta pode demorar. Modelos novos são ativados automaticamente. Modelos retirados pelo provedor deixam de aparecer; agentes que ainda os usam precisam de outro modelo."}</p>
             {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
               <p className="text-muted-foreground">Não foi possível consultar os modelos agora.</p>
-            ) : account.models.length === 0 ? (
-              <p className="text-muted-foreground">{custom ? "Nenhum modelo cadastrado." : "A assinatura não retornou modelos."}</p>
+            ) : models.length === 0 ? (
+              <p className="text-muted-foreground">{manualModels ? "Nenhum modelo cadastrado." : "A assinatura não retornou modelos."}</p>
             ) : (
               <div className="min-w-0 divide-y divide-border/70 rounded-md border border-border/70">
-                {account.models.map((model) => (
+                {models.map((model) => (
                   <div key={model.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs">
-                    <span className="min-w-0 flex-1"><span className="block break-words font-medium text-foreground">{model.name}</span><span className="block break-all font-mono text-[10px] text-muted-foreground">{model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}</span></span>
-                    <Switch aria-label={`Disponibilizar ${model.name}`} checked={activeModelIds.has(model.id)} disabled={saving || refreshing || !onModelEnabledChange} onCheckedChange={enabled => onModelEnabledChange?.(account.alias, model.id, enabled)} className="cursor-pointer" />
+                    <span className="min-w-0 flex-1"><span className="block break-words font-medium text-foreground">{model.name}</span><span className="block break-all font-mono text-[10px] text-muted-foreground">{model.id}{model.contextWindow ? ` · ${model.contextWindow.toLocaleString("pt-BR")} tokens` : ""}</span>{"supportsImageGeneration" in model && model.supportsImageGeneration && <Badge variant="outline" className="mt-1 text-[10px]">Geração de imagens</Badge>}</span>
+                    <Switch aria-label={`Disponibilizar ${model.name}`} checked={activeModelIds.has(model.id)} disabled={saving || refreshing || !onModelEnabledChange || ("supportsChat" in model && !model.supportsChat && !model.supportsImageGeneration)} onCheckedChange={enabled => onModelEnabledChange?.(account.alias, model.id, enabled)} className="cursor-pointer" />
                   </div>
                 ))}
               </div>
@@ -181,7 +184,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
           </label>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {!custom && !keyProvider && onReauthorize && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onReauthorize(account); }}><RefreshCw aria-hidden="true" data-icon="inline-start" />Re-autorizar</Button>}
-          {(custom || keyProvider) && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />{keyProvider ? "Atualizar chave" : "Editar"}</Button>}
+          {(custom || keyProvider) && <Button type="button" variant="outline" size="sm" disabled={saving} className="cursor-pointer" onClick={() => { setOpen(false); onEdit?.(account); }}><Pencil data-icon="inline-start" />{keyProvider && !manualModels ? "Atualizar chave" : "Editar"}</Button>}
           <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => onDisconnect(account.alias)} className="cursor-pointer">
             <Unplug aria-hidden="true" data-icon="inline-start" />
             Desconectar

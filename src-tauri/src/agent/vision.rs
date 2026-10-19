@@ -32,7 +32,10 @@ fn supports_account(state: &AppState, home: &Path, alias: &str, model: &str) -> 
                                 .iter()
                                 .any(|item| item.id == model && item.supports_images)
                         })
-                } else if matches!(account.provider_kind.as_str(), "custom" | "charm-hyper") {
+                } else if matches!(
+                    account.provider_kind.as_str(),
+                    "custom" | "charm-hyper" | "openrouter"
+                ) {
                     crate::openai_codex::custom::load(state, home, alias).is_ok_and(|config| {
                         config
                             .models
@@ -84,7 +87,7 @@ pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> b
 fn save(state: &AppState, home: &Path, config: Config) -> Result<Config, AgentError> {
     state.with_connection(home, |connection| {
         if let Some(alias) = &config.account_alias {
-            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
+            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
             if !enabled { return Err(invalid("Selecione uma conta ativa compatível com Vision.")); }
         }
         connection.execute("INSERT INTO vision_config (id, account_alias, model, inherit_chat) VALUES (1, ?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat", params![config.account_alias, config.model, config.inherit_chat]).map_err(|_| AgentError::storage())?;

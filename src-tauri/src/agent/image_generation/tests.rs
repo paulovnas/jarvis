@@ -24,6 +24,179 @@ fn account(state: &AppState, home: &Path, alias: &str, kind: &str) {
 }
 
 #[test]
+fn image_selection_persists_codex_model_independently_of_chat_catalog() {
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    account(&state, home.path(), "codex", "openai-codex");
+    let config = save_selection(
+        &state,
+        home.path(),
+        Some("codex".into()),
+        Some("gpt-image-2".into()),
+    )
+    .unwrap();
+    assert_eq!(config.model.as_deref(), Some("gpt-image-2"));
+    assert_eq!(load(&state, home.path()).unwrap().model, config.model);
+    assert!(enabled(&state, home.path()));
+    assert!(save_selection(
+        &state,
+        home.path(),
+        Some("codex".into()),
+        Some("gpt-text".into())
+    )
+    .is_err());
+    assert_eq!(load(&state, home.path()).unwrap().model, config.model);
+}
+
+#[test]
+fn openrouter_generation_requires_a_registered_and_enabled_image_model() {
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    account(&state, home.path(), "router", "custom");
+    let model = "bytedance-seed/seedream-5-0-flash";
+    let mut config = json!({"baseUrl":"https://openrouter.ai/api/v1","protocol":"openai-completions","authMode":"bearer","tokenField":"max_tokens","models":[{"id":model,"name":"Meu Seedream","contextWindow":0,"maxOutputTokens":0,"supportsChat":false,"supportsImageGeneration":true,"supportsImages":true,"supportsTools":false,"reasoning":"none","reasoningLevels":[],"defaultReasoningLevel":null,"thinkingBudget":null}]});
+    let write = |config: &Value| {
+        state.with_connection(home.path(), |db| {
+        db.execute("INSERT INTO custom_provider_configs(alias,config) VALUES('router',?1) ON CONFLICT(alias) DO UPDATE SET config=excluded.config", [config.to_string()]).map_err(|_| AgentError::storage())?;
+        Ok::<_, AgentError>(())
+    }).unwrap()
+    };
+    write(&config);
+    save_selection(
+        &state,
+        home.path(),
+        Some("router".into()),
+        Some(model.into()),
+    )
+    .unwrap();
+    assert!(enabled(&state, home.path()));
+    assert!(save_selection(
+        &state,
+        home.path(),
+        Some("router".into()),
+        Some("bytedance-seed/seedream-5-0-lite".into())
+    )
+    .is_err());
+    config["models"][0]["supportsImageGeneration"] = json!(false);
+    write(&config);
+    assert!(!enabled(&state, home.path()));
+    assert!(save_selection(
+        &state,
+        home.path(),
+        Some("router".into()),
+        Some(model.into())
+    )
+    .is_err());
+    assert_eq!(
+        load(&state, home.path()).unwrap().model.as_deref(),
+        Some(model)
+    );
+}
+
+#[test]
+fn subscription_and_openrouter_image_requests_use_owned_references_and_separate_routes() {
+    let credential: CodexCredential = serde_json::from_value(json!({"version":1,"access":"secret","refresh":"test","expires":9999999999999u64,"accountId":"subscription"})).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let owner = "a".repeat(32);
+    let image = attachments::store(home.path(), &owner, "reference.png", &png()).unwrap();
+    let args =
+        arguments(&json!({"prompt":"Recolorir","aspect_ratio":"16:9","image_ids":[image.id]}))
+            .unwrap();
+    let request = api_request(
+        &reqwest::Client::new(),
+        &credential,
+        "gpt-image-2",
+        home.path(),
+        &owner,
+        &args,
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    assert_eq!(
+        request.url().as_str(),
+        "https://chatgpt.com/backend-api/codex/images/edits"
+    );
+    assert_eq!(request.headers()["chatgpt-account-id"], "subscription");
+    let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+    assert_eq!(body["model"], "gpt-image-2");
+    assert!(body["images"][0]["image_url"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    assert!(api_request(
+        &reqwest::Client::new(),
+        &credential,
+        "gpt-image-2",
+        home.path(),
+        &"b".repeat(32),
+        &args
+    )
+    .is_err());
+    let mut credential = credential;
+    let config = serde_json::from_value(json!({"baseUrl":"https://openrouter.ai/api/v1","protocol":"openai-completions","authMode":"bearer","tokenField":"max_tokens","models":[]})).unwrap();
+    credential.custom = Some(config);
+    let request = api_request(
+        &reqwest::Client::new(),
+        &credential,
+        "bytedance-seed/seedream-5-0-lite",
+        home.path(),
+        &owner,
+        &args,
+    )
+    .unwrap()
+    .build()
+    .unwrap();
+    assert_eq!(
+        request.url().as_str(),
+        "https://openrouter.ai/api/v1/images"
+    );
+    assert!(request.headers().get("chatgpt-account-id").is_none());
+    let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+    assert_eq!(body["response_format"], "b64_json");
+    assert_eq!(body["n"], 1);
+    assert_eq!(body["aspect_ratio"], "16:9");
+    assert!(body["input_references"][0]["image_url"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    credential.custom.as_mut().unwrap().base_url =
+        "https://openrouter.ai.evil.example/api/v1".into();
+    assert!(api_request(
+        &reqwest::Client::new(),
+        &credential,
+        "model",
+        home.path(),
+        &owner,
+        &args
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn json_image_responses_are_bounded_sanitized_and_do_not_fetch_remote_urls() {
+    let body = json!({"data":[{"b64_json":STANDARD.encode(png())}]}).to_string();
+    let (_send, signal) = watch::channel(false);
+    let output = receive_api(fixture_response(body, 200).await, signal)
+        .await
+        .unwrap();
+    assert_eq!(output.images, vec![png()]);
+    for body in [
+        json!({"data":[]}),
+        json!({"data":[{"url":"http://127.0.0.1/private"}]}),
+        json!({"error":{"message":"secret"}}),
+        json!({"data":[{"b64_json":"bad"}]}),
+    ] {
+        let (_send, signal) = watch::channel(false);
+        let error = receive_api(fixture_response(body.to_string(), 200).await, signal)
+            .await
+            .err()
+            .unwrap();
+        assert!(!error.message.contains("secret"));
+    }
+}
+
+#[test]
 fn settings_default_to_off_and_only_enable_active_antigravity() {
     let home = tempfile::tempdir().unwrap();
     let state = AppState::default();
@@ -113,7 +286,7 @@ fn output_persists_images_without_binary_payloads_or_private_thoughts() {
     assert_eq!(output.images.len(), 1);
     let home = tempfile::tempdir().unwrap();
     let conversation = "a".repeat(32);
-    let raw = persist(home.path(), &conversation, "google", output).unwrap();
+    let raw = persist(home.path(), &conversation, "google", MODEL, output).unwrap();
     assert!(!raw.contains("base64") && !raw.contains("private thought") && !raw.contains("secret"));
     let result: Value = serde_json::from_str(&raw).unwrap();
     let id = result["images"][0]["id"].as_str().unwrap();
@@ -171,7 +344,7 @@ fn partial_paid_output_keeps_confirmed_images_and_merges_recovery_receipts() {
         finished: true,
         ..Output::default()
     };
-    let cause = persist(home.path(), &owner, "google", output).unwrap_err();
+    let cause = persist(home.path(), &owner, "google", MODEL, output).unwrap_err();
     let result: Value = serde_json::from_str(cause.tool_result.as_deref().unwrap()).unwrap();
     let id = result["sourceImageIds"][0].as_str().unwrap();
     assert!(attachments::metadata(home.path(), &owner, id).is_ok());

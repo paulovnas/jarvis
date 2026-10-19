@@ -57,7 +57,7 @@ export function AssistantMessageTurn({ message, onRetry, retrying = false, retry
   </header>;
   return (
     <article data-testid={`assistant-message-${message.id}`} className="my-5 flex min-w-0 flex-col gap-2">
-      {message.work ? <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} streamId={message.id} renderHeader={header} /> : header()}
+      {message.work ? <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} hasError={Boolean(message.error)} streamId={message.id} renderHeader={header} /> : header()}
       {message.work && message.content && !message.streaming && <Separator aria-label="Resposta" />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image" || tool.name === "image_process").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot" || tool.name.startsWith("computer_")).map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}

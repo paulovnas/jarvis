@@ -118,6 +118,7 @@ mod tests {
             windows: vec![],
             reset_credits: None,
             credit_balance: Some(173.5),
+            openrouter: None,
             error: None,
         }
     }

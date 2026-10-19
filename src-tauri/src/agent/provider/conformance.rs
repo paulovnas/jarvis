@@ -124,6 +124,8 @@ fn custom_config(protocol: Protocol) -> Config {
             context_window: 128_000,
             max_output_tokens: 4_000,
             supports_images: true,
+            supports_chat: true,
+            supports_image_generation: false,
             supports_tools: true,
             reasoning: Reasoning::None,
             reasoning_levels: vec![],

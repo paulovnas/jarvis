@@ -2078,6 +2078,7 @@ fn unavailable(alias: String, message: String) -> AccountUsage {
         windows: vec![],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: Some(message),
     }
 }
@@ -2094,7 +2095,11 @@ async fn refresh_usage(app: &tauri::AppHandle) -> Vec<CompanionUsage> {
                     && account.show_usage
                     && matches!(
                         account.provider_kind.as_str(),
-                        "openai-codex" | "antigravity" | "opencode-go" | "charm-hyper"
+                        "openai-codex"
+                            | "antigravity"
+                            | "opencode-go"
+                            | "charm-hyper"
+                            | "openrouter"
                     )
             }) {
                 let app = app.clone();

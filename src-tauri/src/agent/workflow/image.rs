@@ -26,6 +26,99 @@ pub(in crate::agent) fn specialist_tools(
 }
 
 impl Execution {
+    pub(in crate::agent) fn ensure_image_generation_ready(&self) -> Result<(), AgentError> {
+        let jobs: Vec<_> = {
+            let state = self
+                .hub
+                .manifest
+                .lock()
+                .map_err(|_| AgentError::internal())?;
+            state
+                .jobs
+                .values()
+                .filter(|job| job.run_id == state.run_id)
+                .cloned()
+                .collect()
+        };
+        let mut generated_sources = Vec::new();
+        let mut processing_errors = Vec::new();
+        for job in jobs {
+            let path = self.hub.directory.join(format!("{}.jsonl", job.id));
+            if job.status == Status::Queued
+                && !path.try_exists().map_err(|_| AgentError::storage())?
+            {
+                continue;
+            }
+            let turns = journal::read_only(&path)?.0;
+            for (turn, tool) in turns
+                .iter()
+                .flat_map(|turn| {
+                    turn.turn
+                        .steps
+                        .iter()
+                        .flat_map(|step| &step.tools)
+                        .map(move |tool| (turn, tool))
+                })
+                .filter(|(_, tool)| tool.name == "generate_image")
+            {
+                let receipt = super::super::image_generation::tool_receipt(turn, tool);
+                let unknown = receipt
+                    .as_ref()
+                    .is_some_and(|value| value["error"]["code"] == "image_outcome_unknown")
+                    || (matches!(
+                        job.status,
+                        Status::Failed | Status::Interrupted | Status::Blocked
+                    ) && (tool.output == journal::UNKNOWN_TOOL_OUTPUT
+                        || matches!(tool.status.as_str(), "pending" | "running")));
+                if unknown {
+                    let mut error = super::super::image_generation::uncertain("Uma geração deste pedido não foi confirmada. Confira o histórico do provedor; somente um novo pedido explícito pode autorizar outra geração.");
+                    if let Some(receipt) =
+                        receipt.filter(|value| value["error"]["code"] == "image_outcome_unknown")
+                    {
+                        error.tool_result = Some(receipt.to_string());
+                    }
+                    return Err(error);
+                }
+                if let Some(receipt) = receipt {
+                    generated_sources.extend(
+                        receipt["sourceImageIds"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .cloned(),
+                    );
+                    generated_sources.extend(
+                        receipt["images"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|image| image.get("id").cloned()),
+                    );
+                }
+            }
+            if let Some(receipt) = image_result(&turns, &job)
+                .err()
+                .and_then(|error| error.tool_result)
+                .and_then(|receipt| serde_json::from_str::<Value>(&receipt).ok())
+                .filter(|receipt| {
+                    receipt["error"].is_object() && receipt["sourceImageIds"].is_array()
+                })
+            {
+                processing_errors.push(receipt);
+            }
+        }
+        if let Some(receipt) = processing_errors.into_iter().find(|receipt| {
+            receipt["sourceImageIds"]
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|id| generated_sources.contains(id)))
+        }) {
+            let mut error = AgentError::new("image_processing", "As imagens originais já foram geradas. Recupere o processamento ou a exportação com image_process, sem repetir a geração paga.");
+            error.tool_result = Some(receipt.to_string());
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(in crate::agent) async fn delegate_image(
         &self,
         session: &Session,
@@ -35,10 +128,14 @@ impl Execution {
         if *signal.borrow() || *self.hub.root_signal.borrow() {
             return Err(AgentError::cancelled());
         }
+        if (self.flow == Flow::Custom && !self.direct()) || !self.allowed("generate_image") {
+            return Err(invalid("A delegação ao Gerador de imagens está indisponível para esta etapa. Use as ferramentas disponíveis ou uma rota para um nó configurado no fluxo."));
+        }
         let job = if let Some((job, continuation)) = resume_confirmed_image(self, args)? {
             dispatch::launch(self.hub.clone(), job.clone(), Some(continuation))?;
             job
         } else {
+            self.ensure_image_generation_ready()?;
             let (job, created) = dispatch::image_job(self, args)?;
             if created {
                 dispatch::launch(self.hub.clone(), job.clone(), None)?;
@@ -95,6 +192,16 @@ fn resume_confirmed_image(
         .err()
         .and_then(|error| error.tool_result)
         .and_then(|receipt| serde_json::from_str::<Value>(&receipt).ok());
+    if let Some(receipt) = receipt.as_ref().filter(|receipt| {
+        receipt["error"]["code"] == "image_outcome_unknown"
+            && !receipt["sourceImageIds"]
+                .as_array()
+                .is_some_and(|ids| !ids.is_empty() && ids.len() <= 4)
+    }) {
+        let mut error = AgentError::new("image_outcome_unknown", "A geração anterior não foi confirmada. Confira o histórico do provedor; somente um novo pedido explícito pode autorizar outra geração.");
+        error.tool_result = Some(receipt.to_string());
+        return Err(error);
+    }
     let Some(receipt) = receipt.filter(|receipt| {
         receipt["sourceImageIds"]
             .as_array()
@@ -149,15 +256,17 @@ fn image_result(turns: &[StoredTurn], job: &Job) -> Result<Value, AgentError> {
     let mut result = None;
     let mut assets: Vec<ImageAsset> = Vec::new();
     let mut recovery = None;
-    for tool in turns
-        .iter()
-        .flat_map(|turn| &turn.turn.steps)
-        .flat_map(|step| &step.tools)
-    {
+    for (turn, tool) in turns.iter().flat_map(|turn| {
+        turn.turn
+            .steps
+            .iter()
+            .flat_map(|step| &step.tools)
+            .map(move |tool| (turn, tool))
+    }) {
         if !matches!(tool.name.as_str(), "generate_image" | "image_process") {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<Value>(&tool.output) else {
+        let Some(value) = super::super::image_generation::tool_receipt(turn, tool) else {
             continue;
         };
         if tool.status == "error" && value.is_object() {

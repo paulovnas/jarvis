@@ -54,6 +54,7 @@ fn empty() -> AccountUsage {
         windows: vec![],
         reset_credits: None,
         credit_balance: None,
+        openrouter: None,
         error: None,
     }
 }

@@ -3,6 +3,7 @@ import { customConfigSchema, type CustomConfig } from "./custom-provider";
 export const providerKindLabels: Record<string, string> = {
   "openai-codex": "OpenAI Codex", antigravity: "Antigravity", custom: "Custom",
   "opencode-go": "OpenCode Go", "charm-hyper": "Charm Hyper", "claude-code": "Claude Code", "muse-code": "Muse Code",
+  openrouter: "OpenRouter",
 };
 
 export type ProviderModel = {
@@ -34,6 +35,7 @@ export type ProviderAccount = {
   accountType: "personal" | "enterprise" | "unknown";
   models: ProviderModel[];
   visionModels?: string[];
+  imageModels?: ProviderModel[];
   modelsAvailable: boolean;
   modelsStale?: boolean;
   disabledModels?: string[];
@@ -102,6 +104,7 @@ function isProviderAccount(value: unknown): value is ProviderAccount {
     account.models.every(isProviderModel) &&
     (account.disabledModels === undefined || (Array.isArray(account.disabledModels) && account.disabledModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
     (account.visionModels === undefined || (Array.isArray(account.visionModels) && account.visionModels.every((id: unknown) => typeof id === "string" && id.length > 0))) &&
+    (account.imageModels === undefined || (Array.isArray(account.imageModels) && account.imageModels.every(isProviderModel))) &&
     typeof account.modelsAvailable === "boolean"
     && (account.modelsStale === undefined || typeof account.modelsStale === "boolean")
   );

@@ -12,7 +12,7 @@ import { useClaudeRuntime } from "@/hooks/use-claude-runtime";
 import { useMuseRuntime } from "@/hooks/use-muse-runtime";
 import { FreeGoModels } from "./FreeGoModels";
 import { providerDisplayName, providerKindLabels, type ProviderAccount } from "@/core/provider-accounts";
-import { planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, type UsageWindow } from "@/core/provider-usage";
+import { planLabel, remainingTime, quotaColor, quotaPercent, quotaReserve, expectedQuotaRemaining, usdBalance, type UsageWindow } from "@/core/provider-usage";
 
 export function WindowBar({ window, now, stale }: { window: UsageWindow; now: number; stale: boolean }) {
   const reset = remainingTime(window.resetsAt, now);
@@ -31,19 +31,19 @@ export function WindowBar({ window, now, stale }: { window: UsageWindow; now: nu
   </div>;
 }
 
-export function ClaudeUsage({ now }: { now: number }) {
+export function ClaudeUsage({ now, presentation, inactive }: { now: number; presentation?: "compact" | "details"; inactive?: boolean }) {
   const { data: runtime } = useClaudeRuntime();
   if (!runtime?.installed || !runtime.authenticated || runtime.preferences?.enabled === false || runtime.preferences?.showUsage === false) return null;
-  return <ProviderUsage key={`${runtime.email}/${runtime.authMethod}`} now={now} account={{ alias: "Claude Code", providerKind: "claude-code", email: runtime.email ?? null, accountType: "unknown", showFiveHourUsage: runtime.preferences?.showFiveHourUsage, showWeeklyUsage: runtime.preferences?.showWeeklyUsage }} />;
+  return <ProviderUsage key={`${runtime.email}/${runtime.authMethod}`} now={now} presentation={presentation} inactive={inactive} account={{ alias: "Claude Code", providerKind: "claude-code", email: runtime.email ?? null, accountType: "unknown", showFiveHourUsage: runtime.preferences?.showFiveHourUsage, showWeeklyUsage: runtime.preferences?.showWeeklyUsage }} />;
 }
 
-export function MuseUsage({ now }: { now: number }) {
+export function MuseUsage({ now, presentation, inactive }: { now: number; presentation?: "compact" | "details"; inactive?: boolean }) {
   const { data: runtime } = useMuseRuntime();
   if (!runtime?.installed || !runtime.authenticated || runtime.preferences?.enabled === false || runtime.preferences?.showUsage === false) return null;
-  return <ProviderUsage key={`${runtime.email}/${runtime.authMethod}`} now={now} account={{ alias: "Muse Code", providerKind: "muse-code", email: runtime.email ?? null, accountType: "unknown", showFiveHourUsage: runtime.preferences?.showFiveHourUsage, showWeeklyUsage: runtime.preferences?.showWeeklyUsage }} />;
+  return <ProviderUsage key={`${runtime.email}/${runtime.authMethod}`} now={now} presentation={presentation} inactive={inactive} account={{ alias: "Muse Code", providerKind: "muse-code", email: runtime.email ?? null, accountType: "unknown", showFiveHourUsage: runtime.preferences?.showFiveHourUsage, showWeeklyUsage: runtime.preferences?.showWeeklyUsage }} />;
 }
 
-export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount, "alias" | "displayName" | "providerKind" | "email" | "accountType" | "usageAlert" | "showThirdPartyUsage" | "showFiveHourUsage" | "showWeeklyUsage">; now: number }) {
+export function ProviderUsage({ account, now, presentation = "compact", inactive = false }: { presentation?: "compact" | "details"; inactive?: boolean; account: Pick<ProviderAccount, "alias" | "displayName" | "providerKind" | "email" | "accountType" | "usageAlert" | "showThirdPartyUsage" | "showFiveHourUsage" | "showWeeklyUsage">; now: number }) {
   const claude = account.providerKind === "claude-code";
   const muse = account.providerKind === "muse-code";
   const { data, error } = useProviderUsage(account.alias, { pollWhileHidden: Boolean(account.usageAlert), source: claude ? "claude" : muse ? "muse" : "account" });
@@ -63,8 +63,22 @@ export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount,
   const credits = data?.resetCredits;
   const balance = data?.creditBalance;
   const name = providerDisplayName(account);
-  return <Popover>
-    <PopoverTrigger render={<Button variant="ghost" />} aria-label={`Limites de ${name}`} openOnHover delay={250} closeDelay={150} className="h-6 shrink-0 cursor-pointer gap-1.5 rounded-sm px-2 font-mono text-[10px] font-normal tabular-nums">
+  const details = <>
+      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? name}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{claude ? "Claude Code · CLI local" : muse ? "Muse Code · Assinatura" : `${providerKindLabels[account.providerKind] ?? account.providerKind} · ${name}`}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
+      {!data && !error && <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-5" /><Skeleton className="h-2" /><Skeleton className="h-5" /><Skeleton className="h-2" /></div>}
+      {failed && <p role="status" className="mb-3 text-[11px] text-onedark-yellow">{data?.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
+      {(claude || muse) && data?.error && <p className="mb-3 text-xs text-muted-foreground">{data.error}</p>}
+      {data && !windows.length && balance == null && !data.openrouter && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
+      {balance != null && <dl className="mb-4 flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">{account.providerKind === "openrouter" ? "Disponível para esta chave" : "Hypercredits"}</dt><dd className="font-mono tabular-nums">{account.providerKind === "openrouter" ? usdBalance(balance) : balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
+      {data?.openrouter && <div className="mb-4 space-y-2 text-xs">{data.openrouter.accountBalance != null && <dl className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Saldo da conta</dt><dd className="font-mono tabular-nums">{usdBalance(data.openrouter.accountBalance)}</dd></dl>}{data.openrouter.keyLimitRemaining != null && <dl className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">Limite de gasto restante da chave</dt><dd className="font-mono tabular-nums">{usdBalance(data.openrouter.keyLimitRemaining)}</dd></dl>}{data.openrouter.note && <p className="text-xs leading-5 text-muted-foreground">{data.openrouter.note}</p>}</div>}
+      <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><Hint content={group} whenTruncated><h3 className="micro-label truncate text-muted-foreground">{group}</h3></Hint>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
+      {credits && <section className="mt-4 border-t border-border pt-3"><div className="flex items-center justify-between text-xs"><span>Resets disponíveis</span><span className="font-mono text-primary">{credits.availableCount}</span></div>{credits.availableCount > 0 && <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">{credits.detailsAvailable && credits.expirations.length ? credits.expirations.map((expiry, index) => <p key={index}>{expiry ? `Expira em ${new Date(expiry).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "Validade não informada"}</p>) : <p>Validade indisponível</p>}</div>}</section>}
+      {account.providerKind === "opencode-go" && <FreeGoModels />}
+      {data?.fetchedAt && <p className="mt-4 font-mono text-[9px] text-muted-foreground/70">Atualizado às {new Date(data.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>}
+    </>;
+  if (presentation === "details") return <section aria-label={`Limites de ${name}`} className="min-w-0 rounded-lg border border-border bg-card p-3">{details}</section>;
+  return <Popover key={inactive ? "inactive" : "active"} open={inactive ? false : undefined}>
+    <PopoverTrigger render={<Button variant="ghost" />} aria-label={`Limites de ${name}`} disabled={inactive} openOnHover delay={250} closeDelay={150} className="h-6 shrink-0 cursor-pointer gap-1.5 rounded-sm px-2 font-mono text-[10px] font-normal tabular-nums">
       <ProviderIcon kind={account.providerKind} />
       <span className="max-w-24 truncate" title={name}>{name}</span>
       {!data && !error ? <Skeleton aria-label={`Carregando limites de ${name}`} className="h-3 w-28" /> : compact.length ? compact.slice(0, 4).map((window, index) => <span key={window.id} className="flex items-center gap-1">
@@ -73,21 +87,10 @@ export function ProviderUsage({ account, now }: { account: Pick<ProviderAccount,
         <span className="text-muted-foreground">{window.label}</span><span style={{ color: quotaColor(window.remainingPercent) }}>{quotaPercent(window.remainingPercent)}</span>
         {window.resetsAt !== null && <span className="text-muted-foreground">({remainingTime(window.resetsAt, now)})</span>}
       </span>) : balance == null ? <span className="text-muted-foreground">—</span> : null}
-      {balance != null && <span className="text-muted-foreground">{balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })} Hypercredits</span>}
+      {balance != null && <span className="text-muted-foreground">{account.providerKind === "openrouter" ? usdBalance(balance) : `${balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })} Hypercredits`}</span>}
       {compact.length > 4 && <span className="text-muted-foreground">+{compact.length - 4}</span>}
       {failed && <AlertCircle aria-label="Limites desatualizados" className="size-3 text-onedark-yellow" />}
     </PopoverTrigger>
-    <PopoverContent aria-label={`Limites de ${name}`} initialFocus={false} side="top" align="end" sideOffset={10} className="dark instrument-panel max-h-[70vh] w-[360px] max-w-[90vw] overflow-y-auto bg-card p-4 gap-0 text-foreground">
-      <div className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3"><div className="min-w-0"><p className="truncate text-xs font-medium">{data?.email ?? account.email ?? name}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{claude ? "Claude Code · CLI local" : muse ? "Muse Code · Assinatura" : `${providerKindLabels[account.providerKind] ?? account.providerKind} · ${name}`}</p></div><Badge variant="outline" className="max-w-36 shrink-0 truncate text-[10px]">{planLabel(data?.plan, account.accountType)}</Badge></div>
-      {!data && !error && <div role="status" aria-label="Carregando limites" className="space-y-4"><Skeleton className="h-5" /><Skeleton className="h-2" /><Skeleton className="h-5" /><Skeleton className="h-2" /></div>}
-      {failed && <p role="status" className="mb-3 text-[11px] text-onedark-yellow">{data?.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
-      {(claude || muse) && data?.error && <p className="mb-3 text-xs text-muted-foreground">{data.error}</p>}
-      {data && !windows.length && balance == null && !failed && <p className="text-xs text-muted-foreground">Nenhuma janela informada.</p>}
-      {balance != null && <dl className="mb-4 flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">Hypercredits</dt><dd className="font-mono tabular-nums">{balance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
-      <div className={`grid gap-5 ${groups.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>{groups.map(group => <section key={group} className="min-w-0 space-y-4"><Hint content={group} whenTruncated><h3 className="micro-label truncate text-muted-foreground">{group}</h3></Hint>{windows.filter(window => window.group === group).map(window => <WindowBar key={window.id} window={window} now={now} stale={Boolean(failed) || !data?.fetchedAt || now - data.fetchedAt > 5 * 60_000} />)}</section>)}</div>
-      {credits && <section className="mt-4 border-t border-border pt-3"><div className="flex items-center justify-between text-xs"><span>Resets disponíveis</span><span className="font-mono text-primary">{credits.availableCount}</span></div>{credits.availableCount > 0 && <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">{credits.detailsAvailable && credits.expirations.length ? credits.expirations.map((expiry, index) => <p key={index}>{expiry ? `Expira em ${new Date(expiry).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}` : "Validade não informada"}</p>) : <p>Validade indisponível</p>}</div>}</section>}
-      {account.providerKind === "opencode-go" && <FreeGoModels />}
-      {data?.fetchedAt && <p className="mt-4 font-mono text-[9px] text-muted-foreground/70">Atualizado às {new Date(data.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</p>}
-    </PopoverContent>
+    <PopoverContent aria-label={`Limites de ${name}`} initialFocus={false} side="top" align="end" sideOffset={10} className="dark instrument-panel max-h-[70vh] w-[360px] max-w-[90vw] overflow-y-auto bg-card p-4 gap-0 text-foreground">{details}</PopoverContent>
   </Popover>;
 }

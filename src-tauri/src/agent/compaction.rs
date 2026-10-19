@@ -961,6 +961,8 @@ mod tests {
                 name: "MiniMax M3".into(),
                 context_window: 512_000,
                 max_output_tokens: 512_000,
+                supports_chat: true,
+                supports_image_generation: false,
                 supports_images: true,
                 supports_tools: true,
                 reasoning: Reasoning::None,

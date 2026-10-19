@@ -48,12 +48,19 @@ pub(crate) struct Model {
     pub name: String,
     pub context_window: u64,
     pub max_output_tokens: u64,
+    #[serde(default = "chat_default")]
+    pub supports_chat: bool,
+    #[serde(default)]
+    pub supports_image_generation: bool,
     pub supports_images: bool,
     pub supports_tools: bool,
     pub reasoning: Reasoning,
     pub reasoning_levels: Vec<String>,
     pub default_reasoning_level: Option<String>,
     pub thinking_budget: Option<u64>,
+}
+fn chat_default() -> bool {
+    true
 }
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -146,9 +153,20 @@ impl Config {
                     "Cada modelo precisa de um ID literal único, sem caracteres de controle, e um nome de exibição.",
                 ));
             }
-            if !(4096..=100_000_000).contains(&model.context_window)
-                || model.max_output_tokens == 0
+            if model.supports_image_generation && !super::image_models::is_openrouter(self) {
+                return Err(invalid("A geração de imagens em provedores Custom está disponível para o OpenRouter com autenticação Bearer."));
+            }
+            if !model.supports_chat && (model.supports_tools || model.reasoning != Reasoning::None)
+            {
+                return Err(invalid(
+                    "Modelos sem chat não usam ferramentas nem raciocínio de chat.",
+                ));
+            }
+            // Zero means not applicable for image-only models, never an inferred chat limit.
+            if model.context_window > 100_000_000
                 || model.max_output_tokens > 10_000_000
+                || model.supports_chat
+                    && (model.context_window < 4096 || model.max_output_tokens == 0)
             {
                 return Err(invalid("Informe contexto de 4.096 a 100.000.000 tokens e saída de 1 a 10.000.000 tokens, conforme os limites da API."));
             }
@@ -231,6 +249,7 @@ impl Config {
     pub(crate) fn catalog(&self) -> Vec<ProviderModel> {
         self.models
             .iter()
+            .filter(|model| model.supports_chat)
             .map(|m| ProviderModel {
                 supports_fast: false,
                 id: m.id.clone(),
@@ -308,7 +327,32 @@ pub(super) fn save_provider(
     display_name: Option<&str>,
     kind: &str,
 ) -> Result<(), ProviderError> {
-    if !matches!(kind, "custom" | "charm-hyper") {
+    save_provider_with_balance(
+        connection,
+        store,
+        alias,
+        config,
+        api_key,
+        editing,
+        display_name,
+        kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn save_provider_with_balance(
+    connection: &mut Connection,
+    store: &dyn SecretStore,
+    alias: &str,
+    config: &Config,
+    api_key: Option<&str>,
+    editing: bool,
+    display_name: Option<&str>,
+    kind: &str,
+    balance_key: Option<Option<&str>>,
+) -> Result<(), ProviderError> {
+    if !matches!(kind, "custom" | "charm-hyper" | "openrouter") {
         return Err(ProviderError::internal());
     }
     validate_alias(alias)?;
@@ -357,8 +401,26 @@ pub(super) fn save_provider(
             "{kind}:{}",
             crate::library::new_id().map_err(|_| ProviderError::internal())?
         ));
-    let next_credential =
-        key.map(|key| CodexCredential::new(key, "", i64::MAX, &account_id, None, None));
+    let next_credential = if key.is_some() || balance_key.is_some() {
+        let mut credential = if let Some(key) = key {
+            let mut next = CodexCredential::new(key, "", i64::MAX, &account_id, None, None);
+            if kind == "openrouter" && old_credential.as_ref().is_some_and(|old| old.access == key)
+            {
+                next.openrouter_balance_key = old_credential
+                    .as_ref()
+                    .and_then(|old| old.openrouter_balance_key.clone());
+            }
+            next
+        } else {
+            old_credential.clone().ok_or_else(ProviderError::internal)?
+        };
+        if let Some(key) = balance_key {
+            credential.openrouter_balance_key = key.map(str::to_owned);
+        }
+        Some(credential)
+    } else {
+        None
+    };
     let transaction = connection
         .transaction()
         .map_err(|_| ProviderError::database())?;
@@ -445,7 +507,7 @@ pub async fn save_custom_provider(
             .into_iter()
             .find(|record| record.alias == alias)
             .ok_or_else(ProviderError::database)?;
-        account(&state, &home, record)
+        super::attach_model_exclusions(&state, &home, account(&state, &home, record)?)
     })
     .await
     .map_err(|_| ProviderError::internal())?

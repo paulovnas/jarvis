@@ -667,6 +667,9 @@ impl Execution {
                     .custom_agent()
                     .is_ok_and(|agent| agent.native_role == Some(Role::ImageGenerator)))
     }
+    pub(super) fn local_image_generation(&self) -> bool {
+        self.image_generator() || (self.flow == Flow::Custom && !self.direct())
+    }
     pub(super) fn video_specialist(&self) -> bool {
         self.role == Role::Video
             || (self.flow == Flow::Custom
@@ -752,6 +755,9 @@ impl Execution {
         } else {
             contracts::prompt(self.flow, self.role, &self.id)
         };
+        if self.flow == Flow::Custom && !self.direct() {
+            text.push_str("\nUse only this step's advertised tools and the user's explicit provider constraints. When available, generate_image runs the configured native image account/model and processing pipeline within this configured step; it does not launch another agent. Return its confirmed results through hub_complete and the configured graph routes. Do not launch auxiliary agents outside the graph.\n");
+        }
         if !self.direct() {
             text.push_str(manual_validation_instructions(
                 self.flow,
@@ -968,6 +974,12 @@ impl Execution {
             return false;
         }
         if self.flow == Flow::Custom {
+            if matches!(name, "generate_image" | "image_process") && !self.direct() {
+                return self.custom_agent().is_ok_and(|agent| {
+                    agent.capability != catalog::Capability::ReadOnly
+                        && !agent.denied_tools.iter().any(|tool| tool == name)
+                });
+            }
             return self
                 .custom_agent()
                 .is_ok_and(|agent| custom::allowed(&agent, name));
@@ -1036,8 +1048,7 @@ impl Execution {
         {
             return Some("Aguarde o Construtor concluir a resolução com hub_wait antes de editar ou continuar a publicação.".into());
         }
-        if self.image_generator()
-            && matches!(tool.name.as_str(), "generate_image" | "image_process")
+        if matches!(tool.name.as_str(), "generate_image" | "image_process")
             && tool.args["processing"]["output_directory"]
                 .as_str()
                 .is_some_and(|path| {

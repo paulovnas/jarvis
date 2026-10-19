@@ -238,6 +238,7 @@ pub(super) fn body(
             plan_type: None,
             project_id: None,
             hyper_panel: None,
+            openrouter_balance_key: None,
             antigravity_models: Default::default(),
             antigravity_endpoint: None,
             custom: Some(config.clone()),
@@ -265,6 +266,9 @@ pub(super) fn body_with_capabilities(
     input: Vec<Value>,
     tools: Vec<Value>,
 ) -> Result<Value, AgentError> {
+    if !model.supports_chat {
+        return Err(super::protocol_error());
+    }
     let scope = scope(config, options);
     let tools = if capabilities.tools { tools } else { vec![] };
     let effort = options

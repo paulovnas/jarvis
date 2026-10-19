@@ -469,9 +469,11 @@ async fn search_cancellation_interrupts_the_confirmed_turn_before_killing_owned_
         .await
     });
     tokio::time::timeout(Duration::from_secs(5), async {
-        while !std::fs::read_to_string(&marker)
-            .unwrap_or_default()
-            .contains("turn/start")
+        while super::super::usage::latest(
+            root.path(),
+            &json!({"state":"accountLogin","label":"session-fixture"}),
+        )
+        .is_none()
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

@@ -159,6 +159,7 @@ pub(crate) fn command_allowed(label: &str, command: &str) -> bool {
                 | "set_vision_config"
                 | "get_image_generation_config"
                 | "set_image_generation_config"
+                | "refresh_image_generation_models"
                 | "get_browser_extension_status"
                 | "prepare_browser_extension"
                 | "open_browser_extension_directory"

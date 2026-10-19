@@ -178,7 +178,7 @@ pub(super) fn native_designer(agent: &catalog::AgentDefinition) -> bool {
 
 pub(super) fn capability_allows(capability: Capability, name: &str) -> bool {
     if name == "image_process" {
-        return false;
+        return capability != Capability::ReadOnly;
     }
     if name == "generate_image" {
         return true;

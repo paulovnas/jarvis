@@ -144,6 +144,8 @@ async fn github_agents_receive_mcp_schemas_on_the_next_provider_request() {
                 context_window: 128_000,
                 max_output_tokens: 4_000,
                 supports_images: false,
+                supports_chat: true,
+                supports_image_generation: false,
                 supports_tools: true,
                 reasoning: custom::Reasoning::None,
                 reasoning_levels: vec![],

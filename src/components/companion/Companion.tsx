@@ -22,7 +22,7 @@ import { Popover, PopoverContent, PopoverHeader, PopoverTitle, PopoverTrigger } 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { companionGeometrySchema, companionIsStageCompletion, companionItemKey, companionSnapshotSchema, companionStatusLabels, type CompanionGeometry, type CompanionItem, type CompanionSnapshot, type CompanionStatus } from "@/core/companion";
 import { providerDisplayName, providerKindLabels } from "@/core/provider-accounts";
-import { accountUsageSchema } from "@/core/provider-usage";
+import { accountUsageSchema, usdBalance } from "@/core/provider-usage";
 import type { PendingQuestion, QuestionDraft, QuestionResponse } from "@/core/questions";
 import { ROLE_LABELS } from "@/core/workflow";
 import { libraryError } from "@/core/library";
@@ -61,7 +61,7 @@ function Usage({ accounts, error, now }: { accounts: CompanionUsage[] | null; er
       <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium"><span role="img" aria-label={providerKindLabels[account.providerKind]} className="flex shrink-0"><ProviderIcon kind={account.providerKind} /></span><Hint content={providerDisplayName(account)} whenTruncated><p className="min-w-0 flex-1 truncate">{providerDisplayName(account)}</p></Hint>{account.fetchedAt && <time dateTime={new Date(account.fetchedAt).toISOString()} aria-label={`Atualizado às ${new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`} className="shrink-0 font-mono text-[9px] text-muted-foreground/70">{new Date(account.fetchedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</time>}</div>
       {account.error && <p role="status" className="text-[11px] text-onedark-yellow">{account.fetchedAt ? "Limites desatualizados" : "Limites indisponíveis"}</p>}
       {!account.error && !account.windows.length && account.creditBalance == null && <p className="text-[11px] text-muted-foreground">Nenhuma janela informada.</p>}
-      {account.creditBalance != null && <dl className="flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">Hypercredits</dt><dd className="font-mono tabular-nums">{account.creditBalance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
+      {account.creditBalance != null && <dl className="flex items-center justify-between gap-3 text-xs"><dt className="text-muted-foreground">{account.openrouter ? "Disponível para esta chave" : "Hypercredits"}</dt><dd className="font-mono tabular-nums">{account.openrouter ? usdBalance(account.creditBalance) : account.creditBalance.toLocaleString("pt-BR", { maximumFractionDigits: 20 })}</dd></dl>}
       <div className="companion-usage-windows">{account.windows.map(window => <div key={window.id} className="companion-usage-window min-w-0 space-y-1.5">
         <Hint content={window.group} whenTruncated><p className="truncate font-mono text-[10px] text-muted-foreground">{window.group}</p></Hint>
         <WindowBar window={window} now={now} stale={Boolean(error || account.error) || !account.fetchedAt || now - account.fetchedAt > 5 * 60_000} />

@@ -323,7 +323,7 @@ fn inventory_from_sources(
         ),
     ] {
         let sql = if kind == Kind::ImageGeneration {
-            "SELECT account_alias, 'gemini-3.1-flash-image' FROM image_generation_config WHERE id=1"
+            "SELECT account_alias, COALESCE(model, 'gemini-3.1-flash-image') FROM image_generation_config WHERE id=1"
                 .to_owned()
         } else {
             format!("SELECT account_alias, model FROM {table} WHERE id=1 AND inherit_chat=0")
@@ -629,8 +629,8 @@ fn apply(
             }
             Kind::ImageGeneration => {
                 db.execute(
-                    "UPDATE image_generation_config SET account_alias=?1 WHERE id=1",
-                    [&replacement.choice.account],
+                    "UPDATE image_generation_config SET account_alias=?1,model=?2 WHERE id=1",
+                    params![replacement.choice.account, replacement.choice.model],
                 )
                 .map_err(storage)?;
             }
@@ -870,21 +870,17 @@ pub async fn remove(
                 ));
             }
             if item.kind == Kind::ImageGeneration {
-                let valid = replacement.choice.model == super::image_generation::MODEL
-                    && replacement.choice.reasoning.is_none()
+                let valid = replacement.choice.reasoning.is_none()
                     && replacement.choice.service_tier.is_none()
-                    && state
-                        .list_provider_accounts(&home)
-                        .map_err(storage)?
-                        .iter()
-                        .any(|record| {
-                            record.alias == replacement.choice.account
-                                && record.enabled
-                                && record.provider_kind == "antigravity"
-                        });
+                    && super::image_generation::compatible(
+                        &state,
+                        &home,
+                        &replacement.choice.account,
+                        &replacement.choice.model,
+                    );
                 if !valid {
                     return Err(error(
-                        "Gerar imagens requer uma conta Antigravity e Gemini 3.1 Flash Image.",
+                        "Gerar imagens requer uma conta ativa e um modelo de imagens compatível.",
                     ));
                 }
             } else {

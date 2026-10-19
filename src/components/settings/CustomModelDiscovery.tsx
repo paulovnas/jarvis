@@ -10,8 +10,8 @@ import { Choice, Field } from "./CustomProviderFields";
 
 type Lookup = { key: string; loading: boolean; models?: CustomCatalogModel[]; error?: string };
 type Correction = Partial<Pick<CustomModel, "contextWindow" | "maxOutputTokens" | "reasoning" | "defaultReasoningLevel">>;
-const validContext = (value: number) => customModelSchema.shape.contextWindow.safeParse(value).success;
-const validOutput = (value: number) => customModelSchema.shape.maxOutputTokens.safeParse(value).success;
+const validContext = (value: number) => value >= 4096 && customModelSchema.shape.contextWindow.safeParse(value).success;
+const validOutput = (value: number) => value > 0 && customModelSchema.shape.maxOutputTokens.safeParse(value).success;
 
 export function CustomModelDiscovery({ config, apiKey, alias, disabled, onPendingChange, onImport }: {
   config: CustomConfig; apiKey: string; alias?: string; disabled: boolean;
@@ -45,6 +45,7 @@ export function CustomModelDiscovery({ config, apiKey, alias, disabled, onPendin
       contextWindow: correction?.contextWindow ?? model.contextWindow ?? context,
       maxOutputTokens: correction?.maxOutputTokens ?? model.maxOutputTokens ?? output,
       supportsTools: model.supportsTools ?? tools, supportsImages: model.supportsImages ?? images,
+      supportsChat: true, supportsImageGeneration: false,
       reasoning, reasoningLevels: reasoning === "none" ? [] : model.reasoningLevels.map(level => level.value),
       defaultReasoningLevel: reasoning === "none" ? null : correction?.defaultReasoningLevel ?? model.defaultReasoningLevel,
       thinkingBudget: null,

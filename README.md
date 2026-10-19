@@ -124,13 +124,16 @@ O Jarvis aceita várias contas, que podem ser ativadas ou desativadas sem perder
 | --- | --- |
 | **OpenAI Codex** | Login com a conta ChatGPT pelo navegador. |
 | **Antigravity** | Login pelo navegador e catálogo compatível com a conta conectada. |
+| **OpenRouter** | API key and manually registered models. |
 | **Custom** | Alias próprio, URL base, chave de API e protocolo OpenAI Chat Completions, OpenAI Responses ou Anthropic Messages. |
 
 Modelos Custom podem receber contexto, capacidades e níveis de raciocínio do catálogo quando o ID é reconhecido, ou ser configurados manualmente. O seletor do chat organiza provedor, modelo e raciocínio e preserva a escolha por conversa.
 
+Native OpenRouter accounts keep an explicit model list. Compatible existing Custom accounts migrate without changing their alias, credentials or model settings. Account credit balance requires an optional management key from the same OpenRouter account; it stays in secure storage and is never sent with inference requests. Changing the inference API key clears the saved management key unless a replacement is provided. The status bar reports USD credits separately from a key spending cap, and leaves an unavailable balance unknown. When provider limits no longer fit, **Limites** beside the clock opens the full list on hover or click.
+
 No provedor OpenAI Codex, **Ultra** é uma opção do cliente. O Jarvis envia o esforço compatível indicado pelo catálogo do modelo, com preferência por Máximo quando não há uma indicação específica. A seleção de Ultra é preservada na conversa; a coordenação dos subagentes continua seguindo o fluxo configurado no Jarvis.
 
-Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem herdar o modelo do chat ou usar outra seleção. A geração de imagens usa um provedor Antigravity compatível e apresenta progresso e resultado diretamente na conversa.
+Em **Configurações → Provedores → Ferramentas**, Web Search e Vision podem herdar o modelo do chat ou usar outra seleção. A geração de imagens tem conta e modelo próprios: Antigravity, modelos OpenRouter cadastrados por você ou GPT Image 2 pela assinatura ChatGPT conectada ao Codex, conforme acesso e limites da conta. Para usar o OpenRouter, adicione o ID do modelo à conta (por exemplo, `bytedance-seed/seedream-5-0-flash`) e habilite **Geração de imagens** no cadastro. A consulta pelo ID preenche os dados desse modelo, sem adicionar outros; **Imagens de entrada** é uma capacidade separada. Modelos exclusivos de imagem não exigem limites de tokens e não aparecem no seletor de chat. OpenRouter consome o saldo de API da conta selecionada. O processamento pelo ComfyUI e os resultados verificados permanecem na conversa; chamadas com resultado incerto não são repetidas automaticamente.
 
 Outras extensões ficam disponíveis sob demanda:
 
