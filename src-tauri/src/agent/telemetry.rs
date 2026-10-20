@@ -22,8 +22,8 @@ use std::{
 const SCHEMA_VERSION: u8 = 1;
 const DIRECTORY: &str = "harness";
 const CURRENT_LOG: &str = "traces.jsonl";
-const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_LOG_FILES: usize = 3;
+pub(crate) const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+pub(crate) const MAX_LOG_FILES: usize = 3;
 const MAX_LINE_BYTES: usize = 2 * 1024;
 const MAX_DURATION_MS: u64 = 24 * 60 * 60 * 1_000;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
@@ -465,7 +465,8 @@ impl Record {
         self.schema_version == SCHEMA_VERSION
             && safe_token(&self.run_id, 64)
             && safe_token(&self.app_version, 64)
-            && safe_token(&self.trace_id, 64)
+            // Keep legacy trace IDs while accepting the hashed production context.
+            && (safe_token(&self.trace_id, 64) || valid_correlation(&self.trace_id))
             && valid_correlation(&self.conversation_id)
             && valid_correlation(&self.turn_id)
             && self.event.valid()
@@ -669,6 +670,21 @@ impl TelemetryState {
             }
         }
         Ok(records)
+    }
+
+    fn log_storage(&self, clear: bool) -> io::Result<(usize, u64)> {
+        let _guard = self.inner.write_lock.lock().map_err(|_| io::Error::other("harness busy"))?;
+        ensure_directory(&self.inner.root)?;
+        let mut paths = Vec::new();
+        for index in 0..MAX_LOG_FILES {
+            let path = log_path(&self.inner.root, index);
+            if regular_file(&path)? { paths.push((path.clone(), fs::metadata(path)?.len())); }
+        }
+        let bytes = paths.iter().map(|(_, bytes)| bytes).sum();
+        if clear {
+            for (path, _) in &paths { fs::remove_file(path)?; }
+        }
+        Ok((paths.len(), bytes))
     }
 
     fn export(&self, destination: &Path) -> Result<HarnessTraceExportResult, HarnessTraceError> {
@@ -1007,7 +1023,34 @@ pub(crate) fn record_tool_result(
     result: &Result<String, super::AgentError>,
     duration_ms: u64,
 ) {
+    record_tool_diagnostic(tool, result.as_ref().err());
     record(context, tool_result_event(tool, result, duration_ms));
+}
+
+pub(crate) fn record_tool_diagnostic(tool: &super::ToolCall, error: Option<&super::AgentError>) {
+    let level = if error.is_some_and(|error| error.code != "cancelled") {
+        crate::diagnostics::Level::Error
+    } else { crate::diagnostics::Level::Info };
+    crate::diagnostics::logs::record_runtime(
+        level, &tool.name, Some(error.map_or("completed", |error| error.code.as_str())),
+        tool_diagnostic_message(&tool.name, error), None, Some(&tool.id),
+    );
+}
+
+fn tool_diagnostic_message<'a>(name: &str, error: Option<&'a super::AgentError>) -> &'a str {
+    match error {
+        None => "Tool completed.",
+        // Command errors embed stdout/stderr in message; keep that in its chat only.
+        Some(_) if name.starts_with("bash_") || matches!(tool_kind(name), ToolKind::Shell | ToolKind::Terminal | ToolKind::Process) => {
+            "Command/process failed or was interrupted. Raw output is not recorded."
+        }
+        Some(error) => &error.message,
+    }
+}
+
+pub(crate) fn log_storage(clear: bool) -> Result<(usize, u64), HarnessTraceError> {
+    ACTIVE.get().map_or(Ok((0, 0)), |state| state.log_storage(clear)
+        .map_err(|_| export_error("Não foi possível acessar os logs do harness.")))
 }
 
 fn tool_result_event(
@@ -1245,6 +1288,38 @@ fn write_record(root: &Path, record: &Record) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_failures_never_copy_partial_output_into_diagnostics() {
+        let error = super::super::AgentError::new("tool_error", "Código de saída: 1\nprivate stdout and stderr");
+        for name in ["bash", "bash_wait", "bash_cancel", "terminal_output", "process_output"] {
+            let message = tool_diagnostic_message(name, Some(&error));
+            assert!(!message.contains("private stdout"), "{name}");
+            assert!(message.contains("Raw output is not recorded"));
+        }
+        let error = super::super::AgentError::new("tool_arguments_invalid", "agentId is not accepted");
+        assert_eq!(tool_diagnostic_message("jarvis_propose_flow", Some(&error)), error.message);
+    }
+
+    #[test]
+    fn clearing_harness_logs_preserves_other_files_and_keeps_the_sink_usable() {
+        let root = tempfile::tempdir().unwrap();
+        let state = TelemetryState::new(root.path(), "2.0.7".into(), "a".repeat(32));
+        let context = trace("conversation", "turn");
+        let event = || Event::ToolFinished {
+            tool: ToolKind::Read, tool_id: tool_id("call"), outcome: outcome(None, false),
+            duration_ms: 1, input_bytes: 1, output_bytes: 1, failure: None,
+        };
+        assert!(state.record(&context, event()));
+        fs::write(state.inner.root.join("preserved.txt"), "preserve").unwrap();
+        let (files, bytes) = state.log_storage(true).unwrap();
+        assert_eq!(files, 1);
+        assert!(bytes > 0);
+        assert!(state.inner.root.join("preserved.txt").is_file());
+        assert_eq!(state.log_storage(false).unwrap(), (0, 0));
+        assert!(state.record(&context, event()));
+        assert_eq!(state.records().unwrap().len(), 1);
+    }
 
     #[test]
     fn structural_discovery_is_accounted_as_native_read_and_search_work() {

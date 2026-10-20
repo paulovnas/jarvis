@@ -194,7 +194,7 @@ pub fn get_agent_instructions(
     flow: Flow,
     role: Role,
 ) -> Result<Vec<contracts::InstructionSection>, AgentError> {
-    if !roster(flow).contains(&role) {
+    if !roster(flow).contains(&role) && (flow, role) != (Flow::Custom, Role::PixelArt) {
         return Err(invalid("Este agente não pertence ao fluxo."));
     }
     Ok(contracts::instruction_sections(flow, role))
@@ -545,6 +545,21 @@ mod instruction_tests {
         assert!(get_agent_instructions(Flow::Planned, Role::Orchestrator).is_err());
         assert!(get_agent_instructions(Flow::Designer, Role::Builder).is_err());
         assert!(get_agent_instructions(Flow::Publication, Role::Github).is_ok());
+    }
+
+    #[test]
+    fn pixel_art_instructions_are_visible_without_adding_a_new_workflow() {
+        let sections = get_agent_instructions(Flow::Custom, Role::PixelArt).unwrap();
+        assert_eq!(sections[0].content, include_str!("pixel-art.md"));
+        assert!(sections
+            .iter()
+            .any(|section| section.content == include_str!("common.md")));
+        let runtime = contracts::prompt(Flow::Custom, Role::PixelArt, "main");
+        for section in sections {
+            assert!(runtime.contains(section.content));
+        }
+        assert!(get_agent_instructions(Flow::Standard, Role::PixelArt).is_err());
+        assert!(get_agent_instructions(Flow::Custom, Role::Github).is_err());
     }
 
     #[test]

@@ -171,7 +171,7 @@ fn custom_flows_accept_immutable_native_agents_and_freeze_their_runtime_contract
 #[test]
 fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     let agents = builtin_agents();
-    assert_eq!(agents.len(), 10);
+    assert_eq!(agents.len(), 11);
     assert!(agents.iter().all(|agent| agent.immutable));
     assert_eq!(
         agents
@@ -192,6 +192,10 @@ fn native_canvas_topology_is_derived_from_the_real_delegation_contract() {
     assert_eq!(video.usage, AgentUsage::Mixed);
     assert_eq!(video.capability, Capability::Commands);
     assert_eq!(video.appearance.icon, appearance::Icon::Film);
+    let pixel = builtin_agent(Role::PixelArt).unwrap();
+    assert_eq!(pixel.name, "Artista de pixel art");
+    assert_eq!(pixel.usage, AgentUsage::Mixed);
+    assert_eq!(pixel.capability, Capability::WriteFiles);
 
     let flows = builtin_flows();
     assert_eq!(flows.len(), 6);
@@ -240,7 +244,7 @@ fn catalog_view_keeps_user_definitions_separate_from_immutable_native_graphs() {
     let value = serde_json::to_value(CatalogView::from(example())).unwrap();
     assert_eq!(value["agents"].as_array().unwrap().len(), 1);
     assert_eq!(value["flows"].as_array().unwrap().len(), 1);
-    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 10);
+    assert_eq!(value["builtinAgents"].as_array().unwrap().len(), 11);
     assert_eq!(value["builtinFlows"].as_array().unwrap().len(), 6);
     assert_eq!(value["builtinFlows"][2]["id"], "video");
     let complete = value["builtinFlows"]

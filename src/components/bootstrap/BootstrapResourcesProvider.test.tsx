@@ -8,6 +8,7 @@ import type { BootstrapResources } from "@/core/bootstrap";
 import { coreFixture } from "@/test/core-fixtures";
 import { emptyLibrary } from "@/test/library-fixtures";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
+import { ollamaAccountFixture } from "@/test/custom-provider-fixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -20,6 +21,19 @@ function Probe() {
   const current = context.resources.accounts[0];
   return <><span>{current?.models[0]?.id}</span><span>{context.resources.checked.core ? "checked" : "local"}</span><span>{current?.enabled ? "enabled" : "disabled"}</span><button onClick={() => context.updateAccounts([{ ...current, enabled: false }])}>Disable</button></>;
 }
+
+it("keeps native Ollama registration local without retrying a manual catalog", async () => {
+  const ollama = { ...ollamaAccountFixture(), modelsStale: true };
+  vi.mocked(invoke).mockClear().mockResolvedValue([ollama]);
+  const resources = { ...initial(), accounts: [ollama], checked: { core: true, skills: true } };
+  const view = render(<BootstrapResourcesProvider initial={resources}><Probe /></BootstrapResourcesProvider>);
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByText("qwen3:14b")).toBeVisible();
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "list_provider_accounts")).toHaveLength(1);
+  await act(async () => { window.dispatchEvent(new Event("online")); });
+  expect(vi.mocked(invoke).mock.calls.filter(([command]) => command === "list_provider_accounts")).toHaveLength(1);
+  view.unmount();
+});
 
 it("refreshes the settings catalog after a chat skill installation without reopening the app", async () => {
   vi.mocked(listen).mockClear();

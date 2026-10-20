@@ -27,6 +27,20 @@ function Workspace({ projectId = "project-1" }: { projectId?: string }) {
   return <><ProjectExplorer key={projectId} projectId={projectId} projectName="Meu projeto" selected={files.tabs.activePath} onOpen={files.open} /><FileWorkspace files={files}><ChatDraft /></FileWorkspace></>;
 }
 
+it("offers the pixel art suite beside Chat and hides it without cancelling generation", async () => {
+  const user = userEvent.setup();
+  const pixel = { conversationId: "chat", available: true, active: false, busy: false, error: null, select: vi.fn(), open: vi.fn(), close: vi.fn() };
+  const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };
+  render(<FileWorkspace browser={browser} pixel={pixel}><ChatDraft /></FileWorkspace>);
+  expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Chat", "Pixel art"]);
+  await user.click(screen.getByRole("tab", { name: "Pixel art" }));
+  expect(pixel.select).toHaveBeenCalledWith(true);
+  expect(browser.select).toHaveBeenCalledWith(null);
+  await user.click(screen.getByRole("button", { name: "Fechar suíte de pixel art" }));
+  expect(pixel.close).toHaveBeenCalledOnce();
+  expect(mockedInvoke.mock.calls.some(([name]) => name === "pixel_art_cancel")).toBe(false);
+});
+
 it("restores mixed file and browser tab order while keeping Chat first and fixed", async () => {
   const user = userEvent.setup();
   const browser: BrowserController = { conversationId: "chat", snapshot: { activeId: null, backend: "embedded", tabs: [{ id: "web", conversationId: "chat", title: "Local", url: "http://localhost:5173", loading: false }] }, loaded: true, busy: false, command: vi.fn(), select: vi.fn(), open: vi.fn() };

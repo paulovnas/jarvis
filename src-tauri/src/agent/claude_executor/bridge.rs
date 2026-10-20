@@ -417,6 +417,10 @@ impl<'a> Bridge<'a> {
             return Ok(definitions);
         }
         let mut definitions = tools::definitions(self.options.mode);
+        crate::agent::pixel_art::restrict_catalog(
+            &mut definitions,
+            self.execution.as_ref().is_some_and(|exec| exec.allowed("pixel_art_docs")),
+        );
         definitions.push(publication::inspection::definition());
         definitions.push(attachments::project_definition());
         if self.options.mode == Mode::Build {
@@ -1081,6 +1085,12 @@ impl<'a> Bridge<'a> {
                 Ok(outcome.output)
             }
             Handler::Native => {
+                if tool.name.starts_with("pixel_art_") {
+                    return crate::agent::pixel_art::execute(
+                        self.execution.as_ref().and_then(workflow::Execution::native_app),
+                        home, &self.session.root, &self.owner().id, self.execution.as_ref().map_or("main", workflow::Execution::pixel_art_executor_id), tool, signal,
+                    ).await;
+                }
                 if tool.name == "image_process"
                     && self
                         .execution
@@ -1229,6 +1239,11 @@ impl<'a> Bridge<'a> {
         }
         if !self.commands.running_ids().is_empty() {
             return Ok(Some("Commands are still running. Use bash_wait to obtain their results or bash_cancel before finishing.".into()));
+        }
+        if let Some(app) = self.execution.as_ref().filter(|exec| exec.allowed("pixel_art_status")).and_then(workflow::Execution::native_app) {
+            if !crate::agent::pixel_art::running(app, &self.owner().id).await.is_empty() {
+                return Ok(Some("Pixel-art operations are still running. Use pixel_art_status to obtain their results or pixel_art_cancel before finishing; never restart generation to poll progress.".into()));
+            }
         }
         if core_runtime::diagnose(
             self.session,

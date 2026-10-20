@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,6 +16,9 @@ import type { ProjectLesson } from "@/core/project-learning";
 import { useChatLearning } from "@/hooks/use-chat-learning";
 import { useTranscriptVirtualization } from "./use-transcript-virtualization";
 import { workflowStage } from "./workflow-stage";
+import type { WorkflowSnapshot } from "@/core/workflow";
+import { PixelArtResultsContext } from "@/hooks/use-pixel-art-results";
+import { PixelArtCard } from "./PixelArtCard";
 
 function retryableTurn(turn: AgentTurn): boolean {
   if (!turn.error || (turn.status !== "error" && turn.status !== "interrupted")) return false;
@@ -25,18 +28,20 @@ function retryableTurn(turn: AgentTurn): boolean {
     || flow === "custom";
 }
 
-export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; lessons?: ProjectLesson[]; onRetry?: (turnId: string) => void; retrying?: boolean }) {
+export const TurnBody = memo(function TurnBody({ turn, conversationId, workflow, lessons, onRetry, retrying = false }: { turn: AgentTurn; conversationId?: string; workflow?: WorkflowSnapshot | null; lessons?: ProjectLesson[]; onRetry?: (turnId: string) => void; retrying?: boolean }) {
   const running = turn.status === "running";
   const now = useRunningClock(running && turn.activeSince !== null);
   const durationMs = executionDuration(turn.createdAt, turn.durationMs, running, now, turn.activeSince);
   const timestamp = new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   const errorTitle = turn.error?.code === "progress_paused"
     ? "Execução pausada"
-    : turn.status === "cancelled" || turn.status === "interrupted"
-      ? "Execução interrompida"
-      : turn.error?.message.startsWith("Falha no Vision")
-        ? "Falha no Vision"
-        : "Falha na execução";
+    : turn.error?.code === "workflow_incomplete"
+      ? "Fluxo com pendências"
+      : turn.status === "cancelled" || turn.status === "interrupted"
+        ? "Execução interrompida"
+        : turn.error?.message.startsWith("Falha no Vision")
+          ? "Falha no Vision"
+          : "Falha na execução";
   const response = finalTurnResponse(turn);
   const stageOnlyResponse = Boolean(workflowStage(response.text));
   const responseFirstStep = stageOnlyResponse ? turn.steps.length : response.firstStep;
@@ -50,6 +55,7 @@ export const TurnBody = memo(function TurnBody({ turn, conversationId, lessons, 
     model: executionLabel(turn.options), streaming: running,
     work: running || turn.auxiliaryMessages?.length || turn.steps.some((step, index) => step.summary || step.tools.length || step.coreActivities?.length || (step.text && index < responseFirstStep)) ? {
       status: turn.status,
+      workflowStages: workflow?.runId === turn.id ? workflow.stages : undefined,
       auxiliaryMessages: turn.auxiliaryMessages,
       retry: running ? turn.steps[turn.steps.length - 1]?.retry : undefined,
       durationSeconds: Math.floor(durationMs / 1000),
@@ -88,7 +94,8 @@ function HistoryRail({ entries, total, active, disabled, jump }: { entries: Hist
 
 export type LatestVisibility = (conversationId: string, visible: boolean) => void;
 
-export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; retryChoice?: ExecutionChoice | null; projectId?: string; onLatestVisibility?: LatestVisibility }) {
+export function Transcript({ snapshot, chat, workflow, retryChoice, projectId, onLatestVisibility }: { snapshot: ChatSnapshot; chat: ChatController; workflow?: WorkflowSnapshot | null; retryChoice?: ExecutionChoice | null; projectId?: string; onLatestVisibility?: LatestVisibility }) {
+  const pixelResults = useContext(PixelArtResultsContext);
   const lessons = useChatLearning(projectId, snapshot);
   const root = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -145,7 +152,7 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
       });
     } else if (follow.current && !hasNewer) { view.scrollTop = view.scrollHeight; lastScroll.current = view.scrollTop; }
     reportLatest();
-  }, [snapshot.turns, chat.pendingTurn, hasNewer, restoreVersion, window.start, window.total, reportLatest, jump, updateWindow]);
+  }, [snapshot.turns, chat.pendingTurn, hasNewer, restoreVersion, window.start, window.total, reportLatest, jump, updateWindow, pixelResults]);
 
   return <div ref={root} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
     <HistoryRail entries={snapshot.navigation ?? []} total={window.total} active={visible ?? window.total - 1} disabled={chat.historyLoading} jump={index => { void navigate(index); }} />
@@ -176,10 +183,11 @@ export function Transcript({ snapshot, chat, retryChoice, projectId, onLatestVis
           return <div key={turn.id} role="listitem" aria-posinset={absoluteIndex + 1} aria-setsize={window.total + turns.length - snapshot.turns.length} data-turn-id={turn.id} data-turn-index={absoluteIndex} className="absolute inset-x-0 flow-root [overflow-anchor:none]" style={{ top: row.top }}>
           <UserMessageBubble message={{ id: turn.id, role: "user", content: turn.user, parts: turn.parts, timestamp: new Date(turn.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) }} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && !event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
-          <TurnBody turn={turn} conversationId={snapshot.conversationId} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={retryChoice && !hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && absoluteIndex === window.total - 1 ? id => { void chat.retryTurn(id, retryChoice); } : undefined} />
+          <TurnBody turn={turn} conversationId={snapshot.conversationId} workflow={workflow} lessons={lessons} retrying={chat.retryingTurnIds.has(turn.id)} onRetry={retryChoice && !hasNewer && !snapshot.activeTurnId && !chat.pending && !chat.pendingTurn && absoluteIndex === window.total - 1 ? id => { void chat.retryTurn(id, retryChoice); } : undefined} />
           {snapshot.compactions?.filter(event => event.turnId === turn.id && event.afterTurn).map(event => <CompactionMarker key={event.id} event={event} />)}
         </div>; })}
         </div>
+        {!hasNewer && Object.values(pixelResults).filter(job => job.manual).map(job => <PixelArtCard key={job.jobId} result={job} />)}
         {hasNewer && <div data-history-newer className="flex justify-center py-3"><Button variant="ghost" size="sm" className="cursor-pointer text-xs text-muted-foreground" disabled={chat.historyLoading} onClick={() => { void navigate("newer"); }}>Mensagens seguintes</Button></div>}
       </div>
     </ScrollArea>

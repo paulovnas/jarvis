@@ -73,6 +73,31 @@ fn database() -> Connection {
 }
 
 #[test]
+fn brave_search_is_persistent_model_free_and_independent_of_the_chat_provider() {
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let selected = state.with_connection(home.path(), |db| {
+        db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('brave-search-work','brave-search','brave-id')", []).unwrap();
+        save_config(db, Some("brave-search-work".into()), None, false, crate::claude::Executor::Jarvis)
+    }).unwrap();
+    assert_eq!(load(&state, home.path()).unwrap(), selected);
+    assert!(selected.model.is_none());
+    let mut chat = options("custom-chat", "any-chat-model");
+    assert!(enabled(&state, home.path(), &chat));
+    chat.executor = crate::claude::Executor::Claude;
+    assert!(enabled(&state, home.path(), &chat));
+    assert_eq!(selected.resolve(&chat), selected);
+    state.with_connection(home.path(), |db| db.execute("UPDATE provider_accounts SET enabled=0 WHERE alias='brave-search-work'", []).map_err(crate::persistence::PersistenceError::from)).unwrap();
+    assert!(!enabled(&state, home.path(), &chat));
+    assert_eq!(load(&state, home.path()).unwrap(), selected);
+    assert!(state.with_connection(home.path(), |db| save_config(db, Some("brave-search-work".into()), None, false, crate::claude::Executor::Jarvis)).is_err());
+    state.with_connection(home.path(), |db| db.execute("DELETE FROM provider_accounts WHERE alias='brave-search-work'", []).map_err(crate::persistence::PersistenceError::from)).unwrap();
+    assert!(!enabled(&state, home.path(), &chat));
+    assert_eq!(load(&state, home.path()).unwrap(), selected);
+    state.close();
+}
+
+#[test]
 fn default_inherited_selection_and_disconnect_are_persistent() {
     let mut db = database();
     assert_eq!(read_config(&db).unwrap(), Config::default());

@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "kind": "product",
+      "scope": ".",
+      "path": ".jarvis/knowledge/cdb4ee2aea69cc6a/prd.md",
+      "essential": "",
+      "sources": [
+        {
+          "path": "PRODUCT.md",
+          "fingerprint": "ab1df482ca03c243cbbdc53b9df855fa8c0d73a72009995b85c705c22c30d551"
+        },
+        {
+          "path": "README.md",
+          "fingerprint": "d63bb58e862f5db64b4015d321cf1d085a8a3052ef95b7249a9b38981f83f503"
+        },
+        {
+          "path": "product.md",
+          "fingerprint": "ab1df482ca03c243cbbdc53b9df855fa8c0d73a72009995b85c705c22c30d551"
+        },
+        {
+          "path": "AGENTS.md",
+          "fingerprint": "4bdf5939d91d070843691bff20b3e98f5c90d53d6383facb1e4c7fccb0c0bc0a"
+        },
+        {
+          "path": "DESIGN.md",
+          "fingerprint": "51382c6ce7a680361d11a48984b3fc4e9912aa802a13205c63043f6f8fd0f229"
+        },
+        {
+          "path": "design.md",
+          "fingerprint": "51382c6ce7a680361d11a48984b3fc4e9912aa802a13205c63043f6f8fd0f229"
+        },
+        {
+          "path": "package.json",
+          "fingerprint": "4c6bb554e267f55faeccfc8bacebe2259e78028775de6eb7f715f4d15a265cde"
+        },
+        {
+          "path": "browser-extension/browser.test.ts",
+          "fingerprint": "c0a76e13955640c1c6b5146ab2f90d3abf6862042644d7072a25131ab4a73d5a"
+        },
+        {
+          "path": "browser-extension/browser.ts",
+          "fingerprint": "ab71a7928b885cd407462b32292fecae5c7cc4b5be7024daf3b9aa2fc2aec552"
+        },
+        {
+          "path": "components.json",
+          "fingerprint": "8beea7081f0cbfa1e15d43a599d20917b089b704814f85883efbe5d30fc86727"
+        }
+      ]
+    }
+  ]
+}

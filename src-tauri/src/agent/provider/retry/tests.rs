@@ -116,6 +116,7 @@ fn sse(events: &[Value]) -> String {
 
 fn complete(protocol: Protocol) -> String {
     match protocol {
+        Protocol::Ollama => json!({"message":{"role":"assistant","content":"Concluído"},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":4}).to_string() + "\n",
         Protocol::OpenaiCompletions => {
             sse(&[
                 json!({"choices":[{"index":0,"delta":{"content":"Concluído"},"finish_reason":null}]}),

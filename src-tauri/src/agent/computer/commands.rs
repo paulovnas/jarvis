@@ -13,7 +13,7 @@ pub(super) async fn require_conversation(
     let app = app.clone();
     let conversation = conversation.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+        let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
         library::agent_location(&app.state::<AppState>(), &home, &conversation)
             .map(|_| ())
             .map_err(AgentError::from)

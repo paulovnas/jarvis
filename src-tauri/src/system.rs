@@ -830,7 +830,7 @@ pub(crate) fn notify(
         }
         let lookup_app = app.clone();
         let body = tauri::async_runtime::spawn_blocking(move || {
-            let home = lookup_app.path().home_dir().ok()?;
+            let home = crate::data_dir::app_home(&lookup_app).ok()?;
             crate::library::notification_names(
                 &lookup_app.state::<crate::persistence::AppState>(),
                 &home,

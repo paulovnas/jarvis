@@ -525,6 +525,33 @@ fn assisted_flow_proposals_can_reference_native_agents() {
 }
 
 #[test]
+fn assisted_flow_schema_accepts_every_native_catalog_agent() {
+    let catalog = workflow::catalog::tests::example();
+    let before = serde_json::to_value(&catalog).unwrap();
+    let contracts = crate::agent::tool_contract::Catalog::new(&definitions());
+    for agent in workflow::catalog::builtin_agents() {
+        let mut flow = catalog.flows[0].clone();
+        flow.id = "e".repeat(32);
+        for step in &mut flow.steps {
+            step.agent_id = agent.id.clone();
+        }
+        let call = tool(
+            "jarvis_propose_flow",
+            json!({"action":"create","catalogRevision":catalog.revision,"summary":"Usar um agente nativo no fluxo.","flow":flow}),
+        );
+        assert!(contracts.validate(&call).is_ok(), "schema rejects {}", agent.id);
+        let (proposal, _) = prepare(&catalog, &call).unwrap();
+        assert_eq!(proposal.agent_references[0].id, agent.id);
+    }
+    assert_eq!(serde_json::to_value(&catalog).unwrap(), before);
+    let references = &flow_schema()["properties"]["steps"]["items"]["properties"]["agentId"];
+    let validator = jsonschema::validator_for(references).unwrap();
+    assert!(validator.is_valid(&json!(catalog.agents[0].id)));
+    assert!(!validator.is_valid(&json!("builtin:unknown")));
+    assert!(!validator.is_valid(&json!("not-an-agent")));
+}
+
+#[test]
 fn assisted_agent_proposals_accept_an_external_executor_without_a_provider() {
     let catalog = workflow::catalog::tests::example();
     let mut agent = catalog.agents[0].clone();

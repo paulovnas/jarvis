@@ -15,6 +15,22 @@ import { Transcript, TurnBody, type LatestVisibility } from "./Transcript";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const call = vi.mocked(invoke);
 
+it("uses stage results only for their own run and keeps completed planning distinct from pending delivery", async () => {
+  const user = userEvent.setup();
+  const turn = { ...savedTurn(), status: "running" as const, steps: [{ ...savedTurn().steps[0], summary: "", tools: [], text: "Etapa 1 · RPG/Planejador em execução." }] };
+  const workflow = { conversationId: "c1", revision: 1, runId: turn.id, flow: "custom" as const, agents: [], stages: [{ number: "1", name: "RPG/Planejador", status: "completed" as const, error: null, handoff: { verdict: "completed" as const, summary: "Plano pronto", objective: { status: "partial" as const, remaining: ["Integrar o humano oficial"], reason: "A integração será feita pelo Desenvolvedor.", recoveryAttempts: [], nextAction: "Executar rota godot." } } }] };
+  const view = render(<TurnBody turn={turn} workflow={workflow} />);
+  const button = screen.getByRole("button", { name: /Etapa 1.*RPG\/Planejador/ });
+  expect(button).toHaveTextContent("Concluída");
+  await user.click(button);
+  expect(screen.getByText("Pedido com pendências")).toBeVisible();
+  expect(screen.getByText("Integrar o humano oficial", { exact: false })).toBeVisible();
+  expect(screen.queryByText("Bloqueada")).not.toBeInTheDocument();
+  view.rerender(<TurnBody turn={turn} workflow={{ ...workflow, runId: "another-turn" }} />);
+  expect(button).toHaveTextContent("Em execução");
+  expect(screen.queryByText("Pedido com pendências")).not.toBeInTheDocument();
+});
+
 it("shows routed workflow stages instead of a provider connection and preserves the final delivery", async () => {
   const stage = { ...savedTurn().steps[0], summary: "", tools: [], text: "Etapa 1 · RPG/Planejador em execução." };
   const turn = { ...savedTurn(), status: "running" as const, options: { ...savedTurn().options, workflow: "custom" as const, customWorkflowId: "rpg" }, steps: [stage] };
@@ -572,6 +588,15 @@ describe("estado do turno", () => {
     expect(alert).toHaveTextContent("60 segundos");
     expect(alert).toHaveTextContent("Configurações → Provedores → Vision");
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeEnabled();
+  });
+
+  it("keeps an unfinished workflow visibly pending and offers continuation", () => {
+    const message = "Entregue: piloto E com quatro quadros.\nPendente: integrar oito direções.\nMotivo: transformers ausente.\nPara continuar: reparar a dependência e retomar a validação.";
+    render(<TurnBody turn={{ ...savedTurn(), status: "error", options: { ...savedTurn().options, workflow: "custom" }, error: { code: "workflow_incomplete", message } }} onRetry={vi.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Fluxo com pendências");
+    expect(screen.getByRole("alert")).toHaveTextContent("transformers ausente");
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeEnabled();
+    expect(screen.queryByText("Falha na execução")).not.toBeInTheDocument();
   });
 
   it("retains the interrupted warning for ordinary user cancellation", () => {

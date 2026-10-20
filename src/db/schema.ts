@@ -34,7 +34,7 @@ export const providerAccounts = sqliteTable(
     check("provider_accounts_display_name_check", sql`${table.displayName} IS NULL OR length(trim(${table.displayName})) BETWEEN 1 AND 18`),
     check(
       "provider_accounts_provider_kind_check",
-        sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter')`,
+        sql`${table.providerKind} IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter', 'ollama', 'brave-search')`,
     ),
     check(
       "provider_accounts_usage_alert_window_check",

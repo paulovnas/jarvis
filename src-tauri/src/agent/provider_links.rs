@@ -701,7 +701,7 @@ pub async fn get_provider_removal_plan(
     state: tauri::State<'_, AppState>,
     alias: String,
 ) -> Result<RemovalPlan, ProviderError> {
-    let home = app.path().home_dir().map_err(storage)?;
+    let home = crate::data_dir::app_home(&app).map_err(storage)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         state.with_connection(&home, |db| plan(db, &home, &alias))
@@ -724,7 +724,7 @@ pub async fn clear_chat_model_binding(
     conversation_id: String,
     choice: ModelChoice,
 ) -> Result<(), ProviderError> {
-    let home = app.path().home_dir().map_err(storage)?;
+    let home = crate::data_dir::app_home(&app).map_err(storage)?;
     let state = state.inner().clone();
     let oauth = oauth.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -770,7 +770,7 @@ pub async fn get_provider_model_references(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Inventory, ProviderError> {
-    let home = app.path().home_dir().map_err(storage)?;
+    let home = crate::data_dir::app_home(&app).map_err(storage)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || model_references(&state, &home, chat_choices))
         .await
@@ -816,7 +816,7 @@ pub async fn remove(
     revision: String,
     replacements: Vec<Replacement>,
 ) -> Result<RemovalResult, ProviderError> {
-    let home = app.path().home_dir().map_err(storage)?;
+    let home = crate::data_dir::app_home(&app).map_err(storage)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let preview = state.with_connection(&home, |db| plan(db, &home, &alias))?;
         if preview.revision != revision {

@@ -8,7 +8,6 @@ use std::{
     io::{Cursor, Read},
     path::{Path, PathBuf},
 };
-use tauri::Manager;
 #[cfg(test)]
 mod tests;
 
@@ -114,8 +113,12 @@ pub(super) fn image_bytes(bytes: &[u8], size: u32) -> Result<Vec<u8>, AgentError
     reader.limits(limits);
     let image = reader
         .decode()
-        .map_err(|_| invalid("Imagem inválida ou com resolução excessiva."))?
-        .thumbnail(size, size);
+        .map_err(|_| invalid("Imagem inválida ou com resolução excessiva."))?;
+    let image = if image.width() > size || image.height() > size {
+        image.thumbnail(size, size)
+    } else {
+        image
+    };
     let mut output = Cursor::new(Vec::new());
     image
         .write_to(&mut output, image::ImageFormat::Png)
@@ -211,6 +214,25 @@ pub(super) fn store(
     name: &str,
     bytes: &[u8],
 ) -> Result<Attachment, AgentError> {
+    store_content(home, conversation, name, bytes, false)
+}
+
+pub(super) fn store_generated(
+    home: &Path,
+    conversation: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<Attachment, AgentError> {
+    store_content(home, conversation, name, bytes, true)
+}
+
+fn store_content(
+    home: &Path,
+    conversation: &str,
+    name: &str,
+    bytes: &[u8],
+    preserve_image: bool,
+) -> Result<Attachment, AgentError> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(invalid("Anexe um arquivo não vazio de até 20 MB."));
     }
@@ -230,12 +252,43 @@ pub(super) fn store(
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let is_image = image::guess_format(bytes).is_ok();
+    let format = image::guess_format(bytes).ok();
+    let is_image = format.is_some();
+    if preserve_image
+        && !matches!(
+            format,
+            Some(
+                image::ImageFormat::Png
+                    | image::ImageFormat::Gif
+                    | image::ImageFormat::WebP
+                    | image::ImageFormat::Jpeg
+            )
+        )
+    {
+        return Err(invalid("Formato de imagem gerada não suportado."));
+    }
     let (content, preview, mime) = if is_image {
+        let preview = image_bytes(bytes, 320)?;
+        if preserve_image {
+            validate_animation(bytes, format)?;
+        }
         (
-            image_bytes(bytes, 2048)?,
-            Some(image_bytes(bytes, 320)?),
-            "image/png",
+            if preserve_image {
+                bytes.to_vec()
+            } else {
+                image_bytes(bytes, 2048)?
+            },
+            Some(preview),
+            if preserve_image {
+                match format {
+                    Some(image::ImageFormat::Gif) => "image/gif",
+                    Some(image::ImageFormat::WebP) => "image/webp",
+                    Some(image::ImageFormat::Jpeg) => "image/jpeg",
+                    _ => "image/png",
+                }
+            } else {
+                "image/png"
+            },
         )
     } else {
         let (text, mime) = document(bytes, &extension)?;
@@ -267,6 +320,45 @@ pub(super) fn store(
     .map_err(|_| AgentError::storage())?;
     fs::rename(staging.path(), parent.join(&item.id)).map_err(|_| AgentError::storage())?;
     Ok(item)
+}
+
+fn validate_animation(bytes: &[u8], format: Option<image::ImageFormat>) -> Result<(), AgentError> {
+    use image::AnimationDecoder;
+    let frames = match format {
+        Some(image::ImageFormat::Gif) => Some(
+            image::codecs::gif::GifDecoder::new(Cursor::new(bytes))
+                .map_err(|_| invalid("GIF inválido."))?
+                .into_frames(),
+        ),
+        Some(image::ImageFormat::Png) => {
+            let decoder = image::codecs::png::PngDecoder::new(Cursor::new(bytes))
+                .map_err(|_| invalid("PNG inválido."))?;
+            if decoder.is_apng().map_err(|_| invalid("APNG inválido."))? {
+                Some(
+                    decoder
+                        .apng()
+                        .map_err(|_| invalid("APNG inválido."))?
+                        .into_frames(),
+                )
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    if let Some(frames) = frames {
+        let mut decoded_bytes = 0usize;
+        for (index, frame) in frames.enumerate() {
+            let frame = frame.map_err(|_| invalid("A animação contém um quadro inválido."))?;
+            decoded_bytes = decoded_bytes.saturating_add(frame.buffer().as_raw().len());
+            if index >= 512 || decoded_bytes > 128 * 1024 * 1024 {
+                return Err(invalid(
+                    "A animação excede 512 quadros ou 128 MB decodificados.",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 pub(super) fn validate_parts(
     home: &Path,
@@ -402,7 +494,7 @@ pub async fn import_chat_attachments(
     paths: Option<Vec<String>>,
     uploads: Option<Vec<Upload>>,
 ) -> Result<Vec<Attachment>, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         library::agent_location(&state, &home, &conversation_id)?;
@@ -462,7 +554,7 @@ pub async fn get_chat_attachment_image(
     id: String,
     full: Option<bool>,
 ) -> Result<String, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         library::agent_location(&state, &home, &conversation_id)?;
@@ -478,7 +570,12 @@ pub async fn get_chat_attachment_image(
             }),
             MAX_BYTES,
         )?;
-        Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+        let mime = if full == Some(true) {
+            item.mime.as_str()
+        } else {
+            "image/png"
+        };
+        Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
     })
     .await
     .map_err(|_| AgentError::internal())?
@@ -492,7 +589,7 @@ pub async fn save_chat_image(
     id: String,
 ) -> Result<bool, AgentError> {
     use tauri_plugin_dialog::DialogExt;
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         library::agent_location(&state, &home, &conversation_id)?;

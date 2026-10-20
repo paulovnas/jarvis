@@ -703,6 +703,7 @@ async fn completion_wakes_parent_once_even_when_it_arrives_before_wait_registrat
     let mut child = job(&hub, Role::Investigator, ".");
     child.status = Status::Running;
     child.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Completed,
         summary: "Evidence collected".into(),
         outcomes: vec!["Located handler".into()],
@@ -819,6 +820,7 @@ fn beads_dispatch_checks_real_status_and_blocking_dependencies() {
 
 fn completed_handoff(id: &str) -> Handoff {
     Handoff {
+        objective: None,
         verdict: Verdict::Completed,
         summary: "Implementation verified".into(),
         outcomes: vec!["Acceptance criteria met".into()],
@@ -828,6 +830,32 @@ fn completed_handoff(id: &str) -> Handoff {
         route: None,
         task_ids: vec![id.into()],
     }
+}
+
+#[test]
+fn finished_planning_with_remaining_deliverables_completes_only_the_stage() {
+    let (_fixture, hub) = hub();
+    let mut worker = job(&hub, Role::Custom, ".");
+    let mut handoff = completed_handoff("animation");
+    handoff.objective = Some(ObjectiveOutcome {
+        status: ObjectiveStatus::Partial,
+        remaining: vec!["Integrate walk cycles".into()],
+        reason: "Required inspection is unavailable".into(),
+        recovery_attempts: vec!["Dependency diagnosis preserved".into()],
+        next_action: "Repair the managed dependency, then continue the pending review".into(),
+    });
+    worker.handoff = Some(handoff);
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.jobs.insert(worker.id.clone(), worker.clone());
+        Ok(())
+    }).unwrap();
+    settle(&hub, &worker, &Ok(()), Some(25)).unwrap();
+    assert_eq!(hub.job(&worker.id).unwrap().status, Status::Completed);
+    let state = hub.manifest.lock().unwrap();
+    let notice: Value = serde_json::from_str(&state.messages.last().unwrap().text).unwrap();
+    assert_eq!(notice["status"], "completed");
+    assert_eq!(notice["handoff"]["objective"]["remaining"][0], "Integrate walk cycles");
 }
 
 #[test]
@@ -1147,6 +1175,7 @@ fn review_admits_completed_implementation_without_removing_its_beads_dependency(
     builder.bead_id = Some("implementation".into());
     builder.status = Status::Completed;
     builder.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Completed,
         summary: "Implemented".into(),
         outcomes: vec!["Works".into()],
@@ -1186,6 +1215,7 @@ fn repair_can_depend_on_a_review_with_findings_but_not_a_failed_review() {
     let mut review = job(&hub, Role::Reviewer, "backend");
     review.status = Status::Blocked;
     review.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Rework,
         summary: "Fix the missing validation".into(),
         outcomes: vec![],
@@ -1581,6 +1611,7 @@ fn harness_evaluation_rework_reuses_builder_and_reviewer_with_completed_prior_ro
     reviewer.status = Status::Blocked;
     reviewer.recovery_attempts = 2;
     reviewer.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Rework,
         summary: "Add the missing validation".into(),
         outcomes: vec![],

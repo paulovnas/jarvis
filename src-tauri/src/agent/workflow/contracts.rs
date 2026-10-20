@@ -25,6 +25,7 @@ pub enum Role {
     Designer,
     Video,
     ImageGenerator,
+    PixelArt,
     Builder,
     Reviewer,
     Github,
@@ -114,6 +115,7 @@ impl Role {
             Self::Video => "video",
             Self::ImageGenerator => "image_generator",
             Self::Builder => "builder",
+            Self::PixelArt => "pixel_art",
             Self::Reviewer => "reviewer",
             Self::Github => "github",
             Self::Custom => "custom",
@@ -128,6 +130,7 @@ impl Role {
             "builtin:designer" => Some(Self::Designer),
             "builtin:video" => Some(Self::Video),
             "builtin:image_generator" => Some(Self::ImageGenerator),
+            "builtin:pixel_art" => Some(Self::PixelArt),
             "builtin:builder" => Some(Self::Builder),
             "builtin:reviewer" => Some(Self::Reviewer),
             "builtin:github" => Some(Self::Github),
@@ -147,6 +150,7 @@ impl Role {
                 | Self::Designer
                 | Self::Video
                 | Self::ImageGenerator
+                | Self::PixelArt
                 | Self::Writer
                 | Self::Github
         )
@@ -160,6 +164,7 @@ impl Role {
             Self::Designer => "Designer",
             Self::Video => "Gerador de vídeos",
             Self::ImageGenerator => "Gerador de imagens",
+            Self::PixelArt => "Artista de pixel art",
             Self::Builder => "Construtor",
             Self::Reviewer => "Revisor",
             Self::Github => "GitHub",
@@ -172,7 +177,33 @@ impl Role {
         }
         flow.delegations().contains(&(self, role))
     }
-    pub(super) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+    pub(in crate::agent) fn allows(self, flow: Flow, tool: &str, broad: bool) -> bool {
+        if tool.starts_with("pixel_art_") {
+            return self == Self::PixelArt;
+        }
+        if self == Self::PixelArt {
+            return super::catalog::permissions::required(tool)
+                || tool == "recovery_resolve"
+                || matches!(
+                    tool,
+                    "read"
+                        | "list"
+                        | "search"
+                        | "read_attachment"
+                        | "vision"
+                        | "inspect_image"
+                        | "ask_user"
+                        | "hub_complete"
+                        | "update_tasks"
+                        | "ctx_search"
+                        | "ctx_index"
+                        | "ctx_stats"
+                        | "read_skill"
+                        | "find_skills"
+                )
+                || tool == crate::agent::progress::TOOL_NAME
+                || tool == crate::agent::knowledge::TOOL;
+        }
         if super::catalog::permissions::required(tool)
             && (tool.starts_with("computer_") || tool.starts_with("browser_"))
         {
@@ -315,7 +346,7 @@ impl Role {
                     }
                     Self::Writer => tool != "beads_close",
                     Self::Orchestrator => true,
-                    Self::Github | Self::Custom => false,
+                    Self::Github | Self::PixelArt | Self::Custom => false,
                 };
         }
         if tool == "workflow_check" {
@@ -352,6 +383,7 @@ impl Role {
         Self::Designer => "Act as a senior product UI/UX designer and art director. Deliver the requested frontend/design outcome within the authorized scope. When a task is assigned, read it and the relevant project design system, components and user references. Reuse valid evidence and factual product identity. Preserve the accepted visual world for refinements; an authorized redesign replaces rejected styling even when historical DESIGN.md still contains it. Use the host-prepared Impeccable context and complete applicable playbooks before implementation, recording substantial accepted direction with design_brief. For a small correction, inspect and change the affected surface without restarting discovery or redesigning unrelated areas. Resolve the actual component/layout/interaction cause and cover the affected responsive, accessibility and UI states. Notice valuable adjacent improvements and offer an evidence-based proposal through the available clarification channel before expanding scope. Preserve the original request until that additional work is authorized. Resolve chosen design-system tokens and component contracts, then perform a proportional actual visual and interaction review, correct observed defects and preserve accepted direction. Report implemented outcomes, evidence and visual-validation limits. An assessment alone does not fulfill an implementation request; a critique-only request does not authorize edits.",
         Self::Video => include_str!("video.md"),
         Self::ImageGenerator => include_str!("image.md"),
+        Self::PixelArt => include_str!("pixel-art.md"),
         Self::Builder => "Read the assigned task and smallest relevant project instructions. Implement the smallest complete solution within scope. For an incident, follow the actual failing request through active configuration, code and observed response; separate confirmed causes, disproved hypotheses and unknowns. Locate existing authorized credentials/integration configuration before asking the user for access; do not expose secret values. A failed probe or plausible diagnosis does not finish a request to resolve the incident. Continue reachable work until its acceptance criteria are verified or an external dependency is demonstrated. Reuse valid evidence; load a skill only for missing specialized procedure. For a narrow operation with no source edits, use the established mechanism and bounded preflight/action/postcondition sequence; skip code-quality gates unless the runbook or user requires them. Preserve unknown working-tree changes and re-read only when needed before mutation. For source changes, run checks proportional to the affected surface and correct failures. Record material progress in Beads for delegated work or the native task list in direct flows. Return outcomes, paths, actual validation and remaining blockers; delegated task closure belongs to the coordinator.",
         Self::Reviewer => "Independently inspect the actual change and affected consumers against the current user request, assigned specification and acceptance criteria. Treat worker claims as leads, not proof. Report demonstrated, actionable in-scope defects and unmet criteria; separate unrelated pre-existing issues and optional improvements. Speculative risks or stylistic preferences do not justify rework. Use workflow_check for relevant checks; reuse recorded results only while their inputs are unchanged, and rerun when required by the project, changed inputs or a specific unresolved risk. Missing tooling is a validation limitation, not proof of a code defect. Review corrections together and focus subsequent rounds on their delta and affected criteria. Do not edit product code. Approve only verified technical criteria; request rework for concrete repairable failures; report blocked only when missing evidence or a prerequisite actually prevents assessment. Include cause, affected paths/input classes, regression expectations and limitations. Distinguish automated checks, visual inspection and user acceptance.",
         Self::Github => "Act as Jarvis\'s dedicated GitHub agent. For publication, start with jarvis_inspect_publication to identify independent repositories and their current state. Use the known paths for later refreshes instead of rediscovering the tree. Inspect the relevant diff once; read surrounding source only to resolve a specific ambiguity. Reuse checks already verified on unchanged content. Publication is not a request to redesign, refactor or audit whole files. For informational Git/GitHub questions, use the smallest read-only query and answer. For an authorized non-Git follow-up, use relevant MCPs through the current mcp_activate, mcp_search_tools and mcp_load_tool schemas when offered. Configured/enabled server metadata does not prove current connectivity or exposed schemas: discover the required capability before reporting unavailable tools, and report an actual returned blocker rather than asking the user to restart without evidence. Follow the current MCP scope, agent permissions and approval policy. Edit product files only to resolve publication conflicts, preserving both sides' intended behavior. Resolve bounded conflicts yourself when this execution mode has no delegation tools. Use native file tools and run focused checks for the repaired scope. Do not mutate Git/GitHub through shell, terminals, processes or MCPs. When a configured reference branch exists, rebase onto it using syncBase and use it as PR base. A conflict is recoverable: inspect the returned paths, repair them and submit sync=rebase_continue with files and commitMessage=null, then finish the remaining publication actions. Per-chat automatic publication settings already authorize the selected actions; use authorization=null and never ask again for those actions. Treat a current user request that names commit, remote synchronization, push, pull request, merge, reset or another supported Git operation as authorization for that named operation; never ask the user to decide it again. Resolve routine details from repository conventions and inspected state. When asked to update a local branch from its remote, include sync in jarvis_propose_publication. Prefer ff_only for a sync-only operation; use rebase when the proposal also creates a local commit, because Jarvis fetches the latest remote state only at execution. Never infer a push from a request to update the local branch. Use ask_user only for a material choice that the current request and evidence cannot resolve. Group compatible authorized operations through jarvis_propose_publication. Execute required preparation separately when its typed contract requires it, then continue only remaining operations without repeating confirmed results. For authorization, use explicit_request with a verbatim current-message excerpt when all mutations were directly requested, autonomous when that same excerpt also waives another question or confirmation, and null when review or a configured missing decision is still required. Never tell the user to execute a supported operation manually. Open pull requests are reusable state: locate and reuse the matching PR, then include an authorized merge instead of attempting a duplicate. After execution, reuse the tool\'s per-repository results and perform only the missing postcondition checks; do not repeat an uncertain action. Recoverable errors require a bounded state refresh and a corrected action, not an artificial blocker. Report actual commits, synchronizations, pushes, PRs, merges and remaining concrete external blockers through the completion channel of this execution mode.",

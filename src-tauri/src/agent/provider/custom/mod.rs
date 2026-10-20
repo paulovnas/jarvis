@@ -11,6 +11,7 @@ use tokio::sync::watch;
 
 mod completions;
 mod messages;
+mod ollama;
 mod request;
 #[cfg(test)]
 mod tests;
@@ -37,6 +38,13 @@ pub(super) fn fixture_response(
             let mut stream = messages::Stream::default();
             for event in events {
                 let _ = stream.event(event, &mut |_| Ok(()))?;
+            }
+            stream.finish(&scope)
+        }
+        Protocol::Ollama => {
+            let mut stream = ollama::Stream::default();
+            for event in events {
+                stream.event(event, &mut |_| Ok(()))?;
             }
             stream.finish(&scope)
         }
@@ -132,10 +140,14 @@ fn authenticated_request_with_client(
             .header("X-OpenRouter-Title", "Jarvis")
             .header("X-OpenRouter-App-Visibility", "hidden");
     }
-    request = match config.auth_mode {
-        AuthMode::Bearer => request.bearer_auth(&credential.access),
-        AuthMode::XApiKey => request.header("x-api-key", &credential.access),
-    };
+    if config.protocol == Protocol::Ollama {
+        request = request.header("accept", "application/x-ndjson");
+    } else {
+        request = match config.auth_mode {
+            AuthMode::Bearer => request.bearer_auth(&credential.access),
+            AuthMode::XApiKey => request.header("x-api-key", &credential.access),
+        };
+    }
     if config.protocol == Protocol::AnthropicMessages {
         request = request.header("anthropic-version", "2023-06-01");
     }
@@ -355,10 +367,13 @@ async fn receive(
 ) -> Result<Response, AgentError> {
     let mut response = tokio::select! {
         _ = cancelled(&mut signal) => return Err(AgentError::cancelled()),
-        response = request.send() => response.map_err(|error| super::connection_error(error, "Não foi possível conectar ao endpoint Custom. Confira a URL e sua conexão."))?,
+        response = request.send() => response.map_err(|error| super::connection_error(error, if protocol == Protocol::Ollama { "Não foi possível conectar ao Ollama. Confira o endereço e se o servidor aceita conexões pela rede." } else { "Não foi possível conectar ao endpoint Custom. Confira a URL e sua conexão." }))?,
     };
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        if protocol == Protocol::Ollama && status == 404 {
+            return Err(AgentError::new("ollama_model", "O Ollama não encontrou este modelo ou endpoint. Confira o endereço e o ID/tag do modelo instalado no servidor."));
+        }
         let endpoint = response.url().clone();
         let read = async {
             let mut bytes = vec![];
@@ -414,6 +429,7 @@ async fn receive(
     let mut parser = Sse::default();
     let mut completions = completions::Stream::default();
     let mut messages = messages::Stream::default();
+    let mut ollama = ollama::Stream::default();
     let mut size = 0;
     loop {
         // A short drain after finish_reason collects the optional trailing usage chunk.
@@ -433,6 +449,10 @@ async fn receive(
             },
         };
         let Some(chunk) = chunk else {
+            if protocol == Protocol::Ollama {
+                ollama.push(b"\n", &mut on_delta)?;
+                return ollama.finish(scope);
+            }
             if protocol == Protocol::OpenaiCompletions
                 && parser.pending.is_empty()
                 && parser.data.is_empty()
@@ -444,6 +464,15 @@ async fn receive(
         size += chunk.len();
         if size > MAX_STREAM {
             return Err(protocol_error());
+        }
+        if protocol == Protocol::Ollama {
+            if ollama.push(&chunk, &mut on_delta)? {
+                return ollama.finish(scope);
+            }
+            if ollama.received_event {
+                parser.received_event = true;
+            }
+            continue;
         }
         for event in parser.push(&chunk)? {
             if event.get("error").is_some_and(|error| !error.is_null()) || event["type"] == "error"

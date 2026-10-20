@@ -53,8 +53,9 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange,
     return () => { active = false; };
   }, [hasOpenRouter, retry, onImageCatalogRefresh]);
   const availableAccounts = accounts;
-  const compatible = availableAccounts.filter(account => compatibleModels(account, kind).length > 0);
+  const compatible = availableAccounts.filter(account => (kind === "web_search" && account.providerKind === "brave-search" && account.enabled) || compatibleModels(account, kind).length > 0);
   const selected = compatible.find(account => account.alias === config.accountAlias);
+  const braveSelected = kind === "web_search" && selected?.providerKind === "brave-search";
   const museSelected = kind === "web_search" && config.executor === "muse" && !config.inheritChat;
   const museCatalog = museModels(muse.data).map(model => ({ id: model.value, name: model.label }));
   const museAvailable = Boolean(muse.data?.installed && muse.data.authenticated && museCatalog.length && !muse.error && !muse.data.error);
@@ -86,6 +87,7 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange,
           if (value === OFF || value === INHERIT) { void save({ executor: "jarvis", accountAlias: null, model: null, inheritChat: value === INHERIT }); return; }
           if (value === MUSE) { if (museAvailable) void save({ executor: "muse", accountAlias: null, model: museCatalog[0].id, inheritChat: false }); return; }
           const account = compatible.find(item => item.alias === value);
+          if (kind === "web_search" && account?.providerKind === "brave-search") { void save({ executor: "jarvis", accountAlias: value, model: null, inheritChat: false }); return; }
           const model = account && compatibleModels(account, kind)[0];
           if (!model) { toast.error("Nenhum modelo disponível nesta conta."); return; }
           void save({ executor: "jarvis", accountAlias: value, model: model.id, inheritChat: false });
@@ -93,11 +95,12 @@ export function WebSearchSettings({ accounts, kind = "web_search", onBusyChange,
           <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Provedor de ${title}`}><SelectValue /></SelectTrigger>
           <SelectContent>{accountItems.map(item => <SelectItem key={item.value} value={item.value} disabled={item.value === MUSE ? !museAvailable : unavailable && item.value === config.accountAlias} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
         </Select>
-        <Select items={modelItems} value={config.model} disabled={saving || config.inheritChat || (museSelected ? !museAvailable : !selected) || !models.length} onValueChange={model => { if (model) void save({ ...config, model }); }}>
+        {!braveSelected && <Select items={modelItems} value={config.model} disabled={saving || config.inheritChat || (museSelected ? !museAvailable : !selected) || !models.length} onValueChange={model => { if (model) void save({ ...config, model }); }}>
           <SelectTrigger className="w-full cursor-pointer text-xs" aria-label={`Modelo de ${title}`}><SelectValue placeholder={config.inheritChat ? "Modelo do chat" : "Modelo"} /></SelectTrigger>
           <SelectContent>{modelItems.map(item => <SelectItem key={item.value} value={item.value} disabled={!models.some(model => model.id === item.value)} className="cursor-pointer">{item.label}</SelectItem>)}</SelectContent>
-        </Select>
+        </Select>}
         {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+        {braveSelected && <p className="text-xs text-muted-foreground">A busca usa a API Brave Search e a cota do seu plano, sem modelo de IA.</p>}
         {museSelected && <p className="text-xs text-muted-foreground">A busca usa sua assinatura Muse Code, independente do modelo do chat.</p>}
         {imageGeneration && selected?.providerKind === "openai-codex" && <p className="text-xs text-muted-foreground">Usa sua assinatura ChatGPT conectada ao Codex, sem chave de API. A disponibilidade depende da conta e dos limites do plano.</p>}
         {imageGeneration && (selected?.providerKind === "custom" || selected?.providerKind === "openrouter") && <p className="text-xs text-muted-foreground">A geração usa a conta OpenRouter selecionada e consome o saldo de API, independente do modelo do chat.</p>}

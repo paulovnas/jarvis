@@ -5,8 +5,10 @@ import "./index.css";
 import { installWebviewShortcutGuards } from "./core/webview-shortcuts";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applicationSurface } from "./core/auxiliary-windows";
+import { installFrontendDiagnostics, reportFrontendDiagnostic } from "./core/diagnostics";
 
 installWebviewShortcutGuards();
+installFrontendDiagnostics();
 
 const surface = applicationSurface("__TAURI_INTERNALS__" in window ? getCurrentWindow().label : "main");
 if (surface !== "main") document.documentElement.classList.add("dark");
@@ -17,7 +19,11 @@ export const WindowContent = surface === "companion"
     ? lazy(() => import("./components/windows/AuxiliaryWindow").then(module => ({ default: surface === "settings" ? module.SettingsWindow : module.AboutWindow })))
     : lazy(() => import("./App"));
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement, {
+  onCaughtError: (error, info) => reportFrontendDiagnostic("react_error", error, info.componentStack),
+  onUncaughtError: (error, info) => reportFrontendDiagnostic("react_error", error, info.componentStack),
+  onRecoverableError: (error, info) => reportFrontendDiagnostic("react_recovery", error, info.componentStack),
+}).render(
   <React.StrictMode>
     <TooltipProvider delay={150}><Suspense fallback={null}><WindowContent /></Suspense></TooltipProvider>
   </React.StrictMode>,

@@ -42,6 +42,12 @@ fn application_context() -> tauri::Context {
 #[cfg(feature = "browser-probe")]
 pub fn run_browser_probe() {
     initialize_tls();
+    if std::env::var("JARVIS_PIXEL_PROBE").as_deref() == Ok("1") {
+        data_dir::configure_pixel_probe().expect("configure isolated pixel probe profile");
+        initialize_native_async_runtime();
+        agent::pixel_art_probe::run();
+        return;
+    }
     agent::browser::probe::run();
 }
 
@@ -63,6 +69,7 @@ fn main_only(invoke: tauri::ipc::Invoke, handler: fn(tauri::ipc::Invoke) -> bool
 
 fn application_command_allowed(label: &str, command: &str) -> bool {
     label == "main"
+        || (matches!(label, "settings" | "about" | "companion") && command == "record_frontend_diagnostic")
         || auxiliary_windows::command_allowed(label, command)
         || (label == "companion"
             && matches!(
@@ -109,6 +116,38 @@ fn application_command_allowed(label: &str, command: &str) -> bool {
 #[cfg(test)]
 mod companion_policy_tests {
     use super::application_command_allowed;
+    #[test]
+    fn diagnostic_reporting_cannot_grant_browser_or_worker_access_to_log_maintenance() {
+        for label in ["main", "settings", "about", "companion"] {
+            assert!(application_command_allowed(label, "record_frontend_diagnostic"));
+        }
+        for label in ["browser-1", "pixel-worker-0123456789abcdef0123456789abcdef", "unknown"] {
+            for command in ["record_frontend_diagnostic", "get_diagnostic_log_status", "clear_diagnostic_logs"] {
+                assert!(!application_command_allowed(label, command));
+            }
+        }
+        assert!(application_command_allowed("settings", "get_diagnostic_log_status"));
+        assert!(application_command_allowed("settings", "clear_diagnostic_logs"));
+        assert!(!application_command_allowed("companion", "clear_diagnostic_logs"));
+        assert!(!application_command_allowed("about", "clear_diagnostic_logs"));
+    }
+
+    #[test]
+    fn pixel_processing_worker_has_only_the_bounded_image_command() {
+        let worker="pixel-worker-0123456789abcdef0123456789abcdef";
+        assert!(!application_command_allowed(worker,"process_pixel_art_image"));
+        let capability:serde_json::Value=serde_json::from_str(include_str!("../capabilities/pixel-processing.json")).unwrap();
+        assert_eq!(capability["permissions"],serde_json::json!(["pixel-processing:allow-process-pixel-art-image"]));
+        assert_eq!(capability["webviews"],serde_json::json!(["pixel-worker-*"]));
+        assert_eq!(capability["remote"]["urls"],serde_json::json!(["http://127.0.0.1:*/*"]));
+        assert_eq!(capability["local"],false);
+        for command in ["run_shell","get_chat","start_agent_turn","save_system_preferences"] {
+            assert!(!application_command_allowed(worker,command));
+        }
+        for label in ["browser-1","pixel-worker-","pixel-worker-invalid","settings","about"] {
+            assert!(!application_command_allowed(label,"process_pixel_art_image"));
+        }
+    }
     #[test]
     fn auxiliary_window_has_only_its_commands_and_browser_tabs_have_none() {
         assert!(application_command_allowed(
@@ -201,16 +240,16 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-#[cfg(target_os = "linux")]
-fn initialize_linux_async_runtime() {
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn initialize_native_async_runtime() {
     static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
     RUNTIME.get_or_init(|| {
-        // Native tool polling exceeds Tokio's default 2 MiB stack in Linux debug builds.
+        // Nested native tool polling can exceed the default 2 MiB worker stack.
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_stack_size(8 * 1024 * 1024)
             .enable_all()
             .build()
-            .expect("Failed to initialize the Linux async runtime");
+            .expect("Failed to initialize the native async runtime");
         tauri::async_runtime::set(runtime.handle().clone());
         runtime
     });
@@ -219,6 +258,8 @@ fn initialize_linux_async_runtime() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     initialize_tls();
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    initialize_native_async_runtime();
     let builder = tauri::Builder::default().runtime(tauri_runtime_cef::Cef::default());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -242,6 +283,7 @@ pub fn run() {
         .manage(claude::ClaudeState::default())
         .manage(muse::MuseState::default())
         .manage(agent::AgentState::default())
+        .manage(agent::pixel_art::State::default())
         .manage(agent::remote::RuntimeState::default())
         .manage(remote::RemoteState::default())
         .manage(agent::knowledge::generation::KnowledgeJobs::default())
@@ -259,10 +301,9 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(agent::pixel_art::processing::plugin())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            #[cfg(target_os = "linux")]
-            initialize_linux_async_runtime();
             use tauri::Manager;
             let home = app.path().home_dir()?;
             let profile = data_dir::configure(&app.config().identifier)?;
@@ -395,6 +436,12 @@ pub fn run() {
                 http_client::export_project_http,
                 http_client::import_project_http,
                 agent::browser::get_browser_tabs,
+                agent::pixel_art::get_pixel_art_session,
+                agent::pixel_art::processing::process_pixel_art_image,
+                agent::pixel_art::get_pixel_art_jobs,
+                agent::pixel_art::save_pixel_art_artifact,
+                agent::pixel_art::open_pixel_art_suite,
+                agent::pixel_art::set_pixel_art_viewport,
                 agent::browser::browser_command,
                 agent::browser::set_browser_viewport,
                 agent::browser::extension::get_browser_extension_status,
@@ -467,6 +514,9 @@ pub fn run() {
                 core::health::diagnose_core,
                 core::health::repair_core_component,
                 diagnostics::get_diagnostic_summary,
+                diagnostics::logs::get_diagnostic_log_status,
+                diagnostics::logs::clear_diagnostic_logs,
+                diagnostics::logs::record_frontend_diagnostic,
                 self_development::get_self_development_status,
                 self_development::set_self_development_enabled,
                 self_development::list_self_development_sources,
@@ -619,8 +669,11 @@ pub fn run() {
                 openai_codex::set_provider_model_enabled,
                 openai_codex::custom::save_custom_provider,
                 openai_codex::opencode_go::save_opencode_go_provider,
+                openai_codex::brave::save_brave_search_provider,
                 openai_codex::charm_hyper::save_charm_hyper_provider,
                 openai_codex::openrouter::save_openrouter_provider,
+                openai_codex::ollama::save_ollama_provider,
+                openai_codex::ollama::lookup_ollama_model,
                 openai_codex::charm_hyper::panel::get_charm_hyper_panel_status,
                 openai_codex::charm_hyper::panel::start_charm_hyper_panel_connection,
                 openai_codex::charm_hyper::panel::finish_charm_hyper_panel_connection,

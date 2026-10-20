@@ -591,6 +591,7 @@ mod tests {
         job.phase = Phase::Publication;
         job.status = Status::Completed;
         job.handoff = Some(Handoff {
+            objective: None,
             verdict: Verdict::Completed,
             summary: "Commit publicado.".into(),
             outcomes: vec![],

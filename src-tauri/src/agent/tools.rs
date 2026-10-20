@@ -71,6 +71,7 @@ pub(super) fn needs_approval(name: &str) -> bool {
     ) || super::browser::mutating(name)
         || super::http::mutating(name)
         || super::video::mutating(name)
+        || name == "pixel_art_run"
 }
 
 pub(super) fn definitions(mode: Mode) -> Vec<Value> {
@@ -85,6 +86,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     ];
     tools.extend(super::lsp::definitions());
     tools.extend(super::video::definitions(mode));
+    tools.extend(super::pixel_art::definitions(mode));
     if mode == Mode::Build {
         tools.extend(super::command_sessions::definitions());
         tools.extend([
@@ -181,16 +183,19 @@ pub(super) fn scoped(root: &Path, value: &str, create: bool) -> Result<PathBuf, 
     };
     let mut path = root.to_path_buf();
     let components: Vec<_> = relative.components().collect();
+    if components
+        .iter()
+        .any(|component| !matches!(component, Component::CurDir | Component::Normal(_)))
+    {
+        return Err(error(
+            "O caminho precisa estar dentro da pasta do projeto, sem '..'.",
+        ));
+    }
     for (index, component) in components.iter().enumerate() {
-        match component {
-            Component::CurDir => continue,
-            Component::Normal(part) => path.push(part),
-            _ => {
-                return Err(error(
-                    "O caminho precisa estar dentro da pasta do projeto, sem '..'.",
-                ))
-            }
-        }
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        path.push(part);
         match fs::symlink_metadata(&path) {
             Ok(meta) if meta.is_symlink() => {
                 return Err(error(
@@ -206,6 +211,12 @@ pub(super) fn scoped(root: &Path, value: &str, create: bool) -> Result<PathBuf, 
                     fs::create_dir(&path)
                         .map_err(|_| error("Não foi possível criar a pasta do arquivo."))?;
                 }
+            }
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {
+                return Err(AgentError::new(
+                    "file_not_found",
+                    "O arquivo ou pasta não existe.",
+                ));
             }
             Err(_) => {
                 return Err(error(
@@ -224,9 +235,13 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>, AgentError> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW);
     }
-    let file = options
-        .open(path)
-        .map_err(|_| error("Não foi possível ler o arquivo."))?;
+    let file = options.open(path).map_err(|cause| {
+        if cause.kind() == std::io::ErrorKind::NotFound {
+            AgentError::new("file_not_found", "O arquivo ou pasta não existe.")
+        } else {
+            error("Não foi possível ler o arquivo.")
+        }
+    })?;
     let meta = file
         .metadata()
         .map_err(|_| error("Não foi possível verificar o arquivo."))?;

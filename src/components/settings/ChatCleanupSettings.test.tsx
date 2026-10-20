@@ -9,6 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   Channel: class<T> { onmessage?: (value: T) => void; },
 }));
 const call = vi.mocked(invoke);
+vi.mock("./DiagnosticLogSettings", () => ({ DiagnosticLogSettings: () => null }));
 const preview = { days: 7, bytes: 24000, protected: 1, conversations: [{ id: "old", title: "Conversa antiga", projectId: "p", projectName: "Projeto", activity: 100, bytes: 24000 }] };
 const emptyCache = { bytes: 0, repositories: 0, residues: 0 };
 const emptyJournals = { files: 0, conversationJournals: 0, workerJournals: 0, protectedFiles: 0, invalidFiles: 0, candidates: 0, currentBytes: 0, liveBytes: 0, recoverableBytes: 0, obsoleteRecords: 0, maxAmplificationBps: 100 };
@@ -89,7 +90,7 @@ describe("conversation cleanup", () => {
     expect(within(region).getByRole("status", { name: "Analisando arquivos de histórico" })).toBeInTheDocument();
     expect(within(region).getByRole("button", { name: "Otimizar históricos" })).toBeDisabled();
 
-    await act(() => { resolveJournals({ ...emptyJournals, files: 3, currentBytes: 1024 }); });
+    await act(async () => { resolveJournals({ ...emptyJournals, files: 3, currentBytes: 1024 }); });
     expect(within(region).queryByRole("status", { name: "Analisando arquivos de histórico" })).not.toBeInTheDocument();
     expect(within(region).getByText("3 arquivos de histórico analisados")).toBeInTheDocument();
     expect(within(region).getByText("1 KB")).toBeInTheDocument();

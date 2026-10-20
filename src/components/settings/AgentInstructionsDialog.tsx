@@ -34,7 +34,7 @@ export function AgentInstructionsDialog({ flow, role, children }: { flow: Workfl
       <DialogHeader className="shrink-0 border-b bg-card/80 px-6 py-5 pr-12">
         <DialogTitle className="flex items-center gap-3 text-base">
           <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-md border" style={{ color: ROLE_COLORS[role], borderColor: `${ROLE_COLORS[role]}40`, backgroundColor: `${ROLE_COLORS[role]}10` }}><Icon className="size-4" /></span>
-          <span>{ROLE_LABELS[role]}</span>{" "}<Badge variant="outline" className="text-[10px] text-muted-foreground">{FLOW_LABELS[flow]}</Badge>
+          <span>{ROLE_LABELS[role]}</span>{" "}<Badge variant="outline" className="text-[10px] text-muted-foreground">{role === "pixel_art" ? "Pixel art" : FLOW_LABELS[flow]}</Badge>
         </DialogTitle>
         <DialogDescription className="flex items-center gap-1.5 pl-12 text-xs"><LockKeyhole aria-hidden="true" className="size-3" />Instruções fixas · Somente leitura</DialogDescription>
       </DialogHeader>

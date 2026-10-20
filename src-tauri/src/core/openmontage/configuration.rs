@@ -56,6 +56,11 @@ pub struct ConfigurationInput {
 
 const OPTIONAL: &[(&str, &str, &[&str])] = &[
     (
+        "vision",
+        "Análise visual local (Transformers e PyTorch)",
+        &["transformers", "torch"],
+    ),
+    (
         "piper",
         "Motor Piper (configure uma voz ONNX e seu JSON)",
         &["piper-tts"],
@@ -444,6 +449,25 @@ pub async fn install_openmontage_optional_package(
         .map_err(|_| error("Configuração de vídeo indisponível."))?
 }
 
+pub(crate) fn dependency_package(missing: &[String]) -> Result<(&'static str, &'static [&'static str]), CoreError> {
+    if missing.is_empty() || missing.len() > 32 {
+        return Err(error("O catálogo não identificou dependências Python ausentes para reparar."));
+    }
+    let modules: Option<Vec<_>> = missing.iter().map(|dependency| {
+        dependency.strip_prefix("python:").map(|module| match module {
+            "cv2" => "opencv-python".to_owned(),
+            "PIL" => "pillow".to_owned(),
+            _ => module.replace('_', "-"),
+        })
+    }).collect();
+    let modules = modules.ok_or_else(|| error("Este requisito precisa de configuração no Core; não é um pacote Python gerenciado."))?;
+    OPTIONAL.iter()
+        .filter(|(_, _, packages)| modules.iter().all(|module| packages.iter().any(|package| normalized_package(package) == *module)))
+        .min_by_key(|(_, _, packages)| packages.len())
+        .map(|(id, _, packages)| (*id, *packages))
+        .ok_or_else(|| error("Não há um pacote gerenciado para essas dependências. Confira o requisito em Configurações → Core → OpenMontage; nenhum comando de instalação foi executado."))
+}
+
 async fn install_optional(
     generation: &Path,
     home: &Path,
@@ -486,6 +510,15 @@ async fn install_optional(
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    #[test]
+    fn dependency_repair_uses_the_smallest_managed_package_and_rejects_arbitrary_inputs() {
+        let (id, packages) = dependency_package(&["python:transformers".into(), "python:torch".into()]).unwrap();
+        assert_eq!(id, "vision");
+        assert_eq!(packages, &["transformers", "torch"]);
+        for missing in [vec![], vec!["env:API_KEY".into()], vec!["python:unknown --index-url https://example.com".into()]] {
+            assert!(dependency_package(&missing).is_err());
+        }
+    }
     #[derive(Default)]
     struct Memory(Mutex<BTreeMap<String, String>>);
     impl Secrets for Memory {

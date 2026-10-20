@@ -34,3 +34,15 @@
 [submodule "docs/brag"]
 	path = docs/brag
 	url = https://github.com/latent-spaces/brag.git
+[submodule "docs/image-cockpit-for-codex-workflows"]
+	path = docs/image-cockpit-for-codex-workflows
+	url = https://github.com/dreiachse-cyber/image-cockpit-for-codex-workflows.git
+[submodule "docs/chongdashu/ai-game-spritesheets"]
+	path = docs/chongdashu/ai-game-spritesheets
+	url = https://github.com/chongdashu/ai-game-spritesheets
+[submodule "docs/chongdashu/ai-pixel-snapped-game-sprites"]
+	path = docs/chongdashu/ai-pixel-snapped-game-sprites
+	url = https://github.com/chongdashu/ai-pixel-snapped-game-sprites.git
+[submodule "docs/chongdashu/vibe-isometric-sprites"]
+	path = docs/chongdashu/vibe-isometric-sprites
+	url = https://github.com/chongdashu/vibe-isometric-sprites

@@ -153,7 +153,46 @@ const MIGRATIONS: &[Migration] = &[
         version: 35,
         sql: include_str!("../../drizzle/0034_openrouter.sql"),
     },
+    Migration {
+        version: 36,
+        sql: include_str!("../../drizzle/0035_ollama.sql"),
+    },
+    Migration {
+        version: 37,
+        sql: include_str!("../../drizzle/0036_brave_search.sql"),
+    },
 ];
+
+#[test]
+fn brave_search_migration_preserves_accounts_and_tool_selections() {
+    let mut db = Connection::open_in_memory().unwrap();
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    for migration in MIGRATIONS.iter().take(36) {
+        db.execute_batch(migration.sql).unwrap();
+    }
+    db.execute_batch("INSERT INTO provider_accounts(alias,provider_kind,account_id,enabled,show_usage,display_name) VALUES ('openai-codex-work','openai-codex','work',0,0,'My account');
+        INSERT INTO custom_provider_configs VALUES ('openai-codex-work','{}');
+        INSERT INTO provider_model_exclusions VALUES ('openai-codex-work','excluded');
+        INSERT INTO provider_transport_preferences VALUES ('openai-codex-work',1);
+        INSERT INTO opencode_go_catalogs VALUES ('openai-codex-work','[]');
+        INSERT INTO web_search_config(id,account_alias,model,inherit_chat) VALUES (1,'openai-codex-work','search-model',0);
+        INSERT INTO vision_config(id,account_alias,model,inherit_chat) VALUES (1,'openai-codex-work','vision-model',0);
+        INSERT INTO image_generation_config(id,account_alias,model) VALUES (1,'openai-codex-work','image-model');
+        PRAGMA user_version=36;").unwrap();
+    initialize_database(&mut db).unwrap();
+    let account: (String, bool, bool) = db.query_row("SELECT display_name,enabled,show_usage FROM provider_accounts", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+    assert_eq!(account, ("My account".into(), false, false));
+    for table in ["custom_provider_configs", "provider_model_exclusions", "provider_transport_preferences", "opencode_go_catalogs"] {
+        assert_eq!(db.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).unwrap(), 1, "{table}");
+    }
+    for (table, expected) in [("web_search_config", "search-model"), ("vision_config", "vision-model"), ("image_generation_config", "image-model")] {
+        let selected: (String, String) = db.query_row(&format!("SELECT account_alias,model FROM {table} WHERE id=1"), [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(selected, ("openai-codex-work".into(), expected.into()));
+    }
+    db.execute("INSERT INTO provider_accounts(alias,provider_kind,account_id) VALUES ('brave-search-work','brave-search','brave-id')", []).unwrap();
+    initialize_database(&mut db).unwrap();
+    assert!(db.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+}
 
 #[test]
 fn native_openrouter_migration_preserves_manual_models_keys_and_preferences() {
@@ -163,7 +202,7 @@ fn native_openrouter_migration_preserves_manual_models_keys_and_preferences() {
         db.execute_batch(migration.sql).unwrap();
     }
     db.execute_batch(r#"INSERT INTO provider_accounts(alias,provider_kind,account_id,display_name,show_weekly_usage) VALUES ('meu-router','custom','custom:stable','Minha conta',0); INSERT INTO custom_provider_configs VALUES ('meu-router','{"baseUrl":"https://openrouter.ai/api/v1/","protocol":"openai-completions","authMode":"bearer","models":[{"id":"manual-model"}]}'); INSERT INTO provider_model_exclusions VALUES ('meu-router','excluded');"#).unwrap();
-    db.execute_batch(MIGRATIONS.last().unwrap().sql).unwrap();
+    db.execute_batch(MIGRATIONS[34].sql).unwrap();
     let row: (String,String,String,i64) = db.query_row("SELECT provider_kind,account_id,display_name,show_weekly_usage FROM provider_accounts WHERE alias='meu-router'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
     assert_eq!(
         row,
@@ -498,7 +537,7 @@ fn charm_hyper_migration_preserves_accounts_preferences_catalogs_and_tool_select
         assert_eq!(
             db.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            35
+            36
         );
     }
     db.execute_batch(
@@ -1268,7 +1307,7 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM app_config", [], |row| row.get(0))
             .expect("singleton count");
 
-        assert_eq!(version, 35);
+        assert_eq!(version, 37);
         assert_eq!(count, 1);
         assert_eq!(
             read_app_config(&connection).expect("default config"),
@@ -1410,7 +1449,7 @@ mod tests {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .expect("schema version");
-        assert_eq!(version, 35);
+        assert_eq!(version, 37);
         assert_eq!(
             read_app_config(&connection).expect("preserved app config"),
             AppConfig {

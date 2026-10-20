@@ -1039,7 +1039,7 @@ async fn run<T: Send + 'static>(
     state: AppState,
     operation: impl FnOnce(&mut Connection, &Path) -> Result<T, LibraryError> + Send + 'static,
 ) -> Result<T, LibraryError> {
-    let home = app.path().home_dir().map_err(|_| LibraryError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| LibraryError::storage())?;
     tauri::async_runtime::spawn_blocking(move || {
         state.with_connection(&home, |connection| operation(connection, &home))
     })
@@ -1201,7 +1201,7 @@ pub async fn delete_library_item(
             "Confirme a exclusão definitiva antes de continuar.",
         ));
     }
-    let home = app.path().home_dir().map_err(|_| LibraryError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| LibraryError::storage())?;
     let state = state.inner().clone();
     let agent = agent.inner().clone();
     let result = tauri::async_runtime::spawn_blocking(move || {

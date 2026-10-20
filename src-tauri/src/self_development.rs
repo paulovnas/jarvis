@@ -1268,6 +1268,18 @@ pub(crate) fn read_approved_incident(
     })
 }
 
+pub(crate) async fn read_log_diagnostics(
+    home: &Path, root: &Path, project_id: &str, query: crate::diagnostics::logs::Query,
+) -> Result<Value, SelfDevelopmentError> {
+    require_for_root(home, root, project_id)?;
+    let page = crate::diagnostics::logs::read(query).await.map_err(|_| SelfDevelopmentError {
+        code: "self_development_logs",
+        message: "Não foi possível consultar os logs internos. Verifique os filtros e o armazenamento local.",
+    })?;
+    require_for_root(home, root, project_id)?;
+    serde_json::to_value(page).map_err(|_| storage())
+}
+
 pub(crate) async fn read_summary_diagnostics(
     home: &Path,
     root: &Path,
@@ -1284,6 +1296,7 @@ pub(crate) async fn read_summary_diagnostics(
             "logFiles",
             "logBytes",
             "eventCount",
+            "recentEvents",
         ] {
             if let Some(value) = summary.get(field) {
                 result[field] = value.clone();
@@ -1293,6 +1306,7 @@ pub(crate) async fn read_summary_diagnostics(
     if let Ok(report) = crate::agent::telemetry::get_harness_report().await {
         result["harness"] = serde_json::to_value(report).map_err(|_| storage())?;
     }
+    result["logReadTool"] = json!("jarvis_dev_logs");
     require_for_root(home, root, project_id)?;
     Ok(result)
 }

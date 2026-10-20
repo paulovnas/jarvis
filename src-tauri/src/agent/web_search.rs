@@ -10,6 +10,8 @@ use std::{path::Path, time::Duration};
 use tauri::Manager;
 use tokio::sync::watch;
 
+mod brave;
+
 const TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -75,13 +77,11 @@ pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> b
                     && crate::muse::validate_available_model(home, model).is_ok()
             });
         }
-        selected
-            .account_alias
-            .as_deref()
-            .zip(selected.model.as_deref())
-            .is_some_and(|(alias, model)| {
-                account_kind(state, home, alias).is_ok_and(|kind| supports(&kind, model))
+        selected.account_alias.as_deref().is_some_and(|alias| {
+            account_kind(state, home, alias).is_ok_and(|kind| {
+                kind == "brave-search" || selected.model.as_deref().is_some_and(|model| supports(&kind, model))
             })
+        })
     })
 }
 
@@ -148,7 +148,7 @@ fn save_config(
     let transaction = connection.transaction().map_err(|_| storage_error())?;
     if let Some(alias) = &account_alias {
         let compatible: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity'))",
+            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'brave-search'))",
             params![alias], |row| row.get(0),
         ).map_err(|_| storage_error())?;
         if !compatible {
@@ -226,6 +226,11 @@ pub async fn set_web_search_config(
         let account_alias = if inherit_chat { None } else { account_alias };
         let model = if let Some(alias) = &account_alias {
             let kind = account_kind(&state, &home, alias)?;
+            if kind == "brave-search" {
+                return state.with_connection(&home, |connection| {
+                    save_config(connection, account_alias, None, false, executor)
+                });
+            }
             if !model.as_deref().is_some_and(|model| supports(&kind, model)) {
                 return Err(AgentError::new(
                     "web_search_model",
@@ -250,7 +255,7 @@ pub async fn set_web_search_config(
 }
 
 pub(super) fn definition() -> Value {
-    json!({"type":"function", "name":"web_search", "description":"Search the web for current facts, external documentation or sources. Returns an answer and source URLs using the account configured for Web Search. Send only a focused search query, never credentials or private project content.",
+    json!({"type":"function", "name":"web_search", "description":"Search the web for current facts, external documentation or sources. Returns search results or an answer with source URLs using the account configured for Web Search. Send only a focused search query, never credentials or private project content.",
         "parameters":{"type":"object", "properties":{"query":{"type":"string", "minLength":1, "maxLength":2000}, "limit":{"type":"integer", "minimum":1, "maximum":10}}, "required":["query"], "additionalProperties":false}})
 }
 
@@ -361,7 +366,7 @@ pub(super) async fn execute(
             )
         })?;
         let kind = account_kind(state, home, &alias)?;
-        if !config
+        if kind != "brave-search" && !config
             .model
             .as_deref()
             .is_some_and(|model| supports(&kind, model))
@@ -380,10 +385,6 @@ pub(super) async fn execute(
         })
         .await
         .map_err(|_| AgentError::internal())??;
-        let model = config.model.as_deref().ok_or_else(|| {
-            AgentError::new("web_search_model", "Selecione o modelo de Web Search.")
-        })?;
-        require_search_model(&models, model)?;
         // A disconnect or settings change while credentials were resolving must not
         // silently send a query through an account the user no longer selected.
         if load(state, home)? != stored {
@@ -393,6 +394,14 @@ pub(super) async fn execute(
             ));
         }
         crate::persistence::require_enabled_account(state, home, &alias)?;
+        if kind == "brave-search" {
+            let request = brave::request(&credential.access, &args.query, args.limit.unwrap_or(8))?;
+            return brave::receive(request, &alias, args.limit.unwrap_or(8)).await;
+        }
+        let model = config.model.as_deref().ok_or_else(|| {
+            AgentError::new("web_search_model", "Selecione o modelo de Web Search.")
+        })?;
+        require_search_model(&models, model)?;
         if kind == "antigravity" {
             let response = provider::grounded_search(
                 &credential,

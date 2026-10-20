@@ -81,7 +81,7 @@ fn now() -> u64 {
         .as_millis() as u64
 }
 fn home(app: &tauri::AppHandle) -> Result<PathBuf, HttpError> {
-    app.path().home_dir().map_err(|_| storage())
+    crate::data_dir::app_home(&app).map_err(|_| storage())
 }
 fn directory(home: &Path, project: &str) -> Result<PathBuf, HttpError> {
     store::valid_id(project)?;

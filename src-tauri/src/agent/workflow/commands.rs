@@ -1,9 +1,29 @@
 use super::*;
 
-#[derive(Serialize)]
-struct HandoffSummary {
+#[derive(Clone, Serialize)]
+pub(super) struct HandoffSummary {
     verdict: Verdict,
     summary: String,
+    limitations: Vec<String>,
+    objective: Option<ObjectiveOutcome>,
+}
+impl From<&Handoff> for HandoffSummary {
+    fn from(handoff: &Handoff) -> Self {
+        Self {
+            verdict: handoff.verdict.clone(),
+            summary: if handoff.successful() { handoff.summary.chars().take(300).collect() } else { handoff.summary.clone() },
+            limitations: handoff.limitations.clone(), objective: handoff.objective.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub(super) struct StageResult {
+    pub(super) number: String,
+    pub(super) name: String,
+    pub(super) status: Status,
+    pub(super) handoff: Option<HandoffSummary>,
+    pub(super) error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -62,6 +82,8 @@ pub struct AgentCard {
 pub struct Snapshot {
     conversation_id: String,
     revision: u64,
+    run_id: String,
+    stages: Vec<StageResult>,
     flow: Flow,
     agents: Vec<AgentCard>,
     validation: Option<validation::Batch>,
@@ -190,6 +212,7 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
             .and_then(|turn| super::super::generation::aggregate(&turn.turn.steps));
         agents[0].active_since = active_since;
         agents[0].current_thought = current_thought;
+        agents[0].error = data.turns.last().and_then(|turn| turn.turn.error.as_ref()).map(|error| error.message.clone());
         agents[0].reconnecting = data.active.is_some()
             && data.turns.last().is_some_and(|turn| {
                 turn.turn
@@ -233,7 +256,7 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
                 appearance: agent.appearance,
             }),
             title: job.title.clone(),
-            status: job.status,
+            status: job.stage_status(),
             reconnecting: false,
             created_at: job.created_at,
             updated_at: job.updated_at,
@@ -244,10 +267,7 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
             current_thought: None,
             options: job.options.clone(),
             bead_id: job.bead_id.clone(),
-            handoff: job.handoff.as_ref().map(|handoff| HandoffSummary {
-                verdict: handoff.verdict.clone(),
-                summary: handoff.summary.chars().take(300).collect(),
-            }),
+            handoff: job.handoff.as_ref().map(HandoffSummary::from),
             error: job.error.clone(),
             attempts: job.attempts,
             pending_approval: None,
@@ -301,9 +321,20 @@ pub(super) fn snapshot(state: &Manifest, hub: Option<&Hub>) -> Result<Snapshot, 
             right.id.as_str(),
         ))
     });
+    let stages = custom::stage_results(state);
+    if matches!(state.root_status, Status::Blocked | Status::Failed) {
+        if let Some(stage) = stages.last() {
+            agents[0].handoff = stage.handoff.clone();
+            if agents[0].error.is_none() {
+                agents[0].error = stage.error.clone();
+            }
+        }
+    }
     Ok(Snapshot {
         conversation_id: state.conversation_id.clone(),
         revision: state.revision,
+        run_id: state.run_id.clone(),
+        stages,
         flow: state.flow,
         agents,
         validation: state
@@ -406,7 +437,7 @@ pub async fn get_workflow(
     agent: tauri::State<'_, AgentState>,
     conversation_id: String,
 ) -> Result<Option<Snapshot>, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -444,7 +475,7 @@ pub async fn get_workflow_transcript(
     conversation_id: String,
     agent_id: String,
 ) -> Result<ChatSnapshot, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -533,8 +564,7 @@ pub async fn answer_workflow_authoring(
     agent_id: String,
     decision: authoring::Decision,
 ) -> Result<(), AgentError> {
-    use tauri::Manager;
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let persistence = persistence.inner().clone();
     let agent = agent.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -751,6 +781,7 @@ mod tests {
         let (_fixture, hub) = super::super::tests::hub();
         let mut job = super::super::tests::job(&hub, Role::Reviewer, ".");
         job.handoff = Some(Handoff {
+            objective: None,
             verdict: Verdict::Approved,
             summary: "á".repeat(1000),
             outcomes: vec!["Outcome".into()],

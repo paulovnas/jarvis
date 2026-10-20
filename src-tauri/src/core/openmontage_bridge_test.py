@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 BRIDGE = Path(__file__).with_name("openmontage_bridge.py")
@@ -22,6 +23,43 @@ spec.loader.exec_module(bridge)
 
 
 class BridgeBoundaries(unittest.TestCase):
+    def test_missing_python_dependencies_offer_native_recovery_without_shell_instructions(self):
+        tool = SimpleNamespace(name="video_understand", dependencies=["python:transformers", "python:torch"],
+            get_info=lambda: {"name": "video_understand", "status": "unavailable",
+                "unavailableReason": "Python module transformers not installed"})
+        with patch("importlib.util.find_spec", return_value=None):
+            info = bridge.tool_info(tool)
+        self.assertEqual(info.get("missingDependencies"), ["python:transformers", "python:torch"])
+        self.assertEqual(info.get("recovery"), {"tool": "video_run", "arguments": {
+            "action": "repair", "tool": "video_understand", "path": "."}})
+
+    def test_dependency_recovery_does_not_install_credentials_or_repeat_ready_tools(self):
+        for status, dependencies in [("available", ["python:torch"]), ("unavailable", ["env:API_KEY"])]:
+            tool = SimpleNamespace(name="video_understand", dependencies=dependencies,
+                get_info=lambda: {"status": status, "unavailableReason": "Configure provider"})
+            with patch("importlib.util.find_spec", return_value=None):
+                self.assertNotIn("recovery", bridge.tool_info(tool))
+
+    def test_catalog_discovery_does_not_probe_python_dependencies(self):
+        tool = SimpleNamespace(name="video_understand", dependencies=["python:torch"],
+            runtime="local_gpu", stability="experimental")
+        with patch("importlib.util.find_spec", side_effect=AssertionError("catalog imported a dependency")):
+            info = bridge.tool_info(tool, check_dependencies=False)
+        self.assertEqual(info["status"], "not_checked")
+        self.assertNotIn("recovery", info)
+
+    def test_unavailable_preflight_preserves_the_cause_and_managed_recovery(self):
+        tool = SimpleNamespace(name="video_understand", dependencies=["python:transformers"],
+            get_info=lambda: {"status": "unavailable", "runtime": "local_gpu",
+                "unavailableReason": "Python module transformers not installed"},
+            dry_run=lambda args: {"estimated_cost_usd": 0, "status": "available"})
+        with patch("importlib.util.find_spec", return_value=None):
+            _, preflight = bridge.needs_approval(tool, {})
+        self.assertEqual(preflight["status"], "unavailable")
+        self.assertIn("transformers", preflight["unavailableReason"])
+        self.assertEqual(preflight["missingDependencies"], ["python:transformers"])
+        self.assertEqual(preflight["recovery"]["arguments"]["action"], "repair")
+
     def test_flushing_split_secret_does_not_publish_partial_credentials(self):
         output = io.StringIO()
         stream = bridge.RedactingStream(output, ["sk-long-provider-secret"])
@@ -67,9 +105,24 @@ class BridgeBoundaries(unittest.TestCase):
                 bridge.scoped_arguments({"output_dir":"frames"}, root, production)
             self.assertEqual(bridge.scoped_arguments({"output_path": "final.mp4"}, root, production, write_outputs=False)["output_path"], str(previous))
             if hasattr(os, "symlink"):
-                (production / "escape").symlink_to(root.parent, target_is_directory=True)
-                with self.assertRaises(bridge.BridgeError):
-                    bridge.scoped_arguments({"output_path": "escape/outside.mp4"}, root, production)
+                escape = production / "escape"
+                try:
+                    escape.symlink_to(root.parent, target_is_directory=True)
+                except OSError as error:
+                    if os.name != "nt" or error.winerror != 1314:
+                        raise
+                    # Junctions exercise the same directory escape without administrator privileges.
+                    subprocess.run(["cmd", "/c", "mklink", "/J", str(escape), str(root.parent)],
+                                   check=True, capture_output=True)
+                try:
+                    self.assertEqual(escape.resolve(), root.parent)
+                    with self.assertRaises(bridge.BridgeError):
+                        bridge.scoped_arguments({"output_path": "escape/outside.mp4"}, root, production)
+                finally:
+                    if escape.is_symlink():
+                        escape.unlink()
+                    else:
+                        escape.rmdir()
 
     def test_model_cannot_supply_approval_secrets_or_arbitrary_commands(self):
         with tempfile.TemporaryDirectory() as temporary:

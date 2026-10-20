@@ -6,6 +6,10 @@ fn main() {
     } else {
         tauri_build::Attributes::new()
     };
+    let attributes = attributes.plugin(
+        "pixel-processing",
+        tauri_build::InlinedPlugin::new().commands(&["process_pixel_art_image"]),
+    );
     tauri_build::try_build(attributes).expect("Tauri build configuration failed");
     if msvc {
         // Native child-webview tests and examples also link Common Controls APIs.

@@ -1,6 +1,45 @@
 use super::*;
 use std::io::{Read, Write};
 
+const STACK_PROBE: &str = "agent::image_generation::tests::image_generation_stack_child";
+
+#[test]
+fn image_generation_rejects_invalid_input_without_aborting_a_windows_sized_worker() {
+    let output = crate::background::command(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", STACK_PROBE, "--nocapture", "--test-threads=1"])
+        .env("JARVIS_IMAGE_STACK_PROBE", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Image tool worker aborted: {}\n{stdout}\n{stderr}", output.status);
+    assert!(stdout.contains("1 passed"), "The image worker probe did not execute: {stdout}\n{stderr}");
+}
+
+#[test]
+#[ignore = "run by image_generation_rejects_invalid_input_without_aborting_a_windows_sized_worker"]
+fn image_generation_stack_child() {
+    assert_eq!(std::env::var("JARVIS_IMAGE_STACK_PROBE").unwrap(), "1");
+    std::thread::Builder::new()
+        .name("image-tool-worker".into())
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let fixture = super::super::tests::Fixture::new();
+                let session = super::super::tests::session(&fixture);
+                let state = AppState::default();
+                let oauth = OpenAiCodexState::default();
+                let mut commands = super::super::command_sessions::CommandSessions::default();
+                let args = json!({"prompt":""});
+                let (_sender, signal) = watch::channel(false);
+                let operation = execute_pipeline(&state, &oauth, &fixture.root, &session.id,
+                    &session, None, &mut commands, None, &args, signal);
+                assert_eq!(operation.await.unwrap_err().code, "image_generation");
+            });
+        }).unwrap().join().unwrap();
+}
+
 fn png() -> Vec<u8> {
     let mut bytes = std::io::Cursor::new(vec![]);
     image::DynamicImage::new_rgb8(8, 6)

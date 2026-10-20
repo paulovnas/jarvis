@@ -196,6 +196,35 @@ it("shows video tool calls under the managed OpenMontage resource", async () => 
   expect(screen.getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
 });
 
+it("reports a real tool failure as an error instead of promoting it to a warning", async () => {
+  const user = userEvent.setup();
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [{ id: "graft", name: "graft_find_code", status: "error" }] }]} />);
+
+  expect(screen.getByLabelText("1 falha")).toBeVisible();
+  expect(screen.queryByLabelText("Há recursos com avisos")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByLabelText("1 falha")).toBeVisible();
+  expect(screen.queryByLabelText("Há recursos com avisos")).not.toBeInTheDocument();
+});
+
+it("keeps an expected preflight reminder as a warning in the Core summary", async () => {
+  const user = userEvent.setup();
+  const reminder = {
+    id: "ctx",
+    name: "ctx_execute",
+    status: "error" as const,
+    args: {},
+    output: "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar",
+  };
+  render(<CoreActivitySummary steps={[{ thinking: "", commentary: "", tools: [reminder] }]} />);
+
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  expect(screen.queryByLabelText("1 falha")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Recursos do Core/ }));
+  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+});
+
 it("keeps structural Graft activity separate from Context-mode reductions and preserves fallback warnings", async () => {
   const user = userEvent.setup();
   const graph: CoreActivity = { component: "graft", action: "code_discovery", status: "reused", summary: "Mapa estrutural do projeto reutilizado.", sources: ["src/auth.ts"], durationMs: 4 };
@@ -235,7 +264,9 @@ it("separates audio generation from Hyperframes verification without claiming pe
   const video = screen.getByText("Hyperframes").closest("li")!;
   expect(within(video).getByText("Solicitado pelo agente: 1 chamada concluída.")).toBeVisible();
   expect(within(video).queryByText("Automático")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Há recursos com avisos")).toBeVisible();
+  // A failed call is a failure, not an advisory warning.
+  expect(screen.getByLabelText("1 falha")).toBeVisible();
+  expect(screen.queryByLabelText("Há recursos com avisos")).not.toBeInTheDocument();
 });
 
 function diagnostic(path: string, status: CoreActivity["status"], summary: string): CoreActivity {

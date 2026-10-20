@@ -3,7 +3,7 @@ import { customConfigSchema, type CustomConfig } from "./custom-provider";
 export const providerKindLabels: Record<string, string> = {
   "openai-codex": "OpenAI Codex", antigravity: "Antigravity", custom: "Custom",
   "opencode-go": "OpenCode Go", "charm-hyper": "Charm Hyper", "claude-code": "Claude Code", "muse-code": "Muse Code",
-  openrouter: "OpenRouter",
+  openrouter: "OpenRouter", ollama: "Ollama", "brave-search": "Brave Search",
 };
 
 export type ProviderModel = {

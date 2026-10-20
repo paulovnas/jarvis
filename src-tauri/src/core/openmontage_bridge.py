@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import functools
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -21,9 +22,10 @@ import threading
 COMPOSER_WORKDIRS: list[Path] = []
 
 class BridgeError(ValueError):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: dict | None = None):
         super().__init__(message)
         self.code = code
+        self.details = details or {}
 
 
 def inside(root: Path, value: str | Path, base: Path | None = None) -> Path:
@@ -156,6 +158,24 @@ def tool_info(tool, *, check_dependencies=True):
             tool.check_dependencies()
         except Exception as exc:
             info["unavailableReason"] = str(exc)
+    if info.get("status") == "unavailable":
+        missing = []
+        for dependency in getattr(tool, "dependencies", []):
+            if not isinstance(dependency, str) or not dependency.startswith("python:"):
+                continue
+            module = dependency.removeprefix("python:")
+            if not re.fullmatch(r"[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*", module):
+                continue
+            try:
+                available = importlib.util.find_spec(module) is not None
+            except (ImportError, ValueError, AttributeError):
+                available = False
+            if not available:
+                missing.append(dependency)
+        info["missingDependencies"] = missing
+        if missing:
+            info["recovery"] = {"tool": "video_run", "arguments": {
+                "action": "repair", "tool": tool.name, "path": "."}}
     return info
 
 
@@ -169,6 +189,9 @@ def needs_approval(tool, arguments: dict) -> tuple[bool, dict]:
     # Native prerequisites (e.g. Piper's configured ONNX voice) are stricter
     # than upstream's executable-only status check.
     preflight["status"] = info.get("status", preflight.get("status", "unavailable"))
+    for key in ("unavailableReason", "missingDependencies", "recovery"):
+        if key in info:
+            preflight[key] = info[key]
     runtime = info.get("runtime")
     def remote_input(value):
         if isinstance(value, dict):
@@ -565,7 +588,12 @@ def dispatch(request, registry, config):
             return preflight
         production(directory)
         if preflight["status"] == "unavailable":
-            raise BridgeError("tool_unavailable", f"{tool.name} está indisponível. Consulte as dependências em video_tools e configure o provedor ou o recurso necessário no Core.")
+            cause = preflight.get("unavailableReason") or "O diagnóstico não identificou a causa; consulte video_tools para esta ferramenta."
+            recovery = preflight.get("recovery")
+            next_step = (f"Tente o reparo gerenciado: {json.dumps(recovery, ensure_ascii=False)}."
+                         if recovery else "Confira o requisito indicado na configuração do OpenMontage.")
+            raise BridgeError("tool_unavailable", f"{tool.name} está indisponível: {cause}. {next_step}",
+                              {key: preflight[key] for key in ("unavailableReason", "missingDependencies", "recovery") if key in preflight})
         if required and not approved:
             raise BridgeError("approval_required", "A operação requer autorização explícita do usuário.")
         require_paid_tools(preflight)
@@ -677,7 +705,7 @@ def main():
             result = {"success": True, "action": request["action"], **dispatch(request, registry, config)}
     except Exception as exc:
         result = {"success": False, "error": {"code": getattr(exc, "code", "openmontage_error"),
-                  "message": str(exc)}, "action": request.get("action")}
+                  "message": str(exc), **getattr(exc, "details", {})}, "action": request.get("action")}
     finally:
         stream.finish()
         import shutil

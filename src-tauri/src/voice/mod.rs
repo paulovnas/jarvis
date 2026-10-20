@@ -239,9 +239,7 @@ pub(crate) struct Settings {
     session: SessionView,
 }
 fn settings(app: tauri::AppHandle) -> Result<Settings, String> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| "Diretório de dados indisponível.")?;
     let state = app.state::<VoiceState>();
     let speech = crate::core::audiovisual::runtime(&home);
@@ -281,9 +279,7 @@ pub(crate) async fn save_voice_settings(
     config: Config,
 ) -> Result<Settings, String> {
     config.validate()?;
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| "Diretório de dados indisponível.")?;
     let root = crate::data_dir::root(&home);
     fs::create_dir_all(&root).map_err(|_| "Diretório de dados indisponível.")?;
@@ -368,9 +364,7 @@ pub(crate) fn start_voice_session(
     let clip_path = clip
         .as_deref()
         .and_then(|id| announcements::resolve(&app, id));
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| "Diretório de dados indisponível.")?;
     let config = config(&home)?;
     if !config.enabled && clip_path.is_none() {

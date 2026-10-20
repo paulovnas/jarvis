@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import { Archive, Database, HardDrive, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { DiagnosticLogSettings } from "./DiagnosticLogSettings";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -169,6 +170,7 @@ export function ChatCleanupSettings() {
       {journalsError && <div className="flex flex-wrap items-center justify-between gap-2"><p role="alert" className="text-xs text-destructive">{journalsError}</p><Button variant="ghost" size="sm" disabled={journalsLoading || journalsOptimizing} onClick={() => { void refreshJournals(); }} className="cursor-pointer">Tentar novamente</Button></div>}
       <p className="text-[10px] leading-4 text-muted-foreground">A troca só ocorre após o novo arquivo ser sincronizado e validado. Conversas e subagentes em execução nunca são modificados.</p>
     </section>
+    <DiagnosticLogSettings />
     </Card>
     <AlertDialog open={Boolean(preview?.conversations.length)} onOpenChange={open => { if (!open && !deleting) setPreview(null); }}>
       <AlertDialogContent className="dark flex max-h-[80dvh] flex-col gap-4 border-border bg-card sm:max-w-lg">

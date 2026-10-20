@@ -5,7 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Hint } from "@/components/ui/hint";
 import { Spinner } from "@/components/ui/spinner";
 import { ToolCallCard } from "./ToolCallCard";
-import { groupToolActivity, isTaskReminder, summarizeToolActivity } from "./tool-activity";
+import { groupToolActivity, summarizeToolActivity, toolSeverity, toolsSeverity } from "./tool-activity";
 import type { AssistantWorkData, ToolCallItem } from "./types";
 import { reasoningPreview, reasoningSections } from "./reasoning-preview";
 import { describeExecution } from "./execution-status";
@@ -26,7 +26,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false, hasError = fa
   if (isStreaming) return <section aria-label="Atividades da execução atual" className="flex min-w-0 flex-col gap-1.5 text-muted-foreground">
     {renderHeader?.()}
     {retry && <p className="rounded-md border border-onedark-yellow/20 bg-onedark-yellow/5 px-3 py-2 text-xs text-onedark-yellow">{retry.message}</p>}
-    <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming status={work.status} hasError={hasError} streamId={identity} retrying={Boolean(work.retry)} />
+    <ExecutionPhases phases={phases} workflowStages={work.workflowStages} detailContext={work.detailContext} isStreaming status={work.status} hasError={hasError} streamId={identity} retrying={Boolean(work.retry)} />
     <CoreActivitySummary steps={work.steps} />
     {work.steps.length === 0 && !retry && <p className="py-1 text-xs">Conectando ao provedor…</p>}
   </section>;
@@ -43,7 +43,7 @@ export function AssistantWorkCollapse({ work, isStreaming = false, hasError = fa
     <Collapsible open={expanded} onOpenChange={setExpanded} render={<section aria-label="Processamento do Jarvis" />} className="min-w-0 text-muted-foreground">
       {renderHeader ? renderHeader(summary) : summary}
       <CollapsibleContent className="flex min-w-0 flex-col gap-1.5 py-2">
-        <ExecutionPhases phases={phases} detailContext={work.detailContext} isStreaming={false} status={work.status} hasError={hasError} streamId={identity} />
+        <ExecutionPhases phases={phases} workflowStages={work.workflowStages} detailContext={work.detailContext} isStreaming={false} status={work.status} hasError={hasError} streamId={identity} />
         <CoreActivitySummary steps={work.steps} />
         {work.steps.length === 0 && <p className="py-1 text-xs">Nenhuma atividade registrada.</p>}
       </CollapsibleContent>
@@ -119,17 +119,17 @@ function buildExecutionPhases(steps: AssistantWorkData["steps"], messages: Assis
   return phases.filter(phase => phase.message || phase.observation || phase.activity.length > 0);
 }
 
-function ExecutionPhases({ phases, detailContext, isStreaming, status, hasError = false, streamId, retrying = false }: { phases: ExecutionPhase[]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; status?: AssistantWorkData["status"]; hasError?: boolean; streamId: string; retrying?: boolean }) {
+function ExecutionPhases({ phases, workflowStages, detailContext, isStreaming, status, hasError = false, streamId, retrying = false }: { phases: ExecutionPhase[]; workflowStages?: AssistantWorkData["workflowStages"]; detailContext?: AssistantWorkData["detailContext"]; isStreaming: boolean; status?: AssistantWorkData["status"]; hasError?: boolean; streamId: string; retrying?: boolean }) {
   if (phases.length === 0) return null;
   const entries: ({ id: string; content: ReactNode } | { id: string; stages: WorkflowProgressStage[] })[] = [];
-  const workflowState = hasError || status === "error" || status === "cancelled" || status === "interrupted" ? "error" : isStreaming ? "running" : status === "completed" ? "completed" : "ended";
+  const workflowState = hasError || status === "error" || status === "cancelled" || status === "interrupted" ? "error" : isStreaming ? "running" : "ended";
   let latestStageId: string | undefined;
   phases.forEach((phase, phaseIndex) => {
     const current = isStreaming && phaseIndex === phases.length - 1;
     const activity = phase.activity.length > 0 && <PhaseActivityGroup phase={phase} phaseIndex={phaseIndex} current={current} detailContext={detailContext} isStreaming={isStreaming} streamId={`${streamId}:${phase.id}`} retrying={retrying} />;
     const stage = workflowStage(phase.observation);
     if (stage) {
-      const item = { id: phase.id, ...stage, activity };
+      const item = { id: phase.id, ...stage, activity, result: workflowStages?.find(result => result.number === stage.number && result.name === stage.name) };
       latestStageId = phase.id;
       const previous = entries[entries.length - 1];
       if (previous && "stages" in previous) previous.stages.push(item);
@@ -148,7 +148,7 @@ function ExecutionPhases({ phases, detailContext, isStreaming, status, hasError 
   });
   return <div role="list" aria-label="Etapas da execução" className="flex min-w-0 flex-col gap-5">
     {entries.map(entry => "stages" in entry
-      ? <section key={entry.id} role="listitem" className="min-w-0"><WorkflowProgress stages={entry.stages} state={entry.stages[entry.stages.length - 1].id !== latestStageId ? "completed" : workflowState} /></section>
+      ? <section key={entry.id} role="listitem" className="min-w-0"><WorkflowProgress stages={entry.stages} state={entry.stages[entry.stages.length - 1].id !== latestStageId ? "ended" : workflowState} /></section>
       : entry.content)}
   </div>;
 }
@@ -161,9 +161,10 @@ function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStrea
   const tools = phaseTools(phase.activity);
   const reasoningCount = phase.activity.reduce((total, item) => total + (item.kind === "reasoning" ? item.thoughts.length : 0), 0);
   const actionCount = tools.length + reasoningCount;
-  const failures = tools.filter(tool => tool.status === "error" && !isTaskReminder(tool)).length;
-  const warnings = tools.filter(isTaskReminder).length;
-  const active = (current && isStreaming) || tools.some(tool => tool.status === "running" || tool.status === "pending");
+  const severity = toolsSeverity(tools);
+  const failures = tools.filter(tool => toolSeverity(tool) === "error").length;
+  const warnings = tools.filter(tool => toolSeverity(tool) === "warning").length;
+  const active = (current && isStreaming) || severity === "active";
   const summary = tools.length > 0 ? summarizeToolActivity(tools) : reasoningCount > 0 ? "Analisou o contexto" : "Processou a etapa";
 
   return <Collapsible className="mt-1 min-w-0">
@@ -171,7 +172,7 @@ function PhaseActivityGroup({ phase, phaseIndex, current, detailContext, isStrea
       <Layers3 aria-hidden="true" data-icon="inline-start" className="size-3.5 shrink-0 text-onedark-cyan/80" />
       <Hint content={summary} whenTruncated><span className="min-w-0 flex-1 truncate">{summary}</span></Hint>
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{actionCount} {actionCount === 1 ? "ação" : "ações"}</span>
-      {active ? <Spinner aria-label="Atividades em execução" className="motion-reduce:animate-none" /> : failures > 0 ? <AlertCircle aria-label={`${failures} ${failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : warnings > 0 ? <TriangleAlert aria-label={`${warnings} ${warnings === 1 ? "aviso" : "avisos"}`} className="size-3.5 text-onedark-yellow" /> : <Check aria-label="Atividades concluídas" className="size-3.5 text-onedark-green" />}
+      {active ? <Spinner aria-label="Atividades em execução" className="motion-reduce:animate-none" /> : severity === "error" ? <AlertCircle aria-label={`${failures} ${failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : severity === "warning" ? <TriangleAlert aria-label={`${warnings} ${warnings === 1 ? "aviso" : "avisos"}`} className="size-3.5 text-onedark-yellow" /> : <Check aria-label="Atividades concluídas" className="size-3.5 text-onedark-green" />}
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>
     <CollapsibleContent className="mt-1 ml-2 min-w-0 border-l border-border/60 py-1 pl-3">
@@ -214,7 +215,7 @@ function ToolActivityGroup({ group, detailContext }: { group: ReturnType<typeof 
       <Layers3 aria-hidden="true" data-icon="inline-start" className="size-3.5 shrink-0 text-onedark-cyan" />
       <Hint content={group.summary} whenTruncated><span className="min-w-0 flex-1 truncate">{group.summary}</span></Hint>
       <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{group.tools.length} {group.tools.length === 1 ? "ação" : "ações"}</span>
-      {group.active ? <Spinner aria-label="Grupo em execução" className="motion-reduce:animate-none" /> : group.failures > 0 ? <AlertCircle aria-label={`${group.failures} ${group.failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : group.warnings > 0 ? <TriangleAlert aria-label={`${group.warnings} ${group.warnings === 1 ? "aviso" : "avisos"}`} className="size-3.5 text-onedark-yellow" /> : <Check aria-label="Grupo concluído" className="size-3.5 text-onedark-green" />}
+      {group.severity === "active" ? <Spinner aria-label="Grupo em execução" className="motion-reduce:animate-none" /> : group.severity === "error" ? <AlertCircle aria-label={`${group.failures} ${group.failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : group.severity === "warning" ? <TriangleAlert aria-label={`${group.warnings} ${group.warnings === 1 ? "aviso" : "avisos"}`} className="size-3.5 text-onedark-yellow" /> : <Check aria-label="Grupo concluído" className="size-3.5 text-onedark-green" />}
       <ChevronRight aria-hidden="true" data-icon="inline-end" className="transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>
     <CollapsibleContent className="mt-1 ml-3 flex min-w-0 flex-col gap-0.5 border-l border-onedark-cyan/20 pl-1.5">

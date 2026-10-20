@@ -60,12 +60,29 @@ fn memory_cues(text: &str) -> impl Iterator<Item = regex::Match<'_>> {
         regex::Regex::new(
             r#"(?imx)
             `[^`]*` | "[^"]*" | “[^”]*” | '[^'\n]*' |
+            (?P<intent>
+                (?:se\s+(?:puder|poss[íi]vel)[,\s]+)?
+                (?:voc[êe]\s+(?:pode|poderia)[,\s]+)?
+                (?:(?:por\s+favor|please)[,\s]+)?
+                (?:
+                    lembr(?:e|a|ar)(?:-se)?\b |
+                    (?:memoriz|anot)(?:e|a|r)\s+(?:isso|isto|ess[ae]s?|que\b) |
+                    (?:registr(?:e|a|ar)|guard(?:e|a|ar))\s+(?:isso|isto|ess[ae]s?|como\b) |
+                    ped(?:ir|e|iu)\s+(?:pra|para)\s+(?:registrar|anotar|memorizar|guardar)\b |
+                    n[aã]o\s+(?:se\s+)?esque[cç]a\b |
+                    tenha\s+em\s+mente\b |
+                    daqui\s+(?:pra|para)\s+frente\b |
+                    de\s+agora\s+em\s+diante\b |
+                    a\s+partir\s+de\s+agora\b |
+                    remember\b | note\s+(?:this|that)\b |
+                    keep\s+(?:this|that)\s+in\s+mind\b |
+                    from\s+now\s+on\b |
+                    (?:do\s+not|don't)\s+forget\b
+                )
+            ) |
             (?:^|[.!?]\s+) [\t ]* (?:[-*][\t ]+)?
             (?:(?:por\s+favor|please)[,:]?\s+)?
-            (?P<intent>
-                lembre(?:-se)?(?:\s|:) | memorize\b |
-                (?:n[aã]o\s+(?:se\s+)?esque[cç]a)(?:\s|:) |
-                (?:guarde|registre)\s+(?:isso\s+)?como\s+(?:regra|aprendizado|li[cç][aã]o)\b |
+            (?P<reinforced>
                 (?:eu\s+)?j[aá]\s+(?:pedi|falei|disse|avisei|orientei)\b |
                 (?:refor[cç]o|reitero|repito)\b | volto\s+a\s+(?:pedir|dizer|refor[cç]ar)\b |
                 (?:mais\s+uma\s+vez|novamente|de\s+novo|again)\s*:\s* |
@@ -78,7 +95,9 @@ fn memory_cues(text: &str) -> impl Iterator<Item = regex::Match<'_>> {
         )
         .expect("static memory intent pattern")
     });
-    INTENT.captures_iter(text).filter_map(|c| c.name("intent"))
+    INTENT
+        .captures_iter(text)
+        .filter_map(|c| c.name("intent").or_else(|| c.name("reinforced")))
 }
 
 /// Strip quoted/code blocks before classifying or supplying evidence to a model.
@@ -554,6 +573,25 @@ mod tests {
             "I already told you to check the formatter before delivering the code.",
         ] {
             assert!(user_feedback(request).is_some(), "{request}");
+        }
+    }
+
+    #[test]
+    fn polite_memory_requests_are_learning_requests() {
+        for request in [
+            "Se puder lembrar disso, a ideia é de sempre me perguntar se eu quero gerar um build novo pra fazer o teste das implementações que foram feitas.",
+            "Quando eu voltar e te pedir pra registrar os aprendizados, quero que já esteja salvo.",
+            "Daqui pra frente, sempre gere o instalador depois de mexer no src-tauri.",
+            "Tenha em mente que o Core precisa ser reinstalado depois de um build novo.",
+        ] {
+            assert!(user_feedback(request).is_some(), "{request}");
+        }
+        for request in [
+            "Adicione um lembrete no formulário para evitar o erro de preenchimento.",
+            "Registre o usuário no banco antes de enviar o e-mail.",
+            "Anote o valor do frete na nota fiscal.",
+        ] {
+            assert!(user_feedback(request).is_none(), "{request}");
         }
     }
 

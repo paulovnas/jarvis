@@ -1,7 +1,28 @@
 import { expect, it } from "vitest";
 import { compatibleModels, defaultChoice, modelProblem, resolveChatModel } from "./provider-references";
 import { referenceAccount } from "@/test/provider-reference-fixtures";
-import { customAccountFixture } from "@/test/custom-provider-fixtures";
+import { customAccountFixture, ollamaAccountFixture } from "@/test/custom-provider-fixtures";
+
+it("accepts a model-free Brave search account but never offers it for chat, vision or images", () => {
+  const account = { ...referenceAccount(), alias: "brave-search-work", providerKind: "brave-search", models: [] };
+  const choice = { account: account.alias, model: "", reasoning: null };
+  expect(modelProblem(choice, [account], "web_search")).toBeNull();
+  expect(modelProblem(choice, [{ ...account, enabled: false }], "web_search")).toContain("desativado");
+  expect(modelProblem(choice, [], "web_search")).toContain("não existe mais");
+  for (const kind of ["builtin_agent", "vision", "image_generation"] as const) expect(compatibleModels(account, kind)).toEqual([]);
+});
+
+it("offers Ollama vision only for registered image-input models and never image generation", () => {
+  const account = ollamaAccountFixture();
+  const vision = { ...account.custom!.models[0], id: "gemma4:12b", name: "Gemma", supportsImages: true };
+  account.custom!.models.push(vision);
+  account.models.push(vision);
+  account.imageModels = [vision];
+  expect(compatibleModels(account, "vision").map(model => model.id)).toEqual(["gemma4:12b"]);
+  expect(compatibleModels({ ...account, disabledModels: [vision.id] }, "vision")).toEqual([]);
+  expect(compatibleModels(account, "image_generation")).toEqual([]);
+  expect(compatibleModels(account, "web_search")).toEqual([]);
+});
 
 it("explains missing, disabled and invalid model choices without a fallback", () => {
   const account = referenceAccount(); const choice = { account: account.alias, model: "gpt-test", reasoning: "high" };

@@ -307,7 +307,7 @@ pub(super) fn body_with_capabilities(
             // No Codex account, cache, beta or encrypted-reasoning headers are sent to gateways.
             json!({"model":model.id,"instructions":instructions,"input":input,"stream":true,"store":false,"max_output_tokens":model.max_output_tokens})
         }
-        Protocol::OpenaiCompletions => {
+        Protocol::OpenaiCompletions | Protocol::Ollama => {
             let mut messages = messages(&input, &scope, model, false, false)?;
             if go_deepseek_reasoning {
                 for message in messages.iter_mut().filter(|m| m["role"] == "assistant") {
@@ -333,7 +333,7 @@ pub(super) fn body_with_capabilities(
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.into_iter().map(|tool| match config.protocol {
             Protocol::OpenaiResponses => tool,
-            Protocol::OpenaiCompletions => json!({"type":"function","function":{"name":tool["name"],"description":tool["description"],"parameters":tool["parameters"]}}),
+            Protocol::OpenaiCompletions | Protocol::Ollama => json!({"type":"function","function":{"name":tool["name"],"description":tool["description"],"parameters":tool["parameters"]}}),
             Protocol::AnthropicMessages => json!({"name":tool["name"],"description":tool["description"],"input_schema":tool["parameters"]}),
         }).collect());
     }
@@ -351,6 +351,9 @@ pub(super) fn body_with_capabilities(
             let off = matches!(effort, "off" | "none");
             match model.reasoning {
                 Reasoning::None => {}
+                Reasoning::Effort if config.protocol == Protocol::Ollama => {
+                    body["think"] = if off { json!(false) } else { json!(effort) };
+                }
                 Reasoning::Effort if config.protocol == Protocol::OpenaiResponses => {
                     body["reasoning"] = json!({"effort":if off { "none" } else { effort }});
                 }
@@ -369,6 +372,9 @@ pub(super) fn body_with_capabilities(
                     if !off {
                         body["reasoning_effort"] = json!(effort);
                     }
+                }
+                Reasoning::Toggle if config.protocol == Protocol::Ollama => {
+                    body["think"] = json!(!off);
                 }
                 Reasoning::Toggle => {
                     let enabled = if config.protocol == Protocol::AnthropicMessages {
@@ -422,7 +428,11 @@ pub(super) fn body_with_capabilities(
     };
     // Preserve catalog limits while fitting this request, as OMP does for compatible APIs.
     body[output_field] = json!(model.max_output_tokens.min(remaining));
-    Ok(body)
+    if config.protocol == Protocol::Ollama {
+        super::ollama::request(body, model)
+    } else {
+        Ok(body)
+    }
 }
 
 fn cache_breakpoints(config: &Config, model: &Model, body: &mut Value) -> Result<(), AgentError> {

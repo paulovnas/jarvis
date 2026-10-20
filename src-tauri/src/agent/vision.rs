@@ -34,7 +34,7 @@ fn supports_account(state: &AppState, home: &Path, alias: &str, model: &str) -> 
                         })
                 } else if matches!(
                     account.provider_kind.as_str(),
-                    "custom" | "charm-hyper" | "openrouter"
+                    "custom" | "charm-hyper" | "openrouter" | "ollama"
                 ) {
                     crate::openai_codex::custom::load(state, home, alias).is_ok_and(|config| {
                         config
@@ -87,7 +87,7 @@ pub(super) fn enabled(state: &AppState, home: &Path, options: &TurnOptions) -> b
 fn save(state: &AppState, home: &Path, config: Config) -> Result<Config, AgentError> {
     state.with_connection(home, |connection| {
         if let Some(alias) = &config.account_alias {
-            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
+            let enabled: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE alias = ?1 AND enabled = 1 AND provider_kind IN ('openai-codex', 'antigravity', 'custom', 'opencode-go', 'charm-hyper', 'openrouter', 'ollama'))", [alias], |row| row.get(0)).map_err(|_| AgentError::storage())?;
             if !enabled { return Err(invalid("Selecione uma conta ativa compatível com Vision.")); }
         }
         connection.execute("INSERT INTO vision_config (id, account_alias, model, inherit_chat) VALUES (1, ?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET account_alias = excluded.account_alias, model = excluded.model, inherit_chat = excluded.inherit_chat", params![config.account_alias, config.model, config.inherit_chat]).map_err(|_| AgentError::storage())?;
@@ -177,6 +177,9 @@ pub(super) fn input(
             &attachments::location(home, conversation, &id)?.join("content"),
             attachments::MAX_BYTES,
         )?;
+        // Generated attachments retain their original format (including GIF).
+        // Vision receives a bounded static PNG without changing that original.
+        let data = attachments::image_bytes(&data, 2048)?;
         content.push(json!({"type":"input_image","image_url":format!("data:image/png;base64,{}", STANDARD.encode(data))}));
     }
     content.push(json!({"type":"input_text", "text":args.question}));
@@ -538,6 +541,52 @@ mod tests {
             response["accountAlias"], response["model"]
         );
     }
+    #[test]
+    fn vision_projects_animated_pixel_art_as_png_without_destroying_the_original() {
+        let home = tempfile::tempdir().unwrap();
+        let conversation = "a".repeat(32);
+        let mut gif = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+            for color in [[255, 0, 0, 255], [0, 255, 0, 255]] {
+                encoder
+                    .encode_frame(image::Frame::from_parts(
+                        image::RgbaImage::from_pixel(8, 8, image::Rgba(color)),
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(100, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        let item =
+            attachments::store_generated(home.path(), &conversation, "walk.gif", &gif).unwrap();
+        let payload = input(
+            home.path(),
+            &conversation,
+            &json!({"ids":[item.id],"question":"Descreva somente o quadro visível."}),
+        )
+        .unwrap();
+        let image_url = payload[0]["content"][0]["image_url"].as_str().unwrap();
+        let projected = STANDARD
+            .decode(image_url.strip_prefix("data:image/png;base64,").unwrap())
+            .unwrap();
+        assert_eq!(
+            image::guess_format(&projected).unwrap(),
+            image::ImageFormat::Png
+        );
+        assert_eq!(image::load_from_memory(&projected).unwrap().width(), 8);
+        assert_eq!(
+            std::fs::read(
+                attachments::location(home.path(), &conversation, &item.id)
+                    .unwrap()
+                    .join("content"),
+            )
+            .unwrap(),
+            gif
+        );
+    }
+
     #[test]
     fn vision_uses_only_images_owned_by_the_conversation() {
         let home = tempfile::tempdir().unwrap();

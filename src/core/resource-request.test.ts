@@ -6,6 +6,19 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 beforeEach(() => { vi.useFakeTimers(); vi.mocked(invoke).mockReset(); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
+it("gives native Ollama metadata reads time to respond and releases a stalled lookup", async () => {
+  vi.mocked(invoke).mockReturnValue(new Promise<never>(() => {}));
+  let settled = false;
+  const lookup = readResource("lookup_ollama_model", { baseUrl: "http://192.168.2.102:11434", modelId: "qwen3:14b" });
+  const rejected = expect(lookup).rejects.toBeInstanceOf(ResourceTimeoutError);
+  void lookup.then(() => { settled = true; }, () => { settled = true; });
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(2);
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("releases a stalled read and permits retry without accepting the old response", async () => {
   let finish!: (value: string) => void;
   vi.mocked(invoke).mockReturnValueOnce(new Promise<string>(resolve => { finish = resolve; })).mockResolvedValueOnce("reconnected");

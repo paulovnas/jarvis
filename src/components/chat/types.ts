@@ -14,6 +14,7 @@ export interface ToolCallItem {
 }
 
 export interface AssistantWorkData {
+  workflowStages?: import("@/core/workflow").WorkflowStageResult[];
   status?: import("@/core/chat").AgentTurn["status"];
   durationSeconds: number;
   auxiliaryMessages?: import("@/core/chat").QueuedMessage[];

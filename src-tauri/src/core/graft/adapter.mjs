@@ -15,10 +15,13 @@ import { grepGraph } from "./node_modules/@nanonets/graft/dist/search/grep.js";
 import { readSourceFile } from "./node_modules/@nanonets/graft/dist/util/source.js";
 
 const names = new Set(["graft_repo_map", "graft_find_code", "graft_file_api", "graft_trace_calls", "graft_find_all", "graft_check_freshness"]);
+// The Rust core already canonicalizes, and Node's realpath throws EISDIR on
+// Windows verbatim drive paths ("\\?\C:\...") before Node 24.21.
+const canonical = path => /^\\\\[?.]\\/.test(path) ? path : realpathSync(path);
 function confined(root, path) {
   if (typeof path !== "string" || !path || path.includes("\\") || path.includes(":") || isAbsolute(path) || path.split("/").includes("..")) throw new Error("Project-relative path required");
   const file = resolve(root, path);
-  const rel = relative(root, realpathSync(file));
+  const rel = relative(root, canonical(file));
   if (!rel || rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel) || lstatSync(file).isSymbolicLink()) throw new Error("Path escapes project or is a symlink");
   return file;
 }
@@ -149,8 +152,8 @@ async function execute(request) {
   const start = performance.now();
   const { tool, args = {} } = request;
   if (!names.has(tool) || !args || typeof args !== "object" || Array.isArray(args)) throw new Error("Unknown structural tool or invalid arguments");
-  const root = realpathSync(request.root);
-  const contextDir = realpathSync(request.contextDir);
+  const root = canonical(request.root);
+  const contextDir = canonical(request.contextDir);
   const cacheRelative = relative(root, contextDir);
   if (!lstatSync(root).isDirectory() || !lstatSync(contextDir).isDirectory() || contextDir === root || !(cacheRelative === ".." || cacheRelative.startsWith(`..${sep}`) || isAbsolute(cacheRelative))) throw new Error("Graph cache must be outside the project");
   guardCache(contextDir);

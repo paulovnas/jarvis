@@ -9,6 +9,24 @@ import { ROLE_COLORS, ROLE_LABELS, type WorkflowAgent } from "@/core/workflow";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const agent: WorkflowAgent = { id:"worker1",parentId:"main",role:"builder",title:"Implementar busca",status:"running",createdAt:1,updatedAt:2,startedAt:1,durationMs:2_000,currentThought:"Conferindo o contrato atual",attempts:1,options:{account:"personal",model:"gpt-5.6-terra",reasoning:"high",mode:"build",workflow:"planned",approvalMode:"manual"},beadId:"task1",handoff:null,error:null,activeTurnId:"turn1",pendingApproval:null,pendingQuestion:null };
 beforeEach(() => { vi.mocked(invoke).mockReset(); });
+it("distinguishes a completed stage with pending delivery from a technical failure or real blocker", () => {
+  const objective = { status: "partial" as const, remaining: ["Integrar o atlas"], reason: "O planejamento terminou; a integração cabe ao Desenvolvedor.", recoveryAttempts: [], nextAction: "Executar a etapa Godot." };
+  const planner = { ...agent, status: "completed" as const, handoff: { verdict: "completed" as const, summary: "Planejamento concluído", objective } };
+  const workflow = { data: { conversationId: "c1", revision: 1, flow: "custom" as const, agents: [planner] }, error: null, loading: false, retry: vi.fn() };
+  const view = render(<WorkflowAgents workflow={workflow} />);
+  const card = screen.getByRole("button", { name: /Abrir agente/ });
+  expect(within(card).getByText("Concluído")).toBeVisible();
+  expect(within(card).getByText("Pedido com pendências")).toBeVisible();
+  expect(within(card).queryByText("Bloqueado")).not.toBeInTheDocument();
+  const blocked = { ...planner, status: "blocked" as const, handoff: { ...planner.handoff, verdict: "blocked" as const, objective: { ...objective, status: "blocked" as const, reason: "O modelo de visão não respondeu.", nextAction: "Selecionar outro modelo e retomar." } } };
+  view.rerender(<WorkflowAgents workflow={{ ...workflow, data: { ...workflow.data, agents: [blocked] } }} />);
+  expect(within(card).getByText("Motivo do bloqueio")).toBeVisible();
+  expect(within(card).getByText("O modelo de visão não respondeu.")).toBeVisible();
+  expect(within(card).getByText(/Selecionar outro modelo e retomar/)).toBeVisible();
+  view.rerender(<WorkflowAgents workflow={{ ...workflow, data: { ...workflow.data, agents: [{ ...blocked, status: "failed", error: "HTTP 503 no provedor customizado" }] } }} />);
+  expect(within(card).getByText("Falha de execução")).toBeVisible();
+  expect(within(card).getByText("HTTP 503 no provedor customizado")).toBeVisible();
+});
 it("keeps distinct built-in role colors on waiting cards consistent with Settings", () => {
   const roles = (Object.keys(ROLE_COLORS) as WorkflowAgent["role"][]).filter(role => role !== "custom");
   const agents = roles.map(role => ({ ...agent, id: role, role, status: "waiting" as const }));

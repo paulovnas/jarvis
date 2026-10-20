@@ -1258,6 +1258,13 @@ async fn adaptive_completion_validates_the_choice_before_persisting_and_keeps_it
 }
 fn handoff(verdict: Verdict) -> Handoff {
     Handoff {
+        objective: matches!(verdict, Verdict::Completed | Verdict::Approved).then_some(ObjectiveOutcome {
+            status: ObjectiveStatus::Completed,
+            remaining: vec![],
+            reason: String::new(),
+            recovery_attempts: vec![],
+            next_action: String::new(),
+        }),
         verdict,
         summary: "Evidence-backed outcome".into(),
         outcomes: vec!["Done".into()],
@@ -1266,6 +1273,353 @@ fn handoff(verdict: Verdict) -> Handoff {
         limitations: vec![],
         route: None,
         task_ids: vec![],
+    }
+}
+
+#[tokio::test]
+async fn terminal_planning_step_cannot_claim_the_unfinished_user_request_is_complete() {
+    let definition = adaptive_definition();
+    let (_sender, signal) = watch::channel(false);
+    let result = walk(&definition, signal, |_, _, _| {
+        let mut result = handoff(Verdict::Completed);
+        result.route = Some("finish".into());
+        result.summary = "Planning finished; the walk is not integrated.".into();
+        result.objective = None;
+        result.limitations = vec!["0/8 walk cycles integrated; inspection is pending.".into()];
+        async move { Ok(result) }
+    })
+    .await;
+    assert!(result.is_err(), "Finishing a planning step must not silently complete the user request");
+}
+
+fn unfinished_objective() -> ObjectiveOutcome {
+    ObjectiveOutcome {
+        status: ObjectiveStatus::Partial,
+        remaining: vec!["Integrar oito direções de caminhada no Godot".into()],
+        reason: "video_understand indisponível: falta transformers; análise de quadros não comprova o movimento.".into(),
+        recovery_attempts: vec!["Diagnóstico identificou a dependência ausente; assets r03 preservados".into()],
+        next_action: "Reparar a dependência gerenciada e retomar a validação pendente com o método adequado.".into(),
+    }
+}
+
+#[tokio::test]
+async fn terminal_tool_handoff_rejects_false_completion_and_accepts_resumable_partial_delivery() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = adaptive_definition();
+    let mut job = super::super::tests::job(&hub, Role::Custom, ".");
+    job.custom_step_id = Some(definition.flow.entry.clone());
+    let id = job.id.clone();
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.custom_definition = Some(definition);
+        state.jobs.insert(id.clone(), job);
+        Ok(())
+    }).unwrap();
+    let exec = Execution { hub: hub.clone(), id: id.clone(), role: Role::Custom,
+        flow: Flow::Custom, scope: vec![".".into()] };
+    let mut result = handoff(Verdict::Completed);
+    result.route = Some("finish".into());
+    for objective in [None, Some(ObjectiveOutcome {
+        status: ObjectiveStatus::Completed, ..unfinished_objective()
+    }), Some(ObjectiveOutcome { next_action: String::new(), ..unfinished_objective() })] {
+        result.objective = objective;
+        let tool = ToolCall { id: "finish".into(), name: "hub_complete".into(), args: json!(result),
+            status: "running".into(), output: String::new(), duration_ms: 0 };
+        let (_sender, signal) = watch::channel(false);
+        assert!(dispatch::execute(&exec, &tool, signal).await.is_err());
+        assert!(hub.job(&id).unwrap().handoff.is_none());
+    }
+    result.objective = Some(unfinished_objective());
+    let tool = ToolCall { id: "partial".into(), name: "hub_complete".into(), args: json!(result),
+        status: "running".into(), output: String::new(), duration_ms: 0 };
+    let (_sender, signal) = watch::channel(false);
+    dispatch::execute(&exec, &tool, signal).await.unwrap();
+    let stored = storage::load(&hub.directory, &hub.root.id).unwrap().unwrap();
+    assert_eq!(stored.jobs[&id].handoff.as_ref().unwrap().objective, Some(unfinished_objective()));
+    assert!(stored.jobs[&id].handoff.as_ref().unwrap().successful());
+    assert!(stored.jobs[&id].handoff.as_ref().unwrap().objective.as_ref().unwrap().pending());
+}
+
+#[test]
+fn a_legacy_terminal_handoff_without_objective_can_be_reassessed_on_explicit_retry() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (mut definition, blocked, _) = blocked_canvas_worker(&hub);
+    definition.flow.steps[0].next = None;
+    hub.mutate(|state| {
+        state.custom_definition = Some(definition.clone());
+        let job = state.jobs.get_mut(&blocked.id).unwrap();
+        job.status = Status::Completed;
+        job.handoff.as_mut().unwrap().verdict = Verdict::Completed;
+        Ok(())
+    }).unwrap();
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    let next = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(next.id, blocked.id);
+    assert_eq!(next.status, Status::Queued);
+    assert_eq!(next.attempts, blocked.attempts + 1);
+    assert!(next.prompt.contains("background.png"));
+}
+
+#[tokio::test]
+async fn partial_terminal_delivery_keeps_the_cursor_and_explains_how_to_continue() {
+    let definition = adaptive_definition();
+    let (_sender, signal) = watch::channel(false);
+    let mut saved = Cursor::start(&definition);
+    saved.active = Some("retained-planner".into());
+    let result = walk_from(&definition, signal, saved.clone(), |_, _, _| {
+        let mut result = handoff(Verdict::Completed);
+        result.route = Some("finish".into());
+        result.outcomes = vec!["Piloto E r03 com quatro quadros e fonte editável".into()];
+        result.objective = Some(unfinished_objective());
+        async move { Ok(result) }
+    }, |cursor| { saved = cursor.clone(); Ok(()) }).await.unwrap_err();
+    assert_eq!(result.code, "workflow_incomplete");
+    for evidence in ["Entregue:", "Piloto E r03", "Pendente:", "oito direções", "Motivo:", "transformers", "Tentativas de recuperação:", "Para continuar:"] {
+        assert!(result.message.contains(evidence), "{evidence}");
+    }
+    assert_eq!(saved.next.as_ref(), Some(&definition.flow.entry));
+    assert_eq!(saved.active.as_deref(), Some("retained-planner"));
+    assert!(saved.results.is_empty());
+}
+
+#[test]
+fn objective_completion_cannot_hide_remaining_work_or_an_unactionable_blocker() {
+    let mut result = handoff(Verdict::Completed);
+    result.objective.as_mut().unwrap().remaining = vec!["Integrate animations".into()];
+    assert!(validate_objective(&result).is_err());
+    result.objective = Some(unfinished_objective());
+    assert!(result.successful());
+    assert!(result.objective.as_ref().unwrap().pending());
+    assert!(validate_objective(&result).is_ok());
+    result.objective.as_mut().unwrap().next_action.clear();
+    assert!(validate_objective(&result).is_err());
+    result.objective = Some(unfinished_objective());
+    result.objective.as_mut().unwrap().reason.clear();
+    assert!(validate_objective(&result).is_err());
+}
+
+#[tokio::test]
+async fn complete_request_can_finish_without_interpreting_prose_as_a_blocker() {
+    let definition = adaptive_definition();
+    let (_sender, signal) = watch::channel(false);
+    let result = walk(&definition, signal, |_, _, _| {
+        let mut result = handoff(Verdict::Completed);
+        result.route = Some("finish".into());
+        result.limitations = vec!["The previously blocked dependency was repaired and all requested deliveries were verified.".into()];
+        async move { Ok(result) }
+    }).await.unwrap();
+    assert_eq!(result.len(), 1);
+    assert!(result[0].successful());
+}
+
+#[test]
+fn partial_objective_survives_restart_and_retries_only_the_pending_worker() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (mut definition, blocked, _) = blocked_canvas_worker(&hub);
+    // A partial terminal result remains resumable even when a correction route exists.
+    definition.flow.steps[0].on_rework = Some(definition.flow.steps[1].id.clone());
+    hub.mutate(|state| {
+        state.root_status = Status::Blocked;
+        state.custom_definition = Some(definition.clone());
+        let job = state.jobs.get_mut(&blocked.id).unwrap();
+        job.status = Status::Interrupted;
+        let result = job.handoff.as_mut().unwrap();
+        result.verdict = Verdict::Completed;
+        result.objective = Some(unfinished_objective());
+        Ok(())
+    }).unwrap();
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    let saved = storage::load(&hub.directory, &hub.root.id).unwrap().unwrap();
+    let (recovered, resumed) = storage::prepare_recovery(&hub.directory, saved, Flow::Custom, &run, vec![]).unwrap();
+    assert_eq!(recovered.jobs[&blocked.id].status, Status::Completed);
+    assert!(resumed.is_empty());
+    *hub.manifest.lock().unwrap() = recovered;
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    let retried = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(retried.id, blocked.id);
+    assert_eq!(retried.status, Status::Queued);
+    assert_eq!(retried.attempts, blocked.attempts + 1);
+    assert_eq!(retried.scope, blocked.scope);
+    assert!(retried.prompt.contains("transformers"));
+    assert!(retried.prompt.contains("background.png"));
+    let cursor = hub.manifest.lock().unwrap().custom_cursor.clone().unwrap();
+    assert_eq!(cursor.results.len(), 1);
+    assert_eq!(cursor.visited, vec!["previous-completed-stage"]);
+}
+
+#[test]
+fn stage_results_preserve_each_visit_and_repair_legacy_false_blocks_without_completing_the_request() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let definition = adaptive_definition();
+    let entry = definition.flow.entry.clone();
+    let mut planner = super::super::tests::job(&hub, Role::Custom, ".");
+    planner.custom_agent = Some(definition.agents[0].clone());
+    planner.status = Status::Blocked;
+    let mut finished = handoff(Verdict::Completed);
+    finished.objective = Some(unfinished_objective());
+    planner.handoff = Some(finished.clone());
+    let mut blocked = handoff(Verdict::Blocked);
+    blocked.summary = "Vision did not respond; change its model and retry".into();
+    let mut cursor = Cursor::start(&definition);
+    cursor.visited = vec![entry];
+    cursor.results = vec![blocked];
+    cursor.active = Some(planner.id.clone());
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.root_status = Status::Blocked;
+        state.custom_definition = Some(definition);
+        state.custom_cursor = Some(cursor);
+        state.jobs.insert(planner.id.clone(), planner.clone());
+        Ok(())
+    }).unwrap();
+    let state = storage::load(&hub.directory, &hub.root.id).unwrap().unwrap();
+    assert_eq!(state.jobs[&planner.id].status, Status::Completed);
+    assert_eq!(state.root_status, Status::Blocked);
+    let value = serde_json::to_value(stage_results(&state)).unwrap();
+    assert_eq!(value[0]["number"], "1");
+    assert_eq!(value[0]["status"], "blocked");
+    assert_eq!(value[0]["handoff"]["summary"], "Vision did not respond; change its model and retry");
+    assert_eq!(value[1]["number"], "2");
+    assert_eq!(value[1]["status"], "completed");
+    assert_eq!(value[1]["handoff"]["objective"], json!(unfinished_objective()));
+    let snapshot = serde_json::to_value(super::super::commands::snapshot(&state, None).unwrap()).unwrap();
+    assert_eq!(snapshot["runId"], state.run_id);
+    assert_eq!(snapshot["stages"], value);
+    assert_eq!(snapshot["agents"][0]["status"], "blocked");
+    assert_eq!(snapshot["agents"][0]["handoff"]["objective"], json!(unfinished_objective()));
+    assert_eq!(snapshot["agents"][1]["status"], "completed");
+}
+
+#[tokio::test]
+async fn configured_correction_returns_blockers_to_the_planner_without_losing_the_findings() {
+    let mut definition = adaptive_definition();
+    let planner = definition.flow.entry.clone();
+    definition.flow.steps[3].on_rework = Some(planner);
+    let (_sender, signal) = watch::channel(false);
+    let mut visited = vec![];
+    let results = walk(&definition, signal, |step, previous, index| {
+        visited.push(step.instructions.clone());
+        let mut result = handoff(if index == 1 {
+            Verdict::Blocked
+        } else {
+            Verdict::Completed
+        });
+        if index == 1 {
+            result.summary = "Six directions lack valid alternating poses".into();
+            result.evidence = vec!["retained-atlas.png".into()];
+            result.limitations = vec!["The current atlas is not ready for integration".into()];
+        } else if step.id == definition.flow.entry {
+            result.route = Some(if index == 4 { "finish" } else { "godot" }.into());
+            if index == 2 {
+                assert_eq!(previous[1].verdict, Verdict::Blocked);
+                assert_eq!(
+                    previous[1].summary,
+                    "Six directions lack valid alternating poses"
+                );
+                assert_eq!(previous[1].evidence, vec!["retained-atlas.png"]);
+                assert_eq!(
+                    previous[1].limitations,
+                    vec!["The current atlas is not ready for integration"]
+                );
+            }
+        }
+        async move { Ok(result) }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        visited,
+        vec![
+            "Plan selectively",
+            "godot",
+            "Plan selectively",
+            "godot",
+            "Plan selectively"
+        ]
+    );
+    assert_eq!(results.len(), 5);
+    assert_eq!(results[1].verdict, Verdict::Blocked);
+}
+
+#[tokio::test]
+async fn configured_correction_keeps_vision_failure_details_in_the_handoff() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (mut definition, blocked, _) = blocked_canvas_worker(&hub);
+    definition.flow.steps[0].on_rework = Some(definition.flow.steps[1].id.clone());
+    hub.mutate(|state| {
+        state.custom_definition = Some(definition);
+        Ok(())
+    })
+    .unwrap();
+    let result = execute_step(hub.clone(), blocked.clone()).await.unwrap();
+    assert_eq!(result.verdict, Verdict::Blocked);
+    assert!(result
+        .summary
+        .contains("visual-model · conta visual-account"));
+    assert!(result
+        .summary
+        .contains("Configurações → Provedores → Vision"));
+    assert!(result.summary.contains("background.png"));
+    assert_eq!(hub.job(&blocked.id).unwrap().attempts, blocked.attempts);
+    assert!(hub.live.lock().unwrap().is_empty());
+}
+
+#[test]
+fn configured_correction_reuses_a_delivered_blocker_on_explicit_retry() {
+    let (_fixture, hub) = super::super::tests::hub();
+    let (mut definition, blocked, _) = blocked_canvas_worker(&hub);
+    definition.flow.steps[0].on_rework = Some(definition.flow.steps[1].id.clone());
+    hub.mutate(|state| {
+        state.custom_definition = Some(definition.clone());
+        Ok(())
+    })
+    .unwrap();
+    let run = hub.manifest.lock().unwrap().run_id.clone();
+    hub.root.retry_failed_turn(&run, None).unwrap();
+    let preserved = prepare(&hub, &definition, &definition.flow.steps[0], &[], 1).unwrap();
+    assert_eq!(preserved.status, Status::Blocked);
+    assert_eq!(preserved.attempts, blocked.attempts);
+    assert_eq!(preserved.handoff, blocked.handoff);
+    assert!(hub.live.lock().unwrap().is_empty());
+}
+
+#[test]
+fn configured_correction_revisits_retained_blocked_work_only_with_confirmed_tool_results() {
+    for uncertain in [false, true] {
+        let (_fixture, hub) = super::super::tests::hub();
+        let (mut definition, blocked, _) = blocked_canvas_worker(&hub);
+        definition.flow.steps[0].on_rework = Some(definition.flow.steps[1].id.clone());
+        if uncertain {
+            let (session, _) = storage::worker(&hub, &blocked, None).unwrap();
+            session.update(true, |data| {
+                data.turns.last_mut().unwrap().wire.push(json!({"type":"function_call","call_id":"unconfirmed-write","name":"write","arguments":"{}"}));
+            }).unwrap();
+            super::super::super::finish(&session, Ok(()));
+        }
+        hub.mutate(|state| {
+            state.custom_definition = Some(definition.clone());
+            let cursor = state.custom_cursor.as_mut().unwrap();
+            cursor.visited.push(definition.flow.steps[0].id.clone());
+            cursor.active = None;
+            Ok(())
+        })
+        .unwrap();
+        let mut review = handoff(Verdict::Completed);
+        review.summary = "Correct only the missing poses; preserve the approved atlas".into();
+        let prepared = prepare(&hub, &definition, &definition.flow.steps[0], &[review], 3);
+        if uncertain {
+            assert!(prepared.is_err());
+            assert_eq!(hub.job(&blocked.id).unwrap().attempts, blocked.attempts);
+        } else {
+            let next = prepared.unwrap();
+            assert_eq!(next.id, blocked.id);
+            assert_eq!(next.status, Status::Queued);
+            assert_eq!(next.attempts, blocked.attempts + 1);
+            assert!(next.prompt.contains("Correct only the missing poses"));
+            assert_eq!(next.scope, blocked.scope);
+            assert_eq!(next.options.approval_mode, blocked.options.approval_mode);
+        }
     }
 }
 

@@ -1,10 +1,10 @@
 use std::process::Stdio;
 
-const CHILD_TEST: &str = "agent::tests::linux_tool_stack::native_tool_stack_child";
+const CHILD_TEST: &str = "agent::tests::native_tool_stack::native_tool_stack_child";
 const STACK_MARKER: &str = "JARVIS_AGENT_STACK_TEST";
 
 #[test]
-fn linux_workers_have_headroom_for_nested_native_tools() {
+fn desktop_workers_have_headroom_for_nested_native_tools() {
     // Stack overflow aborts the process; keep the worker probe outside this runner.
     let output = crate::background::command(std::env::current_exe().unwrap())
         .args([
@@ -24,7 +24,7 @@ fn linux_workers_have_headroom_for_nested_native_tools() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "Linux native tool stack probe failed: {}\n{stdout}\n{stderr}",
+        "Native tool stack probe failed: {}\n{stdout}\n{stderr}",
         output.status
     );
     assert!(
@@ -44,12 +44,12 @@ fn nested_native_frame() -> u8 {
 }
 
 #[test]
-#[ignore = "launched by linux_workers_have_headroom_for_nested_native_tools to isolate fatal stack overflows"]
+#[ignore = "launched by desktop_workers_have_headroom_for_nested_native_tools to isolate fatal stack overflows"]
 fn native_tool_stack_child() {
     assert_eq!(std::env::var(STACK_MARKER).unwrap(), "1");
-    crate::initialize_linux_async_runtime();
+    crate::initialize_native_async_runtime();
     // Initialization is idempotent and retains the runtime while its work executes.
-    crate::initialize_linux_async_runtime();
+    crate::initialize_native_async_runtime();
     let answer = tauri::async_runtime::block_on(async {
         tauri::async_runtime::spawn(async { nested_native_frame() })
             .await

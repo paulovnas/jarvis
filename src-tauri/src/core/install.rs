@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const NODE_VERSION: &str = "22.23.2";
+const NODE_VERSION: &str = "24.21.0";
 pub(super) const GRAFT_VERSION: &str = "0.21.1";
 const GRAFT_WASM_VERSION: &str = "1.1.8";
 const GRAFT_WEB_PARSER_VERSION: &str = "0.26.13";

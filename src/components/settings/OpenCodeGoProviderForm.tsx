@@ -12,15 +12,16 @@ import { accountList, validateProviderDisplayName, type ProviderAccount } from "
 import { ProviderDisplayNameField } from "./ProviderDisplayNameField";
 import { HyperPanelConnection } from "./HyperPanelConnection";
 
-export function ApiKeyProviderForm({ account, providerKind = account?.providerKind === "charm-hyper" ? "charm-hyper" : "opencode-go", onSaved, onCancel, onBusyChange }: {
+export function ApiKeyProviderForm({ account, providerKind = account?.providerKind === "brave-search" ? "brave-search" : account?.providerKind === "charm-hyper" ? "charm-hyper" : "opencode-go", onSaved, onCancel, onBusyChange }: {
   account?: ProviderAccount;
-  providerKind?: "opencode-go" | "charm-hyper";
+  providerKind?: "opencode-go" | "charm-hyper" | "brave-search";
   onSaved: (account: ProviderAccount) => void;
   onCancel: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const hyper = providerKind === "charm-hyper";
-  const providerName = hyper ? "Charm Hyper" : "OpenCode Go";
+  const brave = providerKind === "brave-search";
+  const providerName = brave ? "Brave Search" : hyper ? "Charm Hyper" : "OpenCode Go";
   const prefix = `${providerKind}-`;
   const [suffix, setSuffix] = useState(account?.alias.slice(prefix.length) ?? "");
   const [apiKey, setApiKey] = useState("");
@@ -55,11 +56,11 @@ export function ApiKeyProviderForm({ account, providerKind = account?.providerKi
     }
     lock.current = true; setSaving(true); setError(null); setInvalidField(null); onBusyChange?.(true);
     try {
-      const result = await invoke<unknown>(hyper ? "save_charm_hyper_provider" : "save_opencode_go_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), apiKey: key || null, editing: Boolean(account) });
+      const result = await invoke<unknown>(brave ? "save_brave_search_provider" : hyper ? "save_charm_hyper_provider" : "save_opencode_go_provider", { alias, ...(!account || displayName !== null ? { displayName: name.trim() } : {}), apiKey: key || null, editing: Boolean(account) });
       const saved = accountList([result])[0];
       if (!saved || saved.providerKind !== providerKind || saved.alias !== alias) throw new Error(`Não foi possível confirmar o cadastro do ${providerName}.`);
       setApiKey("");
-      toast.success(`${providerName} ${account ? "atualizado" : "conectado"}`);
+      toast.success(`${providerName} ${account ? "atualizado" : brave ? "configurado" : "conectado"}`);
       onSaved(saved);
     } catch (cause: unknown) {
       const message = typeof cause === "object" && cause !== null && "message" in cause && typeof cause.message === "string" ? cause.message : typeof cause === "string" ? cause : `Não foi possível conectar o ${providerName}. Tente novamente.`;
@@ -81,12 +82,12 @@ export function ApiKeyProviderForm({ account, providerKind = account?.providerKi
       <Field data-invalid={invalidField === "key"}>
         <FieldLabel htmlFor="go-provider-api-key">Chave de API</FieldLabel>
         <Input id="go-provider-api-key" type="password" value={apiKey} onChange={event => setApiKey(event.currentTarget.value)} placeholder={account ? "Manter a chave atual" : `Sua chave do ${providerName}`} disabled={busy} aria-invalid={invalidField === "key"} autoComplete="new-password" />
-        <FieldDescription className="text-xs">{account ? "Deixe em branco para manter a chave atual." : hyper ? "Use uma chave do painel Charm Hyper." : "Use a chave da sua assinatura. Os modelos e limites são consultados automaticamente."}</FieldDescription>
+        <FieldDescription className="text-xs">{account ? "Deixe em branco para manter a chave atual." : brave ? "Use uma chave da API Web Search do Brave. A chave será validada na primeira pesquisa, sem consumir cota ao cadastrar." : hyper ? "Use uma chave do painel Charm Hyper." : "Use a chave da sua assinatura. Os modelos e limites são consultados automaticamente."}</FieldDescription>
         {hyper && <FieldDescription className="text-xs">A chave de API consulta o catálogo e o saldo em Hypercredits. As cotas de 5 horas e semanais usam a sessão do painel.</FieldDescription>}
       </Field>
     </FieldGroup>
     {hyper && account?.providerKind === "charm-hyper" && <HyperPanelConnection key={account.alias} alias={account.alias} disabled={saving} onBusyChange={panelBusyChanged} />}
-    <Button type="button" variant="link" disabled={busy} className="h-auto cursor-pointer self-start p-0 text-xs" onClick={() => void openUrl(hyper ? "https://hyper.charm.land/" : "https://opencode.ai/go").catch(() => toast.error(`Não foi possível abrir o ${providerName}.`))}><ExternalLink data-icon="inline-start" />Abrir {providerName}</Button>
+    <Button type="button" variant="link" disabled={busy} className="h-auto cursor-pointer self-start p-0 text-xs" onClick={() => void openUrl(brave ? "https://api-dashboard.search.brave.com/" : hyper ? "https://hyper.charm.land/" : "https://opencode.ai/go").catch(() => toast.error(`Não foi possível abrir o ${providerName}.`))}><ExternalLink data-icon="inline-start" />Abrir {providerName}</Button>
     {error && <Alert variant="destructive"><AlertCircle /><AlertDescription>{error}</AlertDescription></Alert>}
     <div className="flex flex-wrap justify-end gap-2">
       <Button type="button" variant="outline" disabled={busy} className="cursor-pointer" onClick={onCancel}>Cancelar</Button>

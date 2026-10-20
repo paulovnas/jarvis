@@ -18,7 +18,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use tauri::Manager;
 
 static CATALOG_LOCK: Mutex<()> = Mutex::new(());
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
@@ -552,9 +551,7 @@ async fn local<T: Send + 'static>(
     state: AppState,
     operation: impl FnOnce(&Path, Option<&Path>) -> Result<T, SkillError> + Send + 'static,
 ) -> Result<T, SkillError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let project = selected_project(&state, &home)?;
@@ -572,9 +569,7 @@ async fn local_config<T: Send + 'static>(
     state: AppState,
     operation: impl FnOnce(&Path, Option<&Path>) -> Result<T, SkillError> + Send + 'static,
 ) -> Result<T, SkillError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let project = selected_project(&state, &home)?;
@@ -813,9 +808,7 @@ pub async fn get_marketplace_skill(
     source: String,
     skill_id: String,
 ) -> Result<Detail, SkillError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     // Preview is read-only and has its own repository cache. Do not queue it
     // behind installs, updates, or a detail request the user already closed.
@@ -825,9 +818,7 @@ pub async fn get_marketplace_skill(
 }
 #[tauri::command]
 pub async fn get_skill_cache_status(app: tauri::AppHandle) -> Result<SkillCacheStatus, SkillError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || cache::status(&home))
         .await
@@ -841,9 +832,7 @@ pub async fn clear_skill_cache(
     if !confirmed {
         return Err(error("Confirme a limpeza do cache de skills."));
     }
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     tauri::async_runtime::spawn_blocking(move || cache::clear(&home))
         .await

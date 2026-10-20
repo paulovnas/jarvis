@@ -1,7 +1,7 @@
-//! Local, bounded diagnostics with an allowlisted schema.
+//! Local, bounded diagnostics with an allowlisted schema and redacted errors.
 //!
-//! Diagnostics never contain prompts, model responses, request bodies, URLs or
-//! credentials. Export reparses every JSONL line before adding it to the ZIP so
+//! Callers never submit prompts, model responses, request bodies or tool output.
+//! Error details are redacted before persistence. Export reparses every JSONL line so
 //! manually altered and future incompatible records are excluded by default.
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::{
     io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, Once, OnceLock,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -21,13 +21,15 @@ use zip::write::SimpleFileOptions;
 
 use crate::persistence::{AppState, DatabaseIntegrityResult};
 
+pub(crate) mod logs;
+
 const SCHEMA_VERSION: u8 = 1;
 const DIRECTORY: &str = "diagnostics";
 const CURRENT_LOG: &str = "events.jsonl";
 const MARKER: &str = "active-run.json";
 const MAX_LOG_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_LOG_FILES: usize = 5;
-const MAX_LINE_BYTES: usize = 4 * 1024;
+const MAX_LINE_BYTES: usize = 512 * 1024;
 const MAX_EXPORT_INPUT_BYTES: u64 = MAX_LOG_BYTES * MAX_LOG_FILES as u64;
 const MAX_RECENT_EVENTS: usize = 20;
 const FORMAT: &str = "jarvis-diagnostics";
@@ -48,11 +50,12 @@ struct Inner {
     storage_events: Mutex<BTreeSet<String>>,
     begun: AtomicBool,
     finished: AtomicBool,
+    dropped_records: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-enum Level {
+pub(crate) enum Level {
     Info,
     Warning,
     Error,
@@ -69,6 +72,7 @@ enum EventKind {
     StorageFailure,
     ProviderRefusal,
     ProviderFailure,
+    Runtime,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -110,6 +114,8 @@ struct Record {
     protocol_reason: Option<ProviderProtocolReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    details: Option<logs::Details>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -465,6 +471,7 @@ impl Record {
             upstream_code: None,
             protocol_reason: None,
             request_id: None,
+            details: None,
         }
     }
 
@@ -505,6 +512,7 @@ impl Record {
                 .request_id
                 .as_deref()
                 .is_none_or(|value| safe_token(value, 160).as_deref() == Some(value))
+            && self.details.as_ref().is_none_or(logs::Details::valid)
     }
 }
 
@@ -520,6 +528,7 @@ impl DiagnosticsState {
                 storage_events: Mutex::new(BTreeSet::new()),
                 begun: AtomicBool::new(false),
                 finished: AtomicBool::new(false),
+                dropped_records: AtomicU64::new(0),
             }),
         }
     }
@@ -556,22 +565,30 @@ impl DiagnosticsState {
 
     fn record(&self, record: Record) {
         if !record.valid() {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return;
         }
         let Ok(_guard) = self.inner.write_lock.lock() else {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return;
         };
-        let _ = write_record(&self.inner.root, &record, MAX_LOG_BYTES, MAX_LOG_FILES);
+        if write_record(&self.inner.root, &record, MAX_LOG_BYTES, MAX_LOG_FILES).is_err() {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn try_record(&self, record: Record) {
         if !record.valid() {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return;
         }
         let Ok(_guard) = self.inner.write_lock.try_lock() else {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
             return;
         };
-        let _ = write_record(&self.inner.root, &record, MAX_LOG_BYTES, MAX_LOG_FILES);
+        if write_record(&self.inner.root, &record, MAX_LOG_BYTES, MAX_LOG_FILES).is_err() {
+            self.inner.dropped_records.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn finish(&self, reason: ShutdownReason) {
@@ -595,6 +612,7 @@ impl DiagnosticsState {
     }
 
     fn records(&self) -> io::Result<Vec<(usize, Vec<Record>)>> {
+        let _guard = self.inner.write_lock.lock().map_err(|_| io::Error::other("diagnostics busy"))?;
         let mut total = 0_u64;
         let mut result = Vec::new();
         for index in (0..MAX_LOG_FILES).rev() {
@@ -827,7 +845,10 @@ pub(crate) fn initialize(data_root: &Path, app_version: &str) -> DiagnosticsStat
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |information| {
             if let Some(state) = ACTIVE.get() {
-                state.try_record(Record::new(state, EventKind::Panic, Level::Error));
+                let mut record = Record::new(state, EventKind::Panic, Level::Error);
+                let stack = std::backtrace::Backtrace::force_capture().to_string();
+                record.details = Some(logs::Details::new(&information.to_string(), Some(&stack)));
+                state.try_record(record);
             }
             previous(information);
         }));

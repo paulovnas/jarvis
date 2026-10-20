@@ -65,9 +65,12 @@ pub(super) fn load(directory: &Path, id: &str) -> Result<Option<Manifest>, Agent
     if state.root_status.active() {
         state.root_status = Status::Interrupted;
     }
-    for job in state.jobs.values_mut().filter(|job| job.status.active()) {
-        job.status = Status::Interrupted;
-        job.error = Some("Execução interrompida. Confira o checkpoint antes de retomar.".into());
+    for job in state.jobs.values_mut() {
+        job.status = job.stage_status();
+        if job.status.active() {
+            job.status = Status::Interrupted;
+            job.error = Some("Execução interrompida. Confira o checkpoint antes de retomar.".into());
+        }
     }
     Ok(Some(state))
 }
@@ -318,7 +321,7 @@ pub(super) fn prepare_recovery(
 ) -> Result<(Manifest, Vec<Job>), AgentError> {
     if manifest.flow != flow
         || manifest.run_id != run_id
-        || !matches!(manifest.root_status, Status::Interrupted | Status::Failed)
+        || !matches!(manifest.root_status, Status::Interrupted | Status::Failed | Status::Blocked)
     {
         return Err(invalid(
             "O checkpoint não corresponde ao fluxo que falhou nesta conversa.",
@@ -344,7 +347,7 @@ pub(super) fn prepare_recovery(
             if let Some(handoff) = &job.handoff {
                 // hub_complete is durable before the worker's final journal write.
                 // Preserve that accepted canvas result across this crash window.
-                job.status = if matches!(handoff.verdict, Verdict::Completed | Verdict::Approved) {
+                job.status = if handoff.successful() {
                     Status::Completed
                 } else {
                     Status::Blocked
@@ -383,9 +386,7 @@ pub(super) fn prepare_recovery(
                 resumed.push(job.clone());
             }
             Some(turn) if turn.turn.status == TurnStatus::Completed => {
-                job.status = if job.handoff.as_ref().is_some_and(|handoff| {
-                    matches!(handoff.verdict, Verdict::Completed | Verdict::Approved)
-                }) {
+                job.status = if job.handoff.as_ref().is_some_and(Handoff::successful) {
                     Status::Completed
                 } else {
                     Status::Blocked
@@ -966,6 +967,7 @@ mod retry_tests {
             let (_fixture, hub) = super::super::tests::hub();
             let mut source = super::super::tests::job(&hub, Role::Investigator, ".");
             let handoff = Handoff {
+                objective: None,
                 verdict: verdict.clone(),
                 summary: "Finding headline. ".repeat(30),
                 outcomes: vec!["Budget mismatch reproduced".into()],

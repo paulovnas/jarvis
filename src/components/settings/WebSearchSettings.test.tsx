@@ -16,6 +16,37 @@ const account = (alias: string, providerKind = "openai-codex"): ProviderAccount 
 });
 
 describe("WebSearchSettings", () => {
+  it("selects Brave Search without a model and keeps other tool and chat settings unchanged", async () => {
+    const brave: ProviderAccount = { ...account("brave-search-work", "brave-search"), displayName: "Brave Search", models: [] };
+    invokeMock.mockImplementation(async (command, args) => command === "get_web_search_config" ? { accountAlias: null, model: null, inheritChat: true } : args);
+    const user = userEvent.setup();
+    render(<WebSearchSettings accounts={[brave, account("chat")]} />);
+    await user.click(await screen.findByRole("combobox", { name: "Provedor de Web Search" }));
+    await user.click(await screen.findByRole("option", { name: "Brave Search" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_web_search_config", { accountAlias: brave.alias, model: null, inheritChat: false }));
+    await screen.findByText(/A busca usa a API Brave Search/);
+    expect(screen.queryByRole("combobox", { name: "Modelo de Web Search" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.every(([command]) => command === "get_web_search_config" || command === "set_web_search_config")).toBe(true);
+    await user.click(screen.getByRole("combobox", { name: "Provedor de Web Search" }));
+    await user.click(await screen.findByRole("option", { name: "Herdar do chat" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenLastCalledWith("set_web_search_config", { accountAlias: null, model: null, inheritChat: true }));
+  });
+  it("keeps disabled Brave selections visible as unavailable without silently switching providers", async () => {
+    const brave = { ...account("brave-search-work", "brave-search"), models: [], enabled: false };
+    invokeMock.mockResolvedValue({ accountAlias: brave.alias, model: null, inheritChat: false });
+    render(<WebSearchSettings accounts={[brave]} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("desativado");
+    expect(screen.getByRole("combobox", { name: "Provedor de Web Search" })).toHaveTextContent("brave-search-work · Indisponível");
+    expect(invokeMock).not.toHaveBeenCalledWith("set_web_search_config", expect.anything());
+  });
+  it.each(["vision", "image_generation"] as const)("does not offer Brave Search for %s", async kind => {
+    const brave = { ...account("brave-search-work", "brave-search"), models: [] };
+    invokeMock.mockResolvedValue({ accountAlias: null, model: null, inheritChat: false });
+    const user = userEvent.setup(); render(<WebSearchSettings accounts={[brave]} kind={kind} />);
+    await user.click(await screen.findByRole("combobox", { name: `Provedor de ${kind === "vision" ? "Vision" : "Gerar imagens"}` }));
+    expect(screen.queryByRole("option", { name: brave.alias })).not.toBeInTheDocument();
+  });
   it.each(["custom", "openrouter"])("não oferece modelos de imagens não cadastrados em %s", async providerKind => {
     const router = customAccountFixture(); router.custom!.baseUrl = "https://openrouter.ai/api/v1";
     router.providerKind = providerKind;

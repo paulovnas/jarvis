@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -30,7 +31,7 @@ pub(super) fn definitions(mode: Mode) -> Vec<Value> {
     ];
     if mode == Mode::Build {
         tools.extend([
-            super::tools::definition("video_run", "Run complete OpenMontage production through its registry and pipeline contracts. init creates a new production; status resumes checkpoints/costs; board opens the managed live Backlot production board; tool executes any registered tool using its exact schema; checkpoint saves stage artifacts; approve records native authorization and advances an awaiting_human stage after quality checks; review inspects an existing MP4. Jarvis's effective policy governs execution: YOLO preauthorizes full production including network/paid tools and checkpoint advancement; manual mode lets Jarvis request native approval. Call tools directly without duplicate permission questions; respect explicit human-review/preview stopping points, hard denies, service configuration and budgets. Read video_docs/video_tools first. Tool paths are relative to the production and confined to the active project. Previous outputs are preserved. Never supply approval flags or credentials or claim authorization is human review. Returns sessionId/cursor/output; use video_wait until terminal. Cancellation stops descendants. Technically verified generated MP4s open playback; visual/audio review is still required for delivery.", json!({"action":{"type":"string","enum":["init","tool","status","checkpoint","approve","review","board"]},"path":{"type":"string","minLength":1,"maxLength":4096,"description":"Production directory relative to the active project."},"pipeline":{"type":["string","null"],"maxLength":128,"description":"Installed pipeline name for init."},"tool":{"type":["string","null"],"maxLength":128,"description":"Exact registry name for action tool."},"arguments":{"type":"object","description":"Exact upstream tool schema; init title/style_playbook; checkpoint stage/status/artifacts; approve stage; review output_path. Paths resolve from this production directory."},"costQuoteUsd":{"type":["number","null"],"minimum":0,"description":"Only for an upstream quote_required model: an actual user cost estimate in USD, validated under Jarvis's effective execution policy. This is not a provider-confirmed charge; never invent a quote."},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000}}), &["action","path"]),
+            super::tools::definition("video_run", "Run complete OpenMontage production through its registry and pipeline contracts. init creates a new production; status resumes checkpoints/costs; board opens the managed live Backlot production board; tool executes any registered tool using its exact schema; checkpoint saves stage artifacts; approve records native authorization and advances an awaiting_human stage after quality checks; review inspects an existing MP4; repair installs a known missing dependency group in the existing managed runtime and verifies availability (tool required, path=\".\"; never installs arbitrary packages or downloads model weights). Jarvis's effective policy governs execution: YOLO preauthorizes full production including network/paid tools and checkpoint advancement; manual mode lets Jarvis request native approval. Call tools directly without duplicate permission questions; respect explicit human-review/preview stopping points, hard denies, service configuration and budgets. Read video_docs/video_tools first. Tool paths are relative to the production and confined to the active project. Previous outputs are preserved. Never supply approval flags or credentials or claim authorization is human review. Returns sessionId/cursor/output; use video_wait until terminal. Cancellation stops descendants. Technically verified generated MP4s open playback; visual/audio review is still required for delivery.", json!({"action":{"type":"string","enum":["init","tool","status","checkpoint","approve","review","board","repair"]},"path":{"type":"string","minLength":1,"maxLength":4096,"description":"Production directory relative to the active project."},"pipeline":{"type":["string","null"],"maxLength":128,"description":"Installed pipeline name for init."},"tool":{"type":["string","null"],"maxLength":128,"description":"Exact registry name for action tool or repair."},"arguments":{"type":"object","description":"Exact upstream tool schema; init title/style_playbook; checkpoint stage/status/artifacts; approve stage; review output_path. Paths resolve from this production directory."},"costQuoteUsd":{"type":["number","null"],"minimum":0,"description":"Only for an upstream quote_required model: an actual user cost estimate in USD, validated under Jarvis's effective execution policy. This is not a provider-confirmed charge; never invent a quote."},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000}}), &["action","path"]),
             super::tools::definition("video_wait", "Wait for incremental output/completion of this execution's OpenMontage job. Waiting never restarts a tool or repeats API charges. Retain sessionId/cursor until completed, failed or cancelled; inspect artifact/cost receipts. Only verified MP4s open playback.", json!({"sessionId":{"type":"string","minLength":1},"cursor":{"type":"integer","minimum":0},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000}}), &["sessionId"]),
             super::tools::definition("video_cancel", "Cancel this execution's OpenMontage job including model/browser/renderer/FFmpeg descendants. Preserve sources and completed media. An interrupted paid request may incur charges; inspect costs before retrying.", json!({"sessionId":{"type":"string","minLength":1},"yieldTimeMs":{"type":"integer","minimum":1,"maximum":30000}}), &["sessionId"]),
         ]);
@@ -133,7 +134,9 @@ fn list_documents(
 }
 
 #[derive(Default)]
-pub(super) struct Jobs {}
+pub(super) struct Jobs {
+    repairs: HashSet<String>,
+}
 pub(super) struct Context<'a> {
     pub session: &'a super::Session,
     pub home: &'a Path,
@@ -252,6 +255,17 @@ pub(super) async fn approval_preflight(
         return Ok(ApprovalPreflight::default());
     }
     match tool.args["action"].as_str() {
+        Some("repair") => {
+            let info = inspect_dependencies(home, root, &tool.args).await?;
+            let package = repair_package(&info)?;
+            return Ok(ApprovalPreflight {
+                required: package.is_some(),
+                description: package.map_or_else(
+                    || "A ferramenta já está disponível; nenhuma instalação é necessária.".into(),
+                    |(_, packages)| format!("Instalar {} no ambiente gerenciado do OpenMontage e verificar novamente a ferramenta. Os modelos e as credenciais permanecem sujeitos à configuração vigente.", packages.join(", ")),
+                ),
+            });
+        }
         Some("approve") => {
             return Ok(ApprovalPreflight {
                 required: true,
@@ -300,6 +314,35 @@ pub(super) async fn approval_preflight(
         required: response["requiresApproval"].as_bool().unwrap_or(true),
         description: price,
     })
+}
+
+async fn inspect_dependencies(home: &Path, root: &Path, args: &Value) -> Result<Value, AgentError> {
+    if !args["tool"].as_str().is_some_and(|name| !name.trim().is_empty()) {
+        return Err(error("Informe a ferramenta indisponível retornada por video_tools."));
+    }
+    let runtime = crate::core::openmontage::runtime(home).map_err(AgentError::from)?;
+    let request = request(&runtime, root, root, "tools", args, false)?;
+    let file = request_file(&request, None)?;
+    let output = tokio::time::timeout(Duration::from_secs(30), process(runtime, file.path(), root, None).output())
+        .await.map_err(|_| error("A verificação da dependência não respondeu em 30 segundos. A disponibilidade da ferramenta ainda não foi confirmada."))?
+        .map_err(|_| error("Não foi possível consultar as dependências do OpenMontage."))?;
+    let response = String::from_utf8_lossy(&output.stdout).lines().rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .ok_or_else(|| error("O OpenMontage não retornou um diagnóstico válido das dependências."))?;
+    if !output.status.success() || response["success"] != true {
+        return Err(error(response["error"]["message"].as_str().unwrap_or("Não foi possível verificar a ferramenta.")));
+    }
+    Ok(response["tool"].clone())
+}
+
+fn repair_package(info: &Value) -> Result<Option<(&'static str, &'static [&'static str])>, AgentError> {
+    if info["status"] == "available" {
+        return Ok(None);
+    }
+    let missing: Vec<String> = serde_json::from_value(info["missingDependencies"].clone())
+        .map_err(|_| error("A ferramenta não informou dependências reparáveis. Consulte video_tools para identificar a configuração necessária."))?;
+    crate::core::openmontage::configuration::dependency_package(&missing)
+        .map(Some).map_err(AgentError::from)
 }
 
 #[derive(Clone, Serialize)]
@@ -416,6 +459,44 @@ impl Jobs {
         }
         if *signal.borrow() {
             return Err(AgentError::cancelled());
+        }
+        if tool.name == "video_run" && tool.args["action"] == "repair" {
+            let info = inspect_dependencies(home, &session.root, &tool.args).await?;
+            let Some((package, _)) = repair_package(&info)? else {
+                return Ok(json!({"action":"repair","status":"available","installed":false,"tool":info}).to_string());
+            };
+            if !approved {
+                return Err(error("O reparo de dependências requer a aprovação nativa da execução."));
+            }
+            let name = tool.args["tool"].as_str().unwrap();
+            if !self.repairs.insert(name.to_owned()) {
+                return Err(error("O reparo desta ferramenta já foi tentado nesta execução. Informe a causa retornada e a ação necessária; preserve os resultados para retomar após corrigir o requisito."));
+            }
+            let app = app.ok_or_else(|| error("O reparo gerenciado requer a aplicação desktop."))?;
+            let mut signal = signal;
+            let repair = crate::core::openmontage::configuration::install_openmontage_optional_package(
+                app.clone(), app.state::<crate::core::CoreState>(), package.into()
+            );
+            tokio::pin!(repair);
+            tokio::select! {
+                biased;
+                // Acquire this installation before forwarding cancellation; let its cleanup finish.
+                result = &mut repair => result.map_err(AgentError::from)?,
+                _ = super::cancelled(&mut signal) => {
+                    let _ = crate::core::cancel_core_installation(
+                        app.clone(), app.state::<crate::core::CoreState>(), crate::core::ComponentId::Openmontage
+                    ).await;
+                    let _ = repair.await;
+                    return Err(AgentError::cancelled());
+                }
+            };
+            let verified = inspect_dependencies(home, &session.root, &tool.args).await?;
+            if verified["status"] != "available" {
+                let mut cause = error(&format!("As dependências de {name} foram instaladas, mas a ferramenta continua indisponível: {}. Confira esse requisito no Core antes de retomar.", verified["unavailableReason"].as_str().unwrap_or("o catálogo não confirmou a disponibilidade")));
+                cause.tool_result = Some(json!({"action":"repair","installed":true,"tool":verified}).to_string());
+                return Err(cause);
+            }
+            return Ok(json!({"action":"repair","status":"available","installed":true,"package":package,"tool":verified,"nextAction":"Continue the pending operation using the verified tool schema. Availability is not evidence that the artifact passed review."}).to_string());
         }
         if tool.name == "video_run" && tool.args["action"] == "board" {
             let path = tool.args["path"]
@@ -534,6 +615,23 @@ impl Jobs {
 pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn video_dependency_repair_uses_the_registered_tool_and_reports_unrepairable_requirements() {
+        let catalog = super::super::tool_contract::Catalog::new(&definitions(Mode::Build));
+        let call = ToolCall {
+            id: "repair".into(), name: "video_run".into(),
+            args: json!({"action":"repair","path":".","tool":"video_understand"}),
+            status: "pending".into(), output: String::new(), duration_ms: 0,
+        };
+        assert!(catalog.validate(&call).is_ok());
+        let plan = repair_package(&json!({"status":"unavailable","missingDependencies":["python:transformers","python:torch"]})).unwrap().unwrap();
+        assert_eq!(plan.0, "vision");
+        assert!(repair_package(&json!({"status":"available"})).unwrap().is_none());
+        assert!(repair_package(&json!({"status":"unavailable","missingDependencies":["env:API_KEY"]})).is_err());
+        assert!(repair_package(&json!({"status":"unavailable","missingDependencies":[]})).is_err());
+        assert!(super::super::tool_contract::Catalog::new(&definitions(Mode::Plan)).validate(&call).is_err());
+    }
 
     struct NativeProduction<'a> {
         home: &'a Path,

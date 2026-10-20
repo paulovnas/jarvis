@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { writeClipboardText } from "@/core/clipboard";
 import { AssistantWorkCollapse } from "./AssistantWorkCollapse";
 import { GeneratedImageCard } from "./GeneratedImageCard";
+import { PixelArtCards } from "./PixelArtCard";
 import { BrowserCaptureCard } from "./BrowserCaptureCard";
 import { LearningSummary } from "./LearningSummary";
 import type { ChatMessage } from "./types";
@@ -60,6 +61,7 @@ export function AssistantMessageTurn({ message, onRetry, retrying = false, retry
       {message.work ? <AssistantWorkCollapse work={message.work} isStreaming={message.streaming} hasError={Boolean(message.error)} streamId={message.id} renderHeader={header} /> : header()}
       {message.work && message.content && !message.streaming && <Separator aria-label="Resposta" />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "generate_image" || tool.name === "image_process").map(tool => <GeneratedImageCard key={tool.id} tool={tool} />)}
+      {message.work && <PixelArtCards tools={message.work.steps.flatMap(step => step.tools)} />}
       {message.work?.steps.flatMap(step => step.tools).filter(tool => tool.name === "browser_screenshot" || tool.name.startsWith("computer_")).map(tool => <BrowserCaptureCard key={tool.id} tool={tool} />)}
       {message.error && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
         <p className="font-medium">{message.error.title}</p>

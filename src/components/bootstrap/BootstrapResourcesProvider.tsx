@@ -90,7 +90,7 @@ export function BootstrapResourcesProvider({
         void readResource("list_provider_accounts").then(value => {
           const accounts = accountList(value);
           if (active && revision === accountsRevision.current) updateAccounts(accounts);
-          needsAccounts = accounts.some(account => account.enabled && account.providerKind !== "custom" && (!account.modelsAvailable || account.modelsStale));
+          needsAccounts = accounts.some(account => account.enabled && account.providerKind !== "custom" && account.providerKind !== "ollama" && (!account.modelsAvailable || account.modelsStale));
         }).catch(() => { /* Keep the last known catalog usable while offline. */ })
           .finally(() => { checkingAccounts = false; });
       }

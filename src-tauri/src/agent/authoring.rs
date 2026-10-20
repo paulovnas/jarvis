@@ -206,6 +206,10 @@ pub(in crate::agent) fn agent_schema() -> Value {
 }
 
 pub(in crate::agent) fn flow_schema() -> Value {
+    let native_agent_ids: Vec<_> = workflow::catalog::builtin_agents()
+        .into_iter()
+        .map(|agent| agent.id)
+        .collect();
     let routes = json!({"type":"array","maxItems":24,"description":"Optional conditional exits. With a nonempty list, next must be null; the step selects exactly one route ID in hub_complete.route. Null targets finish the flow. Include an exit path and respect maxSteps.","items":{"type":"object","additionalProperties":false,"required":["id","label","target"],"properties":{"id":{"type":"string","pattern":"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"},"label":{"type":"string","minLength":1,"maxLength":100},"target":{"anyOf":[{"type":"null"},{"type":"string","pattern":"^[a-fA-F0-9]{32}$"}]}}}});
     json!({
         "type":"object", "additionalProperties":false,
@@ -218,7 +222,7 @@ pub(in crate::agent) fn flow_schema() -> Value {
             "maxSteps":{"type":"integer","minimum":1,"maximum":48},
             "steps":{"type":"array","minItems":1,"maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["id","agentId","instructions","position","next","onRework"],"properties":{
                 "id":{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},
-                "agentId":{"description":"A custom 32-character hexadecimal agent ID or an immutable builtin:* ID returned by jarvis_catalog.","anyOf":[{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},{"type":"string","enum":["builtin:planner","builtin:investigator","builtin:writer","builtin:orchestrator","builtin:designer","builtin:video","builtin:builder","builtin:reviewer","builtin:github"]}]},
+                "agentId":{"description":"A custom 32-character hexadecimal agent ID or an immutable builtin:* ID returned by jarvis_catalog.","anyOf":[{"type":"string","pattern":"^[a-fA-F0-9]{32}$"},{"type":"string","enum":native_agent_ids}]},
                 "instructions":{"type":"string","maxLength":8000},
                 "position":{"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}},
                 "next":{"anyOf":[{"type":"null"},{"type":"string","pattern":"^[a-fA-F0-9]{32}$"}]},

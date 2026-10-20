@@ -28,6 +28,7 @@ pub(crate) enum WireProtocol {
     OpenAiCompletions,
     AnthropicMessages,
     CloudCodeAssist,
+    OllamaChat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -102,6 +103,7 @@ impl ModelCapabilities {
                 Protocol::OpenaiResponses => WireProtocol::OpenAiResponses,
                 Protocol::OpenaiCompletions => WireProtocol::OpenAiCompletions,
                 Protocol::AnthropicMessages => WireProtocol::AnthropicMessages,
+                Protocol::Ollama => WireProtocol::OllamaChat,
             };
             return Self {
                 family: ProviderFamily::Custom,

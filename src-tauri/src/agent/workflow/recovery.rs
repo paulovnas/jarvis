@@ -398,6 +398,14 @@ impl Call {
     }
 
     fn related(&self, tool: &ToolCall, same_mcp: bool, root: &Path, conversation: &str) -> bool {
+        if self.name == "pixel_art_run" {
+            return tool.name == "pixel_art_status"
+                && serde_json::from_str::<Value>(&tool.output).is_ok_and(|receipt| {
+                    receipt["kind"] == "pixel_art"
+                        && receipt["conversationId"] == conversation
+                        && receipt["callId"] == self.id
+                });
+        }
         // An interrupted open has no tab ID; an empty owned catalog can confirm its absence.
         if self.name == "browser_open" {
             return tool.name == "browser_list"
@@ -796,6 +804,20 @@ impl Execution {
         let Some(checkpoint) = self.checkpoint(&state) else {
             return Ok(());
         };
+        if tool.name == "pixel_art_cancel"
+            && checkpoint.calls.iter().any(|call| {
+                call.name == "pixel_art_run"
+                    && call.outcome.is_none()
+                    && tool.args["jobId"]
+                        == super::super::pixel_art::operation_id(
+                            &self.hub.root.id,
+                            &self.id,
+                            &call.id,
+                        )
+            })
+        {
+            return Err(AgentError::new("recovery_inspection_required", "A operação de pixel art está com resultado incerto. Consulte pixel_art_status com o callId original; não cancele como atalho de recuperação. O usuário pode interromper explicitamente pelo botão Parar."));
+        }
         if checkpoint
             .calls
             .iter()
@@ -875,6 +897,12 @@ impl Execution {
             return Ok(());
         }
         let tool = preserved.as_ref().unwrap_or(tool);
+        if tool.name == "pixel_art_status"
+            && !serde_json::from_str::<Value>(&tool.output)
+                .is_ok_and(|receipt| receipt["executorId"] == self.id)
+        {
+            return Ok(());
+        }
         let relevant = |call: &Call| {
             let same_mcp = server(&call.name)
                 .zip(server(&tool.name))
@@ -1013,6 +1041,18 @@ impl Execution {
                                     || !receipt.as_ref().is_some_and(empty_browser_catalog))
                             {
                                 return Err(invalid("A abertura interrompida exige uma lista integrada vazia e o resultado not_applied. Uma aba existente não comprova o resultado desta chamada."));
+                            }
+                            if call.name == "pixel_art_run"
+                                && (outcome != Some(Outcome::Applied)
+                                    || !receipt.as_ref().is_some_and(|receipt| {
+                                        receipt["kind"] == "pixel_art"
+                                            && receipt["conversationId"] == self.hub.root.id
+                                            && receipt["executorId"] == self.id
+                                            && receipt["callId"] == call.id
+                                            && receipt["status"] == "completed"
+                                    }))
+                            {
+                                return Err(invalid("A operação de pixel art exige um recibo concluído da mesma chamada e o resultado applied. Enquanto ela estiver em execução ou com resultado incerto, mantenha unknown e consulte pixel_art_status com o callId original; não gere novamente."));
                             }
                             if call.name == "impeccable"
                                 && call.selectors.get("command").and_then(Value::as_str)
@@ -1195,6 +1235,88 @@ mod tests {
         exec.resolve_recovery(
             &json!({"callId":call.id,"evidenceCallId":evidence.id,"outcome":outcome}),
         )
+    }
+
+    #[test]
+    fn pixel_art_recovery_keeps_required_tools_and_requires_the_exact_completed_job() {
+        let generation = tool(
+            "lost-pixel-run",
+            "pixel_art_run",
+            json!({
+                "action":"generate","arguments":{"workflow":"sprite-generate"}
+            }),
+        );
+        let (_fixture, mut exec) = recovering(std::slice::from_ref(&generation));
+        exec.flow = Flow::Custom;
+        exec.role = Role::PixelArt;
+        exec.hub
+            .mutate(|manifest| {
+                manifest.flow = Flow::Custom;
+                manifest.custom_agent =
+                    Some(catalog::tests::example().resolve_agent("builtin:pixel_art")?);
+                Ok(())
+            })
+            .unwrap();
+        let mut definitions = super::super::super::tools::definitions(Mode::Build);
+        definitions
+            .extend(["ctx_search", "ctx_index", "ctx_stats"].map(|name| json!({"name":name})));
+        exec.filter(&mut definitions);
+        assert!(definitions
+            .iter()
+            .any(|tool| tool["name"] == "recovery_resolve"));
+        assert!(exec.allowed("recovery_resolve"));
+        crate::core::context::ContextMode::require_retrieval(&definitions).unwrap();
+        let permissions =
+            serde_json::to_value(catalog::permissions::builtin_permissions()).unwrap();
+        for tool in permissions
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tool| tool["required"] == true)
+        {
+            let name = tool["id"].as_str().unwrap();
+            if name != "hub_complete" {
+                // Direct agents finish through the runtime, without a child handoff.
+                assert!(exec.allowed(name), "{name}");
+            }
+        }
+        assert!(!exec.allowed("ctx_execute"));
+        let mut inspection = tool(
+            "status-running",
+            "pixel_art_status",
+            json!({"callId":generation.id}),
+        );
+        inspection.output = json!({"kind":"pixel_art","conversationId":exec.hub.root.id,
+            "callId":generation.id,"executorId":"main","status":"running","jobId":"a".repeat(32)})
+        .to_string();
+        observe(&exec, &inspection, |_| None);
+        assert!(resolve(&exec, &generation, &inspection, "applied").is_err());
+        assert!(resolve(&exec, &generation, &inspection, "not_applied").is_err());
+        resolve(&exec, &generation, &inspection, "unknown").unwrap();
+        assert!(exec.recovery_preflight(&generation, false).is_err());
+        let cancel = tool(
+            "cancel-uncertain",
+            "pixel_art_cancel",
+            json!({
+                "jobId":super::super::super::pixel_art::operation_id(&exec.hub.root.id,&exec.id,&generation.id)
+            }),
+        );
+        assert!(exec.recovery_preflight(&cancel, false).is_err());
+        let mut unrelated = inspection.clone();
+        unrelated.id = "other-job".into();
+        unrelated.output = json!({"kind":"pixel_art","conversationId":exec.hub.root.id,
+            "callId":"different-call","executorId":"main","status":"completed"})
+        .to_string();
+        observe(&exec, &unrelated, |_| None);
+        assert!(resolve(&exec, &generation, &unrelated, "applied").is_err());
+        inspection.id = "status-completed".into();
+        inspection.output = json!({"kind":"pixel_art","conversationId":exec.hub.root.id,
+            "callId":generation.id,"executorId":"main","status":"completed","artifacts":[{"path":"confirmed.gif"}]})
+        .to_string();
+        observe(&exec, &inspection, |_| None);
+        resolve(&exec, &generation, &inspection, "applied").unwrap();
+        assert!(!exec.recovery_inspection_pending().unwrap());
+        assert!(exec.recovery_preflight(&generation, false).is_err());
     }
 
     #[test]

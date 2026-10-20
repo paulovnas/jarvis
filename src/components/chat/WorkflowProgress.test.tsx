@@ -9,6 +9,23 @@ const planner = { thinking: "", commentary: "Etapa 1 · RPG/Planejador em execu�
 const director = { thinking: "", commentary: "Etapa 2 · RPG/Diretor em execução.", tools: [] };
 const artist = { thinking: "", commentary: "Etapa 3 · RPG/Artista Técnico 3D em execução.", tools: [] };
 
+it("shows a real earlier blocker and its next action instead of inferring success from the next stage", async () => {
+  const user = userEvent.setup();
+  render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 5, steps: [planner, director], workflowStages: [{
+    number: "1", name: "RPG/Planejador", status: "blocked", error: null,
+    handoff: { verdict: "blocked", summary: "Inspeção pendente", objective: {
+      status: "blocked", remaining: ["Conferir o atlas"], reason: "O modelo de visão não respondeu.",
+      recoveryAttempts: ["Tentada nova conexão sem repetir a geração."], nextAction: "Selecionar outro modelo de visão e retomar.",
+    } },
+  }] }} />);
+  await user.click(screen.getByRole("button", { name: /Etapa 2.*RPG\/Diretor/ }));
+  const row = within(screen.getByRole("list", { name: "Histórico do fluxo" })).getAllByRole("listitem")[0];
+  expect(within(row).getByText("Bloqueada")).toBeVisible();
+  expect(within(row).getByText("O modelo de visão não respondeu.", { exact: false })).toBeVisible();
+  expect(within(row).getByText("Selecionar outro modelo de visão e retomar.", { exact: false })).toBeVisible();
+  expect(within(row).queryByText("Concluída")).not.toBeInTheDocument();
+});
+
 it("groups stage announcements around the current stage and reveals their history on demand", async () => {
   const user = userEvent.setup();
   const { rerender } = render(<AssistantWorkCollapse isStreaming work={{ durationSeconds: 4, steps: [planner, director] }} />);
@@ -26,8 +43,8 @@ it("groups stage announcements around the current stage and reveals their histor
   expect(disclosure).toHaveAccessibleName(/Etapa 3.*RPG\/Artista Técnico 3D/);
   const rows = within(screen.getByRole("list", { name: "Histórico do fluxo" })).getAllByRole("listitem");
   expect(rows.map(row => within(row).getByText(/RPG\//).textContent)).toEqual(["RPG/Planejador", "RPG/Diretor", "RPG/Artista Técnico 3D"]);
-  expect(within(rows[0]).getByText("Concluída")).toBeVisible();
-  expect(within(rows[1]).getByText("Concluída")).toBeVisible();
+  expect(within(rows[0]).getByText("Encerrada")).toBeVisible();
+  expect(within(rows[1]).getByText("Encerrada")).toBeVisible();
   expect(rows[2]).toHaveAttribute("aria-current", "step");
   expect(within(rows[2]).getByText("Em execução")).toBeVisible();
 });
@@ -75,7 +92,7 @@ it("preserves tools, ordinary observations and user messages between separate st
 });
 
 it.each([
-  { status: "completed" as const, error: undefined, state: "Concluída" },
+  { status: "completed" as const, error: undefined, state: "Encerrada" },
   { status: undefined, error: undefined, state: "Encerrada" },
   { status: undefined, error: { title: "Falha na execução", message: "O provedor encerrou a conexão." }, state: "Não concluída" },
 ])("shows the final stage as $state using the turn outcome", async ({ status, error, state }) => {
@@ -91,7 +108,7 @@ it.each([
   expect(within(progress).queryByText("Em execução")).not.toBeInTheDocument();
   await user.click(disclosure);
   const rows = within(screen.getByRole("list", { name: "Histórico do fluxo" })).getAllByRole("listitem");
-  expect(within(rows[0]).getByText("Concluída")).toBeVisible();
+  expect(within(rows[0]).getByText("Encerrada")).toBeVisible();
   expect(within(rows[1]).getByText(state)).toBeVisible();
   expect(rows[1]).not.toHaveAttribute("aria-current");
 });

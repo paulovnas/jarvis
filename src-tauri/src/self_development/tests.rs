@@ -5,6 +5,20 @@ const PROJECT: &str = "11111111111111111111111111111111";
 const OTHER: &str = "22222222222222222222222222222222";
 const CONVERSATION: &str = "33333333333333333333333333333333";
 
+#[tokio::test]
+async fn persistent_logs_require_current_project_consent_and_honor_revocation() {
+    let fixture = Fixture::new();
+    let denied = read_log_diagnostics(&fixture.home, &fixture.root, PROJECT, crate::diagnostics::logs::Query::default())
+        .await.unwrap_err();
+    assert_eq!(denied.code, "self_development_denied");
+    fixture.enable();
+    require_for_root(&fixture.home, &fixture.root, PROJECT).unwrap();
+    set_enabled(&fixture.state, &fixture.home, PROJECT, false).unwrap();
+    let revoked = read_log_diagnostics(&fixture.home, &fixture.root, PROJECT, crate::diagnostics::logs::Query::default())
+        .await.unwrap_err();
+    assert_eq!(revoked.code, "self_development_denied");
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     home: PathBuf,

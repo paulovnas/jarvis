@@ -805,6 +805,7 @@ mod tests {
         })
         .unwrap();
         let handoffs = vec![Handoff {
+            objective: None,
             verdict: Verdict::Completed,
             summary: "Implementação concluída".into(),
             outcomes: vec!["O novo comportamento está disponível.".into()],

@@ -20,6 +20,7 @@ const eventKinds = [
   "storage_failure",
   "provider_refusal",
   "provider_failure",
+  "runtime",
 ] as const;
 
 const diagnosticEventSchema = z.object({
@@ -78,6 +79,7 @@ const eventLabels: Record<DiagnosticEvent["event"], string> = {
   storage_failure: "Falha de armazenamento",
   provider_refusal: "Solicitação recusada pelo provedor",
   provider_failure: "Falha de comunicação com o provedor",
+  runtime: "Evento interno de diagnóstico",
 };
 
 const protocolLabels: Record<NonNullable<DiagnosticEvent["protocolReason"]>, string> = {

@@ -1,4 +1,4 @@
-import { Network, PlugZap, Sparkles, Zap } from "lucide-react";
+import { Globe, Network, PlugZap, Server, Sparkles, Zap } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,8 @@ import openCodeGoIcon from "../../public/provider-opencode-go.svg?url";
 /** Bundle provider marks because the remote server serves only explicit asset paths. */
 export function RemoteProviderIcon({ kind, className }: { kind: ProviderAccount["providerKind"]; className?: string }) {
   const classes = cn("size-4 shrink-0", className);
+  if (kind === "brave-search") return <Globe aria-hidden="true" className={classes} />;
+  if (kind === "ollama") return <Server aria-hidden="true" className={classes} />;
   if (kind === "custom") return <PlugZap aria-hidden="true" className={classes} />;
   if (kind === "muse-code") return <Sparkles aria-hidden="true" className={classes} />;
   if (kind === "openrouter") return <Network aria-hidden="true" className={classes} />;

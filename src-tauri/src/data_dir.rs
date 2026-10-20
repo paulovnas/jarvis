@@ -80,12 +80,46 @@ pub(crate) fn configure(identifier: &str) -> io::Result<Profile> {
     Ok(selected)
 }
 
+/// Only the opt-in, isolated pixel probe reuses production credential identity.
+/// Its mutable storage is rooted in a private temporary home by the probe.
+#[cfg(feature = "browser-probe")]
+pub(crate) fn configure_pixel_probe() -> io::Result<()> {
+    if std::env::var("JARVIS_PIXEL_PROBE").as_deref() != Ok("1") {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Pixel probe was not enabled.",
+        ));
+    }
+    if ACTIVE_PROFILE
+        .get()
+        .is_some_and(|profile| *profile != Profile::Production)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "The runtime profile was already configured.",
+        ));
+    }
+    let _ = ACTIVE_PROFILE.set(Profile::Production);
+    Ok(())
+}
+
 pub(crate) fn root_for(home: &Path, profile: Profile) -> PathBuf {
     home.join(profile.directory())
 }
 
 pub(crate) fn root(home: &Path) -> PathBuf {
     root_for(home, profile())
+}
+
+/// Resolve storage for native UI commands. Only the explicit diagnostic host
+/// substitutes its isolated home; normal application behavior is unchanged.
+pub(crate) fn app_home(app: &tauri::AppHandle) -> tauri::Result<PathBuf> {
+    #[cfg(feature = "browser-probe")]
+    if let Some(home) = crate::agent::pixel_art_probe::home() {
+        return Ok(home);
+    }
+    use tauri::Manager;
+    app.path().home_dir()
 }
 
 #[cfg(target_os = "macos")]

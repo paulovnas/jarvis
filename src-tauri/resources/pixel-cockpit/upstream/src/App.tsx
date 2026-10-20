@@ -1,0 +1,16673 @@
+import {
+  AlertTriangle,
+  Archive,
+  ArrowLeft,
+  ArrowRight,
+  Bell,
+  Brush,
+  CheckCircle2,
+  CircleAlert,
+  Copy,
+  Download,
+  FileArchive,
+  FileImage,
+  FileJson,
+  Film,
+  FolderOpen,
+  Grid3X3,
+  ImagePlus,
+  Languages,
+  Layers3,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  PanelRight,
+  Pipette,
+  Plug,
+  Plus,
+  RefreshCw,
+  Scissors,
+  Settings,
+  Sparkles,
+  Square,
+  Terminal,
+  Trash2,
+  Upload,
+  X,
+  Zap
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode, UIEvent } from "react";
+import { AnimationReviewCockpit } from "./AnimationReviewCockpit";
+import type { AnimationReviewCandidateView } from "./AnimationReviewCockpit";
+import { VfxCompositeStage } from "./VfxCompositeStage";
+import animalPromptsMarkdown from "../docs/prompt-examples/animal-prompts.md?raw";
+import beastfolkPromptsMarkdown from "../docs/prompt-examples/beastfolk-prompts.md?raw";
+import chibiBoyPromptsMarkdown from "../docs/prompt-examples/chibi-boy-prompts.md?raw";
+import chibiGirlPromptsMarkdown from "../docs/prompt-examples/chibi-girl-prompts.md?raw";
+import monsterGirlPromptsMarkdown from "../docs/prompt-examples/monster-girl-prompts.md?raw";
+import monsterPromptsMarkdown from "../docs/prompt-examples/monster-prompts.md?raw";
+import professionCharacterPromptsMarkdown from "../docs/prompt-examples/profession-character-prompts.md?raw";
+import {
+  createApngBlob,
+  createAnimatedWebpBlob,
+  createSpriteSheetBlob,
+  createGifBlob,
+  exportAnimationPack,
+  exportEffectMetadata,
+  exportEffectPack,
+  exportWebP,
+  exportFramesZip,
+  exportGif,
+  exportMetadata,
+  exportSpriteSheet
+} from "./lib/exporters";
+import { animationLibraryHistoryMetadata, importAnimationPackBlob } from "./lib/animationPack";
+import {
+  addPackPoint,
+  addPackRect,
+  animationDirectionSyncWarnings,
+  buildAnimationPackV2EngineExports,
+  createAnimationPackV2,
+  createAnimationPackV2Zip,
+  duplicateAnimationFrame,
+  exportAnimationPackV2,
+  holdAnimationFrame,
+  moveAnimationEvent,
+  reverseAnimationTimeline,
+  setAnimationFrameDuration,
+  setAnimationLoopMode,
+  serializeAnimationPackV2,
+  validateAnimationPackV2
+} from "./lib/animationPackV2";
+import { animationExportAnchor, animationNormalizationFootline } from "./lib/animationAlignment";
+import { buildAnimationQualityReport } from "./lib/animationQuality";
+import type { AnimationQualityFrameInput } from "./lib/animationQuality";
+import {
+  BODY_TOPOLOGY_PROFILES,
+  compileMotionRecipe,
+  DEFAULT_MOTION_VARIANT,
+  getBodyTopologyProfile,
+  isExperimentalMotionFrameCount,
+  MOTION_RECIPES,
+  MOTION_FRAME_COUNTS,
+  MOTION_RECIPE_COMPILER_VERSION,
+  motionFrameGrid,
+  motionRecipeReference,
+  normalizeMotionVariant,
+  resolveMotionRecipe
+} from "./lib/motionRecipes";
+import type {
+  BodyTopologyId,
+  MotionFrameCount,
+  MotionRecipe,
+  MotionRecipeReference,
+  MotionVariantModifierKey,
+  MotionVariantSelection
+} from "./lib/motionRecipes";
+import {
+  ANIMATION_GENERATION_PROFILES,
+  animationGenerationProfileDefinition,
+  decideBestSmartRace,
+  planAnimationInitialCandidateAdmission,
+  rankAnimationTournamentEvaluations,
+  shouldStartBalancedAdditionalCandidate,
+  tournamentNeedsAllStartedCandidates
+} from "./lib/animationTournament";
+import type { AnimationGenerationProfile } from "./lib/animationTournament";
+import type { AnimationHumanReview } from "./lib/animationReview";
+import { buildEffectQualityReportV2 } from "./lib/effectQuality";
+import { createId, dataUrlToBlob, downloadBlob, loadImage, readFileAsDataUrl } from "./lib/image";
+import { OFFICIAL_ANIMATION_LIBRARY } from "./lib/officialAnimations";
+import { calculateGridCells, summarizeFrames } from "./lib/sprite";
+import {
+  clearImageCockpitLocalState,
+  dedupeLocalInboxHistory,
+  dedupePersistedLocalInboxHistory,
+  formatStorageBytes,
+  isStorageSafeModeSearch,
+  isStorageResetSearch,
+  loadPersistedState,
+  MAX_USER_ANIMATION_LIBRARY_ITEMS,
+  PENDING_CODEX_JOB_STORAGE_KEY,
+  prependHistoryItemWithDedupe,
+  preflightLocalStateStorage,
+  readLocalStateSummaries,
+  remapFrameSourceIds,
+  saveActions,
+  saveFrames,
+  saveHistory,
+  saveUserAnimationLibrary
+} from "./lib/storage";
+import type { LocalStateResetScope, LocalStateStoragePreflight, LocalStateSummary } from "./lib/storage";
+import type {
+  Annotation,
+  AnimationLibraryItem,
+  AnimationLibraryKind,
+  AnimationPackManifest,
+  AnimationPackV2,
+  AnimationPackV2Point,
+  AnimationPackV2Rect,
+  AnimationNormalizationCorrection,
+  AnimationQualityReportV2,
+  CodexArtifactStatus,
+  CodexFailureKind,
+  CodexJobDiagnostic,
+  CodexJobLogResponse,
+  GridSettings,
+  HistoryItem,
+  ImageCockpitApiHealth,
+  ImageCockpitDevSupervisorHealth,
+  CodexJobResponse,
+  CodexJobStatusResponse,
+  CodexOutboxImportResponse,
+  CodexOutboxResult,
+  CodexResultQualityClassification,
+  CodexRunnerPreflight,
+  CodexRunnerPreflightResponse,
+  CodexRunnerStatus,
+  EffectAnimationMetadata,
+  EffectLoopMode,
+  EffectQualityRank,
+  LocalGenerationResponse,
+  ImageRectCoordinates,
+  ImageSizeCoordinates,
+  ProviderId,
+  ProviderStatus,
+  SpriteAction,
+  SpriteFrame,
+  ToolMode
+} from "./types";
+
+const SAMPLE_URL = "/samples/forest-mage-sheet.png";
+const CANVAS_WIDTH = 920;
+const CANVAS_HEIGHT = 520;
+const IMAGE_DISPLAY_PADDING = 44;
+const LANGUAGE_STORAGE_KEY = "image-cockpit.language";
+const JOB_NOTIFICATION_STORAGE_KEY = "image-cockpit.jobNotifications";
+const SHOW_LOW_PRIORITY_CONTROLS = false;
+const SHOW_SPRITE_ACTIONS_PANEL = false;
+// public/samples stays bundled for README demos, release audit fixtures, and import QA while the official library UI is hidden.
+const SHOW_ANIMATION_LIBRARY = false;
+const ANIMATION_FRAME_COUNT = 8;
+const ANIMATION_DIRECTION_COUNT = 5;
+const ANIMATION_CELL_SIZE = 256;
+const MIN_ANIMATION_CELL_SIZE = ANIMATION_CELL_SIZE;
+const MAX_ACTIVE_CODEX_JOBS = 3;
+const MAX_ACTIVE_STANDARD_ANIMATION_CODEX_JOBS = MAX_ACTIVE_CODEX_JOBS;
+const CODEX_LOG_POLL_INTERVAL_MS = 2000;
+const CODEX_CAPACITY_POLL_INTERVAL_MS = 1000;
+const CODEX_LOG_TAIL_BYTES = 32768;
+const CODEX_LOG_HISTORY_LIMIT = MAX_ACTIVE_CODEX_JOBS;
+const DEFAULT_SUPERVISOR_PORT = 8793;
+const COCKPIT_HEALTH_POLL_INTERVAL_MS = 15000;
+export const INITIAL_HISTORY_RENDER_COUNT = 100;
+export const HISTORY_RENDER_BATCH_SIZE = 20;
+const HISTORY_SCROLL_LOAD_THRESHOLD_PX = 160;
+const ANIMATION_SHEET_GRID: GridSettings = { columns: ANIMATION_FRAME_COUNT, rows: ANIMATION_DIRECTION_COUNT, gutter: 0 };
+export type AnimationDirectionId = "front" | "front three-quarter" | "side" | "back three-quarter" | "back";
+const ANIMATION_DIRECTIONS: AnimationDirectionId[] = ["front", "front three-quarter", "side", "back three-quarter", "back"];
+const DIRECTION_SPLIT_ANIMATION_SCHEMA = "image-cockpit.direction-split-animation.v1";
+const DIRECTION_SPLIT_ANIMATION_GRID: GridSettings = motionFrameGrid(ANIMATION_FRAME_COUNT);
+const DIRECTION_SPLIT_ANIMATION_FILE_SLUGS = ["front", "front-three-quarter", "side", "back-three-quarter", "back"];
+const DIRECTION_SPLIT_ANIMATION_RESULT_COUNT = ANIMATION_DIRECTION_COUNT;
+
+export type AnimationDirectionPresetId = "five" | "three" | "one";
+const ANIMATION_DIRECTION_PRESET_IDS: AnimationDirectionPresetId[] = ["five", "three", "one"];
+const ANIMATION_DIRECTION_PRESETS: Record<AnimationDirectionPresetId, string[]> = {
+  five: ANIMATION_DIRECTIONS,
+  three: ["front", "side", "back"],
+  one: ["side"]
+};
+const DEFAULT_SINGLE_ANIMATION_DIRECTION: AnimationDirectionId = "side";
+
+function canonicalAnimationDirection(direction: string): AnimationDirectionId | undefined {
+  const slug = animationDirectionSlug(direction);
+  return ANIMATION_DIRECTIONS.find((candidate) => animationDirectionSlug(candidate) === slug);
+}
+
+export function animationDirectionsForPreset(
+  presetId: AnimationDirectionPresetId,
+  singleDirection: string = DEFAULT_SINGLE_ANIMATION_DIRECTION
+): string[] {
+  if (presetId !== "one") return [...ANIMATION_DIRECTION_PRESETS[presetId]];
+  return [canonicalAnimationDirection(singleDirection) ?? DEFAULT_SINGLE_ANIMATION_DIRECTION];
+}
+
+export function animationDirectionSelectionForDirections(directions?: readonly string[] | null): {
+  presetId: AnimationDirectionPresetId;
+  singleDirection: AnimationDirectionId;
+  directions: string[];
+} | null {
+  if (!Array.isArray(directions) || directions.length === 0) return null;
+  if (directions.length === 1) {
+    const singleDirection = typeof directions[0] === "string"
+      ? canonicalAnimationDirection(directions[0]) ?? DEFAULT_SINGLE_ANIMATION_DIRECTION
+      : DEFAULT_SINGLE_ANIMATION_DIRECTION;
+    return { presetId: "one", singleDirection, directions: [singleDirection] };
+  }
+  const normalized = Array.from(new Set(directions
+    .filter((direction): direction is string => typeof direction === "string")
+    .map(canonicalAnimationDirection)
+    .filter((direction): direction is AnimationDirectionId => Boolean(direction))));
+  const ordered = ANIMATION_DIRECTIONS.filter((direction) => normalized.includes(direction));
+  const matchingPreset = (["three", "five"] as const).find((presetId) => {
+    const presetDirections = ANIMATION_DIRECTION_PRESETS[presetId];
+    return presetDirections.length === ordered.length && presetDirections.every((direction, index) => direction === ordered[index]);
+  });
+  return matchingPreset
+    ? { presetId: matchingPreset, singleDirection: DEFAULT_SINGLE_ANIMATION_DIRECTION, directions: ordered }
+    : null;
+}
+
+export function canUseMotionPilot(profile: AnimationGenerationProfile, directions: readonly string[]) {
+  return profile === "best" && directions.length > 1;
+}
+
+export function motionPilotAvailabilityText(profile: AnimationGenerationProfile, directions: readonly string[]) {
+  if (directions.length === 1) return "Experimental · Best only · unavailable for single-direction generation";
+  if (profile !== "best") return "Experimental · Best only · select Best to enable";
+  return `Experimental · Best only · default OFF · ${directions.length * 3}→${directions.length + 2} theoretical direction outputs`;
+}
+
+export function animationDirectionSlug(direction: string) {
+  return direction.trim().toLowerCase().replace(/[_\s]+/g, "-");
+}
+
+export function normalizeAnimationDirections(directions?: readonly string[] | null): string[] {
+  if (!Array.isArray(directions) || directions.length === 0) return ANIMATION_DIRECTIONS;
+  const requestedSlugs = directions
+    .filter((direction): direction is string => typeof direction === "string")
+    .map(animationDirectionSlug);
+  const ordered = ANIMATION_DIRECTIONS.filter((direction) => requestedSlugs.includes(animationDirectionSlug(direction)));
+  return ordered.length > 0 ? ordered : ANIMATION_DIRECTIONS;
+}
+
+export function animationSheetGridForDirections(directions: readonly string[], frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT): GridSettings {
+  return { columns: frameCount, rows: Math.max(1, directions.length), gutter: 0 };
+}
+
+export function directionSplitAnimationGrid(frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT): GridSettings {
+  return motionFrameGrid(frameCount);
+}
+
+function resolveMotionFrameCount(value: unknown): MotionFrameCount {
+  const parsed = Number(value);
+  return MOTION_FRAME_COUNTS.includes(parsed as MotionFrameCount) ? parsed as MotionFrameCount : ANIMATION_FRAME_COUNT;
+}
+
+export function historyAnimationFrameCount(item?: Pick<HistoryItem, "motionRecipe" | "animationPackV2">): MotionFrameCount {
+  const packFrameCount = item?.animationPackV2 ? new Set(item.animationPackV2.frameOrder).size : undefined;
+  return resolveMotionFrameCount(packFrameCount ?? item?.motionRecipe?.frameCount);
+}
+const DIRECTION_SPLIT_DETACHED_WARN_DISTANCE = 80;
+const DIRECTION_SPLIT_DETACHED_FAIL_DISTANCE = 250;
+const DIRECTION_SPLIT_CENTER_WARN_DRIFT = 24;
+const DIRECTION_SPLIT_CENTER_FAIL_DRIFT = 48;
+const DIRECTION_SPLIT_BOTTOM_WARN_DRIFT = 16;
+const DIRECTION_SPLIT_BOTTOM_FAIL_DRIFT = 32;
+type DirectionSplitMotionProfile = "standard" | "idle-breathing" | "walk-cycle" | "subtle";
+
+function readIntegerEnv(name: string, fallback: number, min: number, max: number) {
+  const raw = import.meta.env[name];
+  const parsed = typeof raw === "string" ? Number(raw) : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+interface DirectionSplitMotionThresholds {
+  label: string;
+  warnAverage: number;
+  failAverage: number;
+  failMax: number;
+}
+const DIRECTION_SPLIT_MOTION_THRESHOLDS: Record<DirectionSplitMotionProfile, DirectionSplitMotionThresholds> = {
+  standard: { label: "motion", warnAverage: 0.04, failAverage: 0.02, failMax: 0.055 },
+  "idle-breathing": { label: "idle breathing motion", warnAverage: 0.03, failAverage: 0.015, failMax: 0.04 },
+  "walk-cycle": { label: "walk motion", warnAverage: 0.03, failAverage: 0.012, failMax: 0.03 },
+  subtle: { label: "subtle motion", warnAverage: 0.025, failAverage: 0.006, failMax: 0.015 }
+};
+const DIRECTION_SPLIT_IDLE_MOTION_ABSENT_AVERAGE = 0.008;
+const DIRECTION_SPLIT_IDLE_MOTION_ABSENT_MAX = 0.02;
+// Idle breathing is intentionally quiet, so require only a couple readable rows while preserving the static-copy guard above.
+const DIRECTION_SPLIT_IDLE_MIN_READABLE_MOTION_ROWS = 2;
+const STANDARD_ANIMATION_CELL: SpriteAction["cell"] = { width: ANIMATION_CELL_SIZE, height: ANIMATION_CELL_SIZE };
+const STANDARD_ANIMATION_ANCHOR = animationExportAnchor(ANIMATION_CELL_SIZE, ANIMATION_CELL_SIZE);
+const HATCH_PET_CELL: SpriteAction["cell"] = { width: 192, height: 208 };
+const HATCH_PET_GRID: GridSettings = { columns: 8, rows: 9, gutter: 0 };
+const HATCH_PET_STATE_ROWS = [
+  { id: "idle", frames: 6 },
+  { id: "running-right", frames: 8 },
+  { id: "running-left", frames: 8 },
+  { id: "waving", frames: 4 },
+  { id: "jumping", frames: 5 },
+  { id: "failed", frames: 8 },
+  { id: "waiting", frames: 6 },
+  { id: "running", frames: 6 },
+  { id: "review", frames: 6 }
+];
+const DIRECTIONAL_HATCH_PET_GRID: GridSettings = {
+  columns: HATCH_PET_GRID.columns,
+  rows: HATCH_PET_GRID.rows * ANIMATION_DIRECTION_COUNT,
+  gutter: 0
+};
+const DIRECTIONAL_HATCH_PET_RESULT_COUNT = ANIMATION_DIRECTION_COUNT;
+const DIRECTIONAL_HATCH_PET_PRIMARY_STATE = HATCH_PET_STATE_ROWS[0];
+
+export const SUPPORTED_LANGUAGE_IDS = [
+  "ja",
+  "en",
+  "zh-CN",
+  "zh-TW",
+  "ko",
+  "ru",
+  "es",
+  "pt-BR",
+  "de",
+  "fr",
+  "id",
+  "tr",
+  "vi",
+  "pl",
+  "it"
+] as const;
+
+type Language = (typeof SUPPORTED_LANGUAGE_IDS)[number];
+type BaseLanguage = "ja" | "en";
+type LocalizedText = Record<BaseLanguage, string> & Partial<Record<Language, string>>;
+type AnimationGenerationMode = "standard" | "hatch-pet" | "directional-hatch-pet";
+type AnimationChromaKeyName = "green" | "magenta";
+type CodexJobQueueState = "queued" | "running" | "evaluating";
+type CodexJobProgressPhase = "queued" | "starting" | "generating" | "checking" | "extended";
+
+interface AnimationChromaKey {
+  name: AnimationChromaKeyName;
+  label: string;
+  hex: string;
+  rgb: { r: number; g: number; b: number };
+}
+
+export interface FrameComponentMetrics {
+  id: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  count: number;
+  centerX: number;
+  centerY: number;
+  chromaResidueCount: number;
+  softAlphaCount: number;
+}
+
+const animationChromaKeys: Record<AnimationChromaKeyName, AnimationChromaKey> = {
+  green: { name: "green", label: "chroma-key green", hex: "#00ff00", rgb: { r: 0, g: 255, b: 0 } },
+  magenta: { name: "magenta", label: "chroma-key magenta", hex: "#ff00ff", rgb: { r: 255, g: 0, b: 255 } }
+};
+
+const languageOptions: Array<{ id: Language; label: string }> = [
+  { id: "ja", label: "日本語" },
+  { id: "en", label: "English" },
+  { id: "zh-CN", label: "简体中文" },
+  { id: "zh-TW", label: "繁體中文" },
+  { id: "ko", label: "한국어" },
+  { id: "ru", label: "Русский" },
+  { id: "es", label: "Español" },
+  { id: "pt-BR", label: "Português (Brasil)" },
+  { id: "de", label: "Deutsch" },
+  { id: "fr", label: "Français" },
+  { id: "id", label: "Bahasa Indonesia" },
+  { id: "tr", label: "Türkçe" },
+  { id: "vi", label: "Tiếng Việt" },
+  { id: "pl", label: "Polski" },
+  { id: "it", label: "Italiano" }
+];
+const supportedLanguageSet = new Set<string>(SUPPORTED_LANGUAGE_IDS);
+
+type WorkflowMode = "image-generate" | "image-edit" | "sprite-generate" | "sprite-edit" | "effect-animation";
+type EffectCategoryId =
+  | "slash-arc"
+  | "hit-spark"
+  | "magic-cast"
+  | "projectile"
+  | "impact"
+  | "telegraph-aoe"
+  | "aura-status"
+  | "heal-buff"
+  | "barrier-shield"
+  | "spawn-portal"
+  | "movement-trail";
+type EffectStyleId = "pixel-clean" | "painterly-soft" | "arcade-bold" | "anime-flare";
+type EffectPaletteId = "cyan-white" | "violet-gold" | "ember-orange" | "toxic-green" | "mono-white";
+type EffectLayoutId = "grid-4x2" | "horizontal-strip" | "grid-4x4";
+type EffectAnchorMode = "center" | "bottom-center" | "caster-hand" | "projectile-center" | "impact-ground";
+type EffectBackgroundPreview = "checkerboard" | "dark" | "light" | "neutral";
+
+interface EffectCategoryDefinition {
+  id: EffectCategoryId;
+  label: LocalizedText;
+  detail: LocalizedText;
+  types: Array<{ id: string; label: LocalizedText }>;
+  defaultLoop: EffectLoopMode;
+  defaultAnchor: EffectAnchorMode;
+  defaultBlendMode: "normal" | "additive" | "screen";
+  defaultFrameCount?: number;
+  defaultCanvasSize?: number;
+  energyEnvelope?: "burst" | "sustain" | "pulse" | "travel" | "expand-fade";
+  experimental?: boolean;
+}
+
+interface EffectLayoutOption {
+  id: EffectLayoutId;
+  label: LocalizedText;
+  columns(frameCount: number): number;
+  rows(frameCount: number): number;
+}
+
+const CODEX_PROGRESS_TICK_MS = 1000;
+const CODEX_PROGRESS_ESTIMATE_MS: Record<WorkflowMode | "default", number> = {
+  "image-generate": 8 * 60 * 1000,
+  "image-edit": 10 * 60 * 1000,
+  "sprite-generate": 30 * 60 * 1000,
+  "sprite-edit": 8 * 60 * 1000,
+  "effect-animation": 18 * 60 * 1000,
+  default: 12 * 60 * 1000
+};
+
+const EFFECT_DEFAULT_FRAME_COUNT = 8;
+const EFFECT_DEFAULT_CANVAS_SIZE = 128;
+const EFFECT_DEFAULT_LAYOUT: EffectLayoutId = "grid-4x2";
+const EFFECT_DEFAULT_FPS = 12;
+
+const effectCategoryDefinitions: EffectCategoryDefinition[] = [
+  {
+    id: "slash-arc",
+    label: { ja: "斬撃軌跡", en: "Slash Arc" },
+    detail: { ja: "剣や爪の一閃、弧を描く残光", en: "Sweeping blade or claw trails with a readable arc." },
+    types: [
+      { id: "crescent", label: { ja: "三日月斬り", en: "Crescent slash" } },
+      { id: "cross", label: { ja: "十字斬り", en: "Cross slash" } },
+      { id: "spinning", label: { ja: "回転斬撃", en: "Spinning slash" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "center",
+    defaultBlendMode: "additive"
+  },
+  {
+    id: "hit-spark",
+    label: { ja: "ヒットスパーク", en: "Hit Spark" },
+    detail: { ja: "命中時の火花、衝突点を強調", en: "Contact sparks that emphasize an impact point." },
+    types: [
+      { id: "burst", label: { ja: "瞬間バースト", en: "Burst spark" } },
+      { id: "metal", label: { ja: "金属火花", en: "Metal spark" } },
+      { id: "shield", label: { ja: "盾受け", en: "Shield clash" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "center",
+    defaultBlendMode: "additive"
+  },
+  {
+    id: "magic-cast",
+    label: { ja: "魔法詠唱", en: "Magic Cast" },
+    detail: { ja: "魔法陣、粒子、発動前の蓄積", en: "Casting circles, particles, and charge-up motion." },
+    types: [
+      { id: "circle", label: { ja: "魔法陣", en: "Magic circle" } },
+      { id: "runes", label: { ja: "ルーン発光", en: "Rune glow" } },
+      { id: "summon", label: { ja: "召喚兆候", en: "Summon tell" } }
+    ],
+    defaultLoop: "loop",
+    defaultAnchor: "bottom-center",
+    defaultBlendMode: "additive"
+  },
+  {
+    id: "projectile",
+    label: { ja: "飛び道具", en: "Projectile" },
+    detail: { ja: "弾、矢、魔法弾の移動フレーム", en: "Traveling bullets, arrows, and energy shots." },
+    types: [
+      { id: "bolt", label: { ja: "魔法弾", en: "Energy bolt" } },
+      { id: "fireball", label: { ja: "火球", en: "Fireball" } },
+      { id: "arrow-trail", label: { ja: "矢の軌跡", en: "Arrow trail" } }
+    ],
+    defaultLoop: "loop",
+    defaultAnchor: "projectile-center",
+    defaultBlendMode: "additive"
+  },
+  {
+    id: "impact",
+    label: { ja: "着弾衝撃", en: "Impact" },
+    detail: { ja: "爆発、土煙、地面への衝突", en: "Explosions, dust puffs, and ground hits." },
+    types: [
+      { id: "explosion", label: { ja: "小爆発", en: "Small explosion" } },
+      { id: "dust", label: { ja: "土煙", en: "Dust puff" } },
+      { id: "shockwave", label: { ja: "衝撃波", en: "Shockwave" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "impact-ground",
+    defaultBlendMode: "normal",
+    energyEnvelope: "burst"
+  },
+  {
+    id: "telegraph-aoe",
+    label: { ja: "予兆 / AOE", en: "Telegraph / AOE" },
+    detail: { ja: "攻撃範囲と発動タイミングを読みやすく示す", en: "Readable attack areas and activation timing." },
+    types: [
+      { id: "danger-ring", label: { ja: "危険リング", en: "Danger ring" } },
+      { id: "cone", label: { ja: "扇形予兆", en: "Cone telegraph" } },
+      { id: "target-zone", label: { ja: "着弾範囲", en: "Target zone" } }
+    ],
+    defaultLoop: "loop",
+    defaultAnchor: "impact-ground",
+    defaultBlendMode: "screen",
+    defaultFrameCount: 8,
+    defaultCanvasSize: 192,
+    energyEnvelope: "pulse"
+  },
+  {
+    id: "aura-status",
+    label: { ja: "オーラ / 状態", en: "Aura / Status" },
+    detail: { ja: "継続バフ、デバフ、属性状態を表すloop", en: "Looping buffs, debuffs, and elemental status cues." },
+    types: [
+      { id: "power-aura", label: { ja: "強化オーラ", en: "Power aura" } },
+      { id: "poison-status", label: { ja: "毒状態", en: "Poison status" } },
+      { id: "freeze-status", label: { ja: "凍結状態", en: "Freeze status" } }
+    ],
+    defaultLoop: "loop",
+    defaultAnchor: "bottom-center",
+    defaultBlendMode: "additive",
+    defaultFrameCount: 8,
+    defaultCanvasSize: 128,
+    energyEnvelope: "sustain"
+  },
+  {
+    id: "heal-buff",
+    label: { ja: "回復 / バフ", en: "Heal / Buff" },
+    detail: { ja: "上昇粒子、回復光、能力強化の演出", en: "Rising particles, healing light, and ability boosts." },
+    types: [
+      { id: "heal-rise", label: { ja: "回復上昇", en: "Healing rise" } },
+      { id: "stat-up", label: { ja: "能力上昇", en: "Stat up" } },
+      { id: "cleanse", label: { ja: "浄化", en: "Cleanse" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "bottom-center",
+    defaultBlendMode: "additive",
+    defaultFrameCount: 8,
+    defaultCanvasSize: 128,
+    energyEnvelope: "expand-fade"
+  },
+  {
+    id: "barrier-shield",
+    label: { ja: "障壁 / シールド", en: "Barrier / Shield" },
+    detail: { ja: "防御面、球状障壁、受け止めの発光", en: "Defensive planes, domes, and blocking glows." },
+    types: [
+      { id: "dome", label: { ja: "半球障壁", en: "Barrier dome" } },
+      { id: "guard-plane", label: { ja: "防御面", en: "Guard plane" } },
+      { id: "shield-pulse", label: { ja: "盾パルス", en: "Shield pulse" } }
+    ],
+    defaultLoop: "loop",
+    defaultAnchor: "center",
+    defaultBlendMode: "screen",
+    defaultFrameCount: 8,
+    defaultCanvasSize: 192,
+    energyEnvelope: "sustain"
+  },
+  {
+    id: "spawn-portal",
+    label: { ja: "出現 / ポータル", en: "Spawn / Portal" },
+    detail: { ja: "出現、消滅、召喚ゲートの開閉", en: "Spawn, despawn, and portal opening sequences." },
+    types: [
+      { id: "portal-open", label: { ja: "ポータル展開", en: "Portal open" } },
+      { id: "spawn-flash", label: { ja: "出現閃光", en: "Spawn flash" } },
+      { id: "despawn-wisp", label: { ja: "消滅粒子", en: "Despawn wisps" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "bottom-center",
+    defaultBlendMode: "additive",
+    defaultFrameCount: 12,
+    defaultCanvasSize: 192,
+    energyEnvelope: "expand-fade"
+  },
+  {
+    id: "movement-trail",
+    label: { ja: "移動軌跡 / 着地", en: "Movement Trail / Landing" },
+    detail: { ja: "ダッシュ軌跡、足跡、着地煙を分離layer化", en: "Dash trails, footsteps, and landing effects as separate layers." },
+    types: [
+      { id: "dash-trail", label: { ja: "ダッシュ残像", en: "Dash trail" } },
+      { id: "footstep", label: { ja: "足跡", en: "Footstep" } },
+      { id: "landing-dust", label: { ja: "着地煙", en: "Landing dust" } }
+    ],
+    defaultLoop: "one-shot",
+    defaultAnchor: "bottom-center",
+    defaultBlendMode: "normal",
+    defaultFrameCount: 6,
+    defaultCanvasSize: 128,
+    energyEnvelope: "travel"
+  }
+];
+
+const effectStyleOptions: Array<{ id: EffectStyleId; label: LocalizedText }> = [
+  { id: "pixel-clean", label: { ja: "Pixel Clean", en: "Pixel Clean" } },
+  { id: "painterly-soft", label: { ja: "Painterly Soft", en: "Painterly Soft" } },
+  { id: "arcade-bold", label: { ja: "Arcade Bold", en: "Arcade Bold" } },
+  { id: "anime-flare", label: { ja: "Anime Flare", en: "Anime Flare" } }
+];
+
+const effectPaletteOptions: Array<{ id: EffectPaletteId; label: LocalizedText; swatches: string[] }> = [
+  { id: "cyan-white", label: { ja: "Cyan / White", en: "Cyan / White" }, swatches: ["#67e8f9", "#f8fafc", "#38bdf8"] },
+  { id: "violet-gold", label: { ja: "Violet / Gold", en: "Violet / Gold" }, swatches: ["#a78bfa", "#fde68a", "#7c3aed"] },
+  { id: "ember-orange", label: { ja: "Ember Orange", en: "Ember Orange" }, swatches: ["#fb923c", "#facc15", "#ef4444"] },
+  { id: "toxic-green", label: { ja: "Toxic Green", en: "Toxic Green" }, swatches: ["#bef264", "#22c55e", "#14b8a6"] },
+  { id: "mono-white", label: { ja: "Mono White", en: "Mono White" }, swatches: ["#ffffff", "#cbd5e1", "#64748b"] }
+];
+
+const effectFrameCountOptions = [4, 6, 8, 12, 16];
+const effectCanvasSizeOptions = [64, 96, 128, 192, 256];
+const effectLayoutOptions: EffectLayoutOption[] = [
+  {
+    id: "grid-4x2",
+    label: { ja: "4 x 2 グリッド", en: "4 x 2 grid" },
+    columns: () => 4,
+    rows: (frameCount) => Math.max(1, Math.ceil(frameCount / 4))
+  },
+  {
+    id: "horizontal-strip",
+    label: { ja: "横一列", en: "Horizontal strip" },
+    columns: (frameCount) => Math.max(1, frameCount),
+    rows: () => 1
+  },
+  {
+    id: "grid-4x4",
+    label: { ja: "4 x 4 グリッド", en: "4 x 4 grid" },
+    columns: () => 4,
+    rows: (frameCount) => Math.max(1, Math.ceil(frameCount / 4))
+  }
+];
+
+const effectLoopModeOptions: Array<{ id: EffectLoopMode; label: LocalizedText }> = [
+  { id: "one-shot", label: { ja: "One-shot", en: "One-shot" } },
+  { id: "loop", label: { ja: "Loop", en: "Loop" } },
+  { id: "ping-pong-loop", label: { ja: "Ping-pong", en: "Ping-pong" } }
+];
+
+const effectAnchorOptions: Array<{ id: EffectAnchorMode; label: LocalizedText }> = [
+  { id: "center", label: { ja: "中央", en: "Center" } },
+  { id: "bottom-center", label: { ja: "足元中央", en: "Bottom center" } },
+  { id: "caster-hand", label: { ja: "手元", en: "Caster hand" } },
+  { id: "projectile-center", label: { ja: "弾芯", en: "Projectile center" } },
+  { id: "impact-ground", label: { ja: "接地点", en: "Impact ground" } }
+];
+
+const effectBackgroundOptions: Array<{ id: EffectBackgroundPreview; label: string }> = [
+  { id: "checkerboard", label: "Checker" },
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
+  { id: "neutral", label: "Neutral" }
+];
+
+interface PromptExample {
+  id: string;
+  category: LocalizedText;
+  title: LocalizedText;
+  previewImage: string;
+  summary: LocalizedText;
+  prompt: string;
+  negativePrompt: string;
+  notes: string;
+}
+
+type QuickPromptPresetId =
+  | "quick-elder-man"
+  | "quick-elder-woman"
+  | "quick-man"
+  | "quick-woman"
+  | "quick-girl"
+  | "quick-boy"
+  | "quick-cat"
+  | "quick-dog"
+  | "quick-monster";
+
+interface QuickPromptPreset {
+  id: QuickPromptPresetId;
+  group: LocalizedText;
+  title: LocalizedText;
+  summary: LocalizedText;
+  prompt: LocalizedText;
+  relatedExampleIds: readonly string[];
+  relatedExamplePrefixes: readonly string[];
+}
+
+interface AnimationPresetExample {
+  id: string;
+  actionName: string;
+  previewClassName: string;
+  category: LocalizedText;
+  title: LocalizedText;
+  summary: LocalizedText;
+  prompt: string;
+  notes: string;
+  experimental: boolean;
+  family: MotionRecipe["family"];
+  loopMode: MotionRecipe["loopMode"];
+  supportedTopologies: BodyTopologyId[];
+  allowedFrameCounts: MotionFrameCount[];
+  allowedModifiers: MotionVariantModifierKey[];
+  tags: string[];
+}
+
+interface AnimationDirectionPreview {
+  id: string;
+  label: string;
+  gifUrl: string;
+}
+
+interface AnimationPackExportDraft {
+  title: string;
+  tags: string;
+  license: string;
+  sourceNote: string;
+  promptSummary: string;
+  includePromptSummary: boolean;
+}
+
+interface FrameSplitOptions {
+  normalizeOpaqueBounds?: boolean;
+  residueChromaKey?: FrameResidueChromaKey;
+}
+
+type FrameResidueChromaKey = AnimationChromaKeyName | "both";
+
+interface DirectionSplitAnimationManifest {
+  schema: typeof DIRECTION_SPLIT_ANIMATION_SCHEMA;
+  jobId?: string;
+  action?: string;
+  directions?: string[];
+  framesPerDirection?: number;
+  grid?: GridSettings;
+  cell?: SpriteAction["cell"];
+  files?: Record<string, string> | Array<{ direction?: string; file?: string; name?: string; path?: string }>;
+  chromaKey?: string | { name?: string };
+  animationQuality?: AnimationQualityReportV2;
+  motionRecipe?: MotionRecipeReference;
+  motionRecipeWarnings?: string[];
+}
+
+interface DirectionSplitSelection {
+  detected: boolean;
+  ready: boolean;
+  waitingForFinalManifest: boolean;
+  waitingForVerifiedArtifacts: boolean;
+  qualityFailed: boolean;
+  hasDirectionFiles: boolean;
+  bronzeCandidate: boolean;
+  artifactStatus?: CodexArtifactStatus;
+  manifestResult?: CodexOutboxResult;
+  directions: string[];
+  directionResults: CodexOutboxResult[];
+  missingDirections: string[];
+}
+
+interface ReadyDirectionSplitArtifact {
+  jobId: string;
+  manifestResult: CodexOutboxResult;
+  directionResults: CodexOutboxResult[];
+  jobResults: CodexOutboxResult[];
+  selection: DirectionSplitSelection;
+  modifiedAt: string;
+}
+
+type DirectionSplitImportContext = Pick<
+  CodexJobQueueItem,
+  "id" | "actionName" | "cell" | "chromaKey" | "sourceImageId" | "sourceImageName" | "directions" | "motionRecipe" | "framesPerDirection" | "generationProfile" | "sourceFingerprint"
+>;
+
+interface AnimationTimelineEditorSession {
+  initialPack: AnimationPackV2;
+  recipeDefault: AnimationPackV2;
+  frameDataUrls: Record<string, string[]>;
+}
+
+interface DirectionSplitPreparedCell {
+  direction: string;
+  directionIndex: number;
+  frameIndex: number;
+  sourceCanvas: HTMLCanvasElement;
+  bounds: OpaqueBounds | null;
+  warnings: string[];
+  failures: string[];
+}
+
+interface DirectionSplitNormalizedCell {
+  direction: string;
+  directionIndex: number;
+  frameIndex: number;
+  canvas: HTMLCanvasElement;
+  bounds: OpaqueBounds | null;
+  warnings: string[];
+  failures: string[];
+  correction: AnimationNormalizationCorrection;
+}
+
+interface EffectAnimationJobContext extends EffectAnimationMetadata {
+  categoryLabel: string;
+  typeLabel: string;
+  styleLabel: string;
+  paletteLabel: string;
+  sheetSize: {
+    width: number;
+    height: number;
+  };
+  customPrompt: string;
+  promptContract: string[];
+  negativePrompt: string;
+}
+
+interface PendingCodexJob {
+  id: string;
+  path: string;
+  createdAt: string;
+  state?: "running" | "evaluating";
+  outboxPath?: string;
+  label?: string;
+  workflowMode?: WorkflowMode;
+  actionName?: string;
+  grid?: GridSettings;
+  cell?: SpriteAction["cell"];
+  chromaKey?: AnimationChromaKeyName;
+  spriteVariant?: AnimationGenerationMode;
+  directions?: string[];
+  sourceImageId?: string;
+  sourceImageName?: string;
+  tournamentId?: string;
+  tournamentCandidateIndex?: number;
+  tournamentCandidateCount?: number;
+  generationProfile?: AnimationGenerationProfile;
+  sourceFingerprint?: string;
+  repairDirections?: string[];
+  motionRecipe?: MotionRecipeReference;
+  framesPerDirection?: MotionFrameCount;
+  effectContext?: EffectAnimationJobContext;
+}
+
+interface CodexJobDraft {
+  workflowMode: WorkflowMode | null;
+  prompt: string;
+  negativePrompt: string;
+  jobNotes: string;
+  seed: string;
+  size: string;
+  count: number;
+  quality: string;
+  selectedImageName: string;
+  selectedImageSize: string;
+  selectedImageSource: string;
+  selectedImageDataUrl: string;
+  annotations: Annotation[];
+  grid: GridSettings | null;
+  action: string;
+  frames: number;
+  framesPerDirection?: MotionFrameCount;
+  cell: SpriteAction["cell"] | null;
+  chromaKey: AnimationChromaKeyName | "";
+  spriteVariant?: AnimationGenerationMode;
+  directions: string[];
+  label: string;
+  resultWorkflowMode?: WorkflowMode;
+  resultActionName?: string;
+  resultGrid?: GridSettings;
+  resultCell?: SpriteAction["cell"];
+  resultChromaKey?: AnimationChromaKeyName;
+  resultSpriteVariant?: AnimationGenerationMode;
+  resultDirections?: string[];
+  resultSourceImageId?: string;
+  resultSourceImageName?: string;
+  tournamentId?: string;
+  tournamentCandidateIndex?: number;
+  tournamentCandidateCount?: number;
+  generationProfile?: AnimationGenerationProfile;
+  sourceFingerprint?: string;
+  idempotencyKey?: string;
+  repairDirections?: string[];
+  repairOfJobId?: string;
+  presetId?: string;
+  motionRecipe?: MotionRecipeReference;
+  effectContext?: EffectAnimationJobContext;
+}
+
+interface CodexJobQueueItem {
+  id: string;
+  state: CodexJobQueueState;
+  label: string;
+  createdAt: string;
+  path?: string;
+  outboxPath?: string;
+  request?: CodexJobDraft;
+  queuedAt?: string;
+  workflowMode?: WorkflowMode;
+  actionName?: string;
+  grid?: GridSettings;
+  cell?: SpriteAction["cell"];
+  chromaKey?: AnimationChromaKeyName;
+  spriteVariant?: AnimationGenerationMode;
+  directions?: string[];
+  sourceImageId?: string;
+  sourceImageName?: string;
+  tournamentId?: string;
+  tournamentCandidateIndex?: number;
+  tournamentCandidateCount?: number;
+  generationProfile?: AnimationGenerationProfile;
+  sourceFingerprint?: string;
+  repairDirections?: string[];
+  motionRecipe?: MotionRecipeReference;
+  framesPerDirection?: MotionFrameCount;
+  effectContext?: EffectAnimationJobContext;
+}
+
+interface ImportLatestOptions {
+  background?: boolean;
+  newerThan?: string;
+  quietEmpty?: boolean;
+  job?: CodexJobQueueItem;
+  throwOnError?: boolean;
+  failOnIncompleteDirectionSplit?: boolean;
+  limit?: number;
+}
+
+interface ImageEditComparison {
+  before: HistoryItem;
+  after?: HistoryItem;
+  jobId?: string;
+}
+
+interface DirectionSplitTournamentCandidateEvaluation {
+  job: CodexJobQueueItem;
+  status: CodexRunnerStatus;
+  ready: boolean;
+  score: number;
+  warningCount: number;
+  manifest: DirectionSplitAnimationManifest | null;
+  manifestResult?: CodexOutboxResult;
+  directionResults: CodexOutboxResult[];
+  importedResults: CodexOutboxImportResponse[];
+  animationQuality?: AnimationQualityReportV2;
+  error?: string;
+}
+
+class DirectionSplitQualityError extends Error {
+  animationQuality: AnimationQualityReportV2;
+
+  constructor(message: string, animationQuality: AnimationQualityReportV2) {
+    super(message);
+    this.name = "DirectionSplitQualityError";
+    this.animationQuality = animationQuality;
+  }
+}
+
+interface AnimationTournamentStatusEntry {
+  job: CodexJobQueueItem;
+  status: CodexRunnerStatus | null;
+}
+
+interface AnimationTournamentTerminalStatusEntry {
+  job: CodexJobQueueItem;
+  status: CodexRunnerStatus;
+}
+
+interface AnimationTournamentManifestClient {
+  schema: "image-cockpit.animation-tournament.v1";
+  schemaVersion: 1;
+  tournamentId: string;
+  idempotencyKey: string;
+  sourceFingerprint: string;
+  motionRecipeId?: string;
+  motionRecipeVersion?: number;
+  motionRecipeCompilerVersion?: string;
+  presetId?: string;
+  generationProfile: AnimationGenerationProfile;
+  selectionPolicy?: "exhaustive" | "smart-race";
+  requestedDirections: string[];
+  maximumCandidateCount: number;
+  initialCandidateCount: number;
+  candidates: Array<{
+    index: number;
+    state: "queued" | "running" | "artifact-ready" | "quality-evaluated" | "accepted" | "repairing" | "failed" | "cancelled";
+    idempotencyKey: string;
+    jobId?: string;
+    createdAt?: string;
+    updatedAt: string;
+    score?: number;
+    warningCount?: number;
+    identityScore?: number;
+    shadowWouldBlock?: boolean;
+    reason?: string;
+    repairDirections?: string[];
+  }>;
+  directionStates: Record<string, { state: string; updatedAt: string; jobId?: string; reason?: string }>;
+  qualityReportRefs: string[];
+  winnerCandidateId?: string;
+  acceptedDirectionHashes: Record<string, string>;
+  retryCount: number;
+  thirdCandidateReason?: string;
+  humanReview?: AnimationHumanReview;
+  pilotMode?: boolean;
+  pilotState?: "piloting" | "review" | "expanding" | "completed" | "fallback" | "failed";
+  pilotDirection?: string;
+  pilotCandidateIds?: string[];
+  pilotWinnerId?: string;
+  expansionDirectionIds?: string[];
+  expansionJobId?: string;
+  fallbackReason?: string;
+  fallbackTournamentId?: string;
+  directionOutputCount?: number;
+  totalCandidateJobs?: number;
+  elapsedTime?: number;
+  repairCount?: number;
+  smartRaceDecision?: {
+    mode: "first-qualified" | "early-accept" | "full-compare";
+    decidedAt: string;
+    comparedJobIds: string[];
+    winnerJobId: string;
+    scoreGap?: number;
+    reason: string;
+    cancellationResults?: Array<{ jobId: string; ok: boolean; message?: string }>;
+  };
+  state: "queued" | "running" | "pilot-review" | "pilot-expanding" | "accepted" | "failed" | "cancelled";
+  clientContext?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AnimationTournamentMonitorEntry {
+  manifest: AnimationTournamentManifestClient;
+  restoredAt: string;
+}
+
+export interface SessionAnimationTournamentCandidate {
+  index: number;
+  state: string;
+  jobId?: string;
+}
+
+export interface SessionAnimationTournamentManifest {
+  tournamentId: string;
+  state: string;
+  initialCandidateCount: number;
+  candidates: readonly SessionAnimationTournamentCandidate[];
+}
+
+export function allowAnimationTournamentForSession(
+  allowedTournamentIds: Set<string>,
+  manifest: Pick<SessionAnimationTournamentManifest, "tournamentId">
+) {
+  allowedTournamentIds.add(manifest.tournamentId);
+}
+
+export function isAnimationTournamentAllowedForSession(
+  allowedTournamentIds: ReadonlySet<string>,
+  tournamentId: string
+) {
+  return allowedTournamentIds.has(tournamentId);
+}
+
+export function findSessionAllowedAnimationTournamentInitialCandidates<
+  T extends SessionAnimationTournamentManifest
+>(
+  manifests: readonly T[],
+  allowedTournamentIds: ReadonlySet<string>
+): Array<{ manifest: T; candidateIndex: number }> {
+  return manifests
+    .filter((manifest) => isAnimationTournamentAllowedForSession(allowedTournamentIds, manifest.tournamentId))
+    .filter((manifest) => manifest.state === "queued" || manifest.state === "running")
+    .flatMap((manifest) => manifest.candidates
+      .slice(0, manifest.initialCandidateCount)
+      .filter((candidate) => !candidate.jobId && candidate.state === "queued")
+      .map((candidate) => ({ manifest, candidateIndex: candidate.index }))
+    );
+}
+
+interface AnimationTournamentWinnerDecision {
+  mode: "first-qualified" | "early-accept" | "full-compare";
+  reason: string;
+  comparedJobIds: string[];
+  scoreGap?: number;
+}
+
+interface CodexFailureNotice {
+  id: string;
+  jobId: string;
+  label: string;
+  createdAt: string;
+  workflowMode?: WorkflowMode;
+  retryJob?: CodexJobQueueItem;
+  lastOutboxFingerprint?: string;
+  lastImportAttemptAt?: string;
+  diagnostic: CodexJobDiagnostic;
+}
+
+export type CockpitHealthState = "checking" | "ok" | "warning" | "broken" | "repairing";
+
+interface CockpitHealthReport {
+  state: CockpitHealthState;
+  checkedAt: string;
+  message: string;
+  api?: ImageCockpitApiHealth;
+  supervisor?: ImageCockpitDevSupervisorHealth;
+  mismatches: string[];
+  unimportedResults: number;
+  repairAvailable: boolean;
+}
+
+type SettingsTab = "general" | "recovery" | "diagnostics" | "environment";
+type ImagegenSmokeState = "not_run" | "passed" | "failed" | "unknown";
+type PlaceholderSuspicion = "yes" | "no" | "unknown";
+
+interface EnvironmentReportInput {
+  appVersion: string;
+  appUrl: string;
+  route: string;
+  userAgent: string;
+  browserLanguage: string;
+  browserPlatform: string;
+  viewport: { width: number; height: number; devicePixelRatio: number };
+  timezoneOffsetMinutes: number;
+  localTime: string;
+  apiHealth?: ImageCockpitApiHealth;
+  runner?: CodexRunnerPreflight | null;
+  supervisor?: ImageCockpitDevSupervisorHealth;
+  providerId: ProviderId;
+  workflowMode: WorkflowMode;
+  safeMode: boolean;
+  skipStorage: boolean;
+  storagePressure?: string;
+  storageUsageBytes?: number;
+  storageQuotaBytes?: number;
+  activeJobCount: number;
+  queuedJobCount: number;
+  lastJobId?: string;
+  lastFailure?: Pick<CodexFailureNotice, "jobId" | "label" | "diagnostic">;
+  lastResult?: Pick<HistoryItem, "provider" | "source" | "name" | "size" | "outboxImportKey"> & {
+    mimeType?: string;
+    dimensions?: string;
+    placeholderSuspected: PlaceholderSuspicion;
+    localProcedural: boolean;
+  };
+  imagegenSmoke: ImagegenSmokeState;
+}
+
+interface EnvironmentReport {
+  json: Record<string, unknown>;
+  markdown: string;
+}
+
+interface CodexJobLogItem {
+  jobId: string;
+  label: string;
+  state: CodexJobQueueState | CodexRunnerStatus["state"];
+  createdAt: string;
+  text: string;
+  exists: boolean;
+  truncated: boolean;
+  size: number;
+  modifiedAt: string;
+  readAt: string;
+  error?: string;
+}
+
+const baseUiCopy = {
+  en: {
+    language: "Language",
+    project: "Project: Forest Mage",
+    openWorkspace: "Open workspace",
+    settings: "Settings",
+    localWorkspace: "Local workspace",
+    workflowPanelTitle: "Workflow",
+    canvasGridTitle: "Animation Setup",
+    canvasAnnotationTitle: "Preview",
+    previewLabel: "Preview",
+    canvasEmpty: "Import an image or generate one locally to start",
+    columns: "Columns",
+    rows: "Rows",
+    frameWidth: "Frame W",
+    frameHeight: "Frame H",
+    showGrid: "Show Grid",
+    showCenter: "Show Center",
+    transparencyCleanup: "Transparency Cleanup",
+    keyColor: "Key Color",
+    tolerance: "Tolerance",
+    applyChromaKey: "Apply Chroma Key",
+    selectTool: "Select",
+    brushTool: "Brush",
+    rectangleTool: "Rectangle",
+    arrowTool: "Arrow",
+    exportAnnotationTitle: "Export annotation PNG",
+    splitGridTitle: "Split grid into frames",
+    useAsFrameTitle: "Use selected image as a sprite frame",
+    frameLabel: "Frame",
+    sizeLabel: "Size",
+    anchorLabel: "Anchor",
+    zoomLabel: "Zoom",
+    zoomFit: "fit",
+    exportSheetPng: "Export Sheet (PNG)",
+    exportZipFrames: "Export ZIP (Frames)",
+    exportGifLabel: "Export GIF",
+    exportMetadataJson: "Export Metadata (JSON)",
+    metadata: "Metadata",
+    anchorX: "Anchor X",
+    anchorY: "Anchor Y",
+    moveFrameLeft: "Move frame left",
+    moveFrameRight: "Move frame right",
+    removeFrame: "Remove frame",
+    noFrames: "No frames",
+    promptExamples: "Prompt Examples",
+    promptExamplesTitle: "Prompt Examples",
+    promptExamplesIntro: "Pick by preview image, then copy or load the tuned prompt.",
+    copyPrompt: "Copy Prompt",
+    usePrompt: "Use Prompt",
+    closePromptExamples: "Close",
+    promptCopied: "Prompt copied",
+    promptCopyFailed: "Could not copy prompt",
+    promptExampleApplied: "Prompt example loaded into Pixel Art Generation",
+    animationStepSourceTitle: "1. Upload Pixel Art",
+    animationStepSourceBody: "Use a pixel-art image you generated or imported as the animation source.",
+    animationMethodTitle: "Generation Method",
+    animationStandardSheet: "5-Direction Sheet",
+    animationStandardSheetBody: "Generate 8 animation frames for each selected direction.",
+    animationStandardLockedSize: "Fixed cells: 256 x 256 px.",
+    animationHatchPet: "hatch-pet",
+    animationHatchPetBody: "Experimental Codex pet atlas: 8 x 9, 192 x 208 cells, pet.json-ready.",
+    animationDirectionalHatchPet: "5-Direction hatch-pet",
+    animationDirectionalHatchPetBody: "Generate five separate hatch-pet atlases, one for each direction.",
+    animationStepMotionTitle: "2. Choose Motion",
+    animationStepMotionBody: "Pick one locked animation preset.",
+    animationDirectionCount: "Directions",
+    animationDirectionFive: "5 directions",
+    animationDirectionThree: "3 directions",
+    animationDirectionOne: "1 direction",
+    animationSingleDirection: "Single direction",
+    animationSingleDirectionHint: "Choose one direction. Side remains the default.",
+    animationStepGenerateTitle: "3. Generate",
+    animationStepGenerateBody: "Send the uploaded source to Codex and generate chroma-key direction frames.",
+    hatchPetGenerateBody: "Send the uploaded source to Codex and try the hatch-pet workflow for a Codex pet atlas.",
+    hatchPetLockedSize: "hatch-pet locks the atlas to 1536 x 1872 with 192 x 208 cells.",
+    directionalHatchPetGenerateBody: "Send the uploaded source to Codex and generate five direction-specific hatch-pet atlases.",
+    directionalHatchPetLockedSize: "Creates 5 files, each 1536 x 1872 with 192 x 208 cells, then combines them for preview/export.",
+    animationStepDownloadTitle: "4. Download",
+    animationStepDownloadBody: "Preview and export the transparent animated GIF, animated WebP, and sprite sheet.",
+    hatchPetDownloadBody: "Export each Codex pet state as animated GIF/WebP, or download the full pet atlas.",
+    directionalHatchPetDownloadBody: "Preview one animated state per direction, or download the combined 5-direction hatch-pet atlas.",
+    uploadPixelArt: "Upload Pixel Art",
+    selectedSource: "Selected source",
+    noAnimationSource: "No pixel-art source uploaded yet",
+    motionPreset: "Selected animation",
+    chooseAnimation: "Choose Animation",
+    animationPresetExamples: "Choose Animation",
+    animationPresetExamplesTitle: "Choose Animation",
+    animationPresetExamplesIntro: "Pick an animated sample, then use it as the motion preset.",
+    useAnimationPreset: "Select Animation",
+    animationPresetExampleApplied: "Animation selected",
+    generationMayTakeMinutes: "Generation can take a few minutes.",
+    animationReady: "Animation frames ready",
+    animatedGif: "Animated GIF",
+    animatedWebP: "Animated WebP",
+    animatedApng: "Animated APNG",
+    spriteSheetDownload: "Sprite Sheet",
+    directionalPreviews: "Directional Previews",
+    previewFront: "Front",
+    previewBack: "Back",
+    previewBackThreeQuarter: "Back 3/4",
+    previewFrontThreeQuarter: "Front 3/4",
+    previewSide: "Side",
+    previewGif: "GIF Preview",
+    previewWebP: "WebP Preview",
+    previewSpriteSheet: "Sprite Sheet Preview",
+    animationDownloadsLocked: "Generate animation frames before downloading.",
+    animationPreviewsBuilding: "Preparing animation previews...",
+    animationGeneratedFrom: "Generated from",
+    animationSourceUnknown: "Source image not recorded",
+    imageEditGeneratedFrom: "Edited from",
+    imageEditSourceUnknown: "Edit source not recorded",
+    openSourcePreview: "Open source",
+    statusSourceSelectedForAnimation: "Source selected for animation generation",
+    imageDownloadTitle: "Download",
+    imageDownloadBody: "Export the image currently shown in the preview as PNG.",
+    imageDownloadReady: "Selected image ready",
+    imageDownloadLocked: "Select or generate an image before downloading.",
+    openDownloadModal: "Download",
+    downloadModalTitle: "Download",
+    downloadModalIntro: "Choose the file to export from the selected preview.",
+    closeDownloadModal: "Close downloads",
+    downloadPng: "PNG",
+    animationLibraryTitle: "Animation Library",
+    animationLibraryBody: "Use official presets or imported user animation packs as reusable materials.",
+    officialAnimations: "Official Animations",
+    userAnimations: "User Animations",
+    importAnimation: "Import Animation",
+    exportAnimationPack: "Export Animation Pack",
+    exportAnimationSample: "Export Sample",
+    useAnimationLibraryItem: "Use",
+    renameAnimation: "Rename",
+    deleteAnimation: "Delete",
+    animationLibraryEmpty: "No user animations yet. Import a local animation pack to reuse it here.",
+    animationPackImported: "Animation pack imported",
+    animationPackImportFailed: "Could not import animation pack",
+    animationPackUsed: "Animation loaded from library",
+    animationPackExported: "Animation pack exported",
+    animationPackExportFailed: "Could not export animation pack",
+    animationPackExportTitle: "Export Animation Pack",
+    animationPackExportIntro: "Write a portable local ZIP with manifest, previews, sheet, and metadata.",
+    animationPackTitleLabel: "Title",
+    animationPackTagsLabel: "Tags",
+    animationPackLicenseLabel: "License / usage note",
+    animationPackSourceLabel: "Source note",
+    animationPackPromptSummaryLabel: "Prompt summary",
+    animationPackPromptToggle: "Include prompt summary",
+    animationPackRightsHint: "Check rights before sharing imported or generated assets.",
+    cancel: "Cancel",
+    saveExport: "Export",
+    uploadImageForEdit: "Upload Image",
+    selectedEditSource: "Selected image",
+    noEditSource: "No image selected yet",
+    animationFinalNotEditableTitle: "Animation output",
+    animationFinalNotEditableBody: "Animation results are final artifacts. Select an image from Pixel Art Generation or Image Editing before using numbered edit regions.",
+    imageEditRegionsTitle: "Numbered edit regions",
+    imageEditRegionsHelp: "Drag a rectangle on the preview. Each rectangle gets a number and a comment box.",
+    noEditRegions: "No numbered regions yet. Drag on the preview to add #1.",
+    editRegionLabel: "Region",
+    editRegionPlaceholder: "Example: add the text X here / remove X from here",
+    removeRegion: "Remove region",
+    clearRegions: "Clear regions",
+    imageEditRegionAdded: "Edit region added",
+    editImage: "Edit Image",
+    statusUsesImport: "uses Import or drag and drop",
+    statusCodexJobWritten: "Codex job written",
+    statusCodexJobError: "Could not create Codex handoff job",
+    statusInboxEmpty: "No image files found in the Codex outbox",
+    statusInboxImported: "Imported from Local Inbox",
+    statusInboxError: "Could not import from Local Inbox",
+    statusLocalGenerated: "Generated locally",
+    statusLocalGenerateError: "Could not generate locally",
+    statusAnimationSourceRequired: "Upload or select a pixel-art source before generating animation",
+    statusAnimationGenerated: "Animation generated",
+    statusAnimationFinalNotEditable: "Animation outputs are final artifacts. Select a generated or edited image to edit.",
+    statusCodexJobPending: "Waiting for Codex to return an image",
+    statusCodexRunnerUnavailable: "Codex runner unavailable. Return an outbox image, then use Import Latest",
+    statusCodexRunnerFailed: "Codex runner stopped before returning an image",
+    statusCodexRunnerCompletedNoImage: "Codex runner completed, but no returned image was found",
+    jobNotifications: "Notify when done",
+    jobNotificationDone: "Codex job complete",
+    jobNotificationFailed: "Codex job needs attention",
+    codexFailureTitle: "Generation failed",
+    codexFailurePolicyMessage: "The image could not be generated. It may have been blocked by safety or usage-policy checks.",
+    codexFailurePolicySuggestion: "Revise the prompt to remove sensitive, explicit, or disallowed details, then try again.",
+    codexFailureImagegenUnavailableTitle: "Image generation unavailable",
+    codexFailureImagegenUnavailableMessage: "Image generation is not available in this Codex environment.",
+    codexFailureImagegenUnavailableSuggestion: "Use manual handoff or another provider, then return an image to the outbox.",
+    codexFailureUsageLimitTitle: "Codex usage limit reached",
+    codexFailureUsageLimitMessage: "Codex could not run this generation because the configured account hit its usage limit.",
+    codexFailureUsageLimitSuggestion: "Wait for the usage window to reset, upgrade the account, or switch to a runner/provider with available capacity.",
+    codexFailureRunnerFailedTitle: "Codex runner failed",
+    codexFailureRunnerFailedMessage: "Codex runner failed before returning an image.",
+    codexFailureRunnerFailedSuggestion: "Check the runner setup or retry with a simpler prompt.",
+    codexFailureImportFailedTitle: "Outbox import failed",
+    codexFailureDirectionSplitImportFailedTitle: "Direction split import failed",
+    codexFailureImportFailedMessage: "The completed Codex job returned outbox files, but the app could not import them.",
+    codexFailureImportFailedReason: "Reason",
+    codexFailureImportFailedSuggestion: "Use Import Latest after freeing browser storage, or retry the job. The outbox files were not deleted.",
+    codexFailureNoImageTitle: "No image returned",
+    codexFailureNoImageMessage: "Codex runner completed, but no returned image was found.",
+    codexFailureNoImageSuggestion: "Retry the job, or place a returned image with the job id prefix in the outbox.",
+    codexFailureUnknownMessage: "The image could not be generated, and no specific reason was returned.",
+    codexFailureUnknownSuggestion: "Retry with a simpler prompt or use manual handoff.",
+    codexFailureRetryHint: "Retry suggestion",
+    codexFailureRetryImport: "Retry import",
+    codexLogTitle: "Codex Log",
+    codexLogLive: "stdout / stderr tail",
+    codexLogEmpty: "No Codex log yet",
+    codexLogWaiting: "Waiting for Codex log output...",
+    codexLogElapsed: "Elapsed",
+    codexLogUpdated: "Updated",
+    codexLogNoOutput: "No output yet. Codex may be preparing image generation.",
+    codexLogTruncated: "Showing latest log tail",
+    codexLogCollapse: "Collapse logs",
+    codexLogExpand: "Expand logs",
+    codexLogFullscreen: "Full screen logs",
+    codexLogExitFullscreen: "Exit full screen",
+    runnerChecking: "Codex runner: checking",
+    runnerReady: "Codex runner: ready",
+    runnerMock: "Codex runner: mock/test",
+    runnerDisabled: "Codex runner: manual handoff",
+    runnerUnavailable: "Codex runner: unavailable",
+    statusSelectedAsFrame: "Selected image added as a sprite frame",
+    statusChromaApplied: "Chroma key applied to selected frame",
+    createCodexJob: "Create Codex Job",
+    generateLocalImage: "Generate Pixel Art",
+    generateLocalSprite: "Generate Animation",
+    waitingForCodexResult: "Waiting for Codex Result",
+    importLatest: "Import Latest",
+    importFile: "Import File",
+    currentWorkflow: "Current workflow",
+    selectedProvider: "Route",
+    results: "Results",
+    spriteActions: "Sprite Actions",
+    exportSprite: "Export Sprite",
+    splitSheet: "Split Sheet",
+    addFrame: "Add Frame",
+    annotatedPng: "Annotated PNG",
+    jobNotes: "Edit Notes",
+    jobNotesPlaceholder: "What should Codex preserve, fix, crop, split, or export?"
+  },
+  ja: {
+    language: "言語",
+    project: "プロジェクト: Forest Mage",
+    openWorkspace: "ワークスペースを開く",
+    settings: "設定",
+    localWorkspace: "ローカルワークスペース",
+    workflowPanelTitle: "ワークフロー",
+    canvasGridTitle: "アニメーション設定",
+    canvasAnnotationTitle: "プレビュー",
+    previewLabel: "プレビュー",
+    canvasEmpty: "画像を取り込むかローカル生成して開始",
+    columns: "列",
+    rows: "行",
+    frameWidth: "フレーム幅",
+    frameHeight: "フレーム高",
+    showGrid: "グリッド表示",
+    showCenter: "中心線表示",
+    transparencyCleanup: "透過クリーンアップ",
+    keyColor: "キー色",
+    tolerance: "許容幅",
+    applyChromaKey: "クロマキー適用",
+    selectTool: "選択",
+    brushTool: "ブラシ",
+    rectangleTool: "矩形",
+    arrowTool: "矢印",
+    exportAnnotationTitle: "注釈PNGを書き出す",
+    splitGridTitle: "グリッドをフレームへ分割",
+    useAsFrameTitle: "選択画像をスプライトフレームに使う",
+    frameLabel: "フレーム",
+    sizeLabel: "サイズ",
+    anchorLabel: "アンカー",
+    zoomLabel: "ズーム",
+    zoomFit: "全体表示",
+    exportSheetPng: "シートPNGを書き出し",
+    exportZipFrames: "フレームZIPを書き出し",
+    exportGifLabel: "GIFを書き出し",
+    exportMetadataJson: "メタデータJSONを書き出し",
+    metadata: "メタデータ",
+    anchorX: "アンカーX",
+    anchorY: "アンカーY",
+    moveFrameLeft: "フレームを左へ移動",
+    moveFrameRight: "フレームを右へ移動",
+    removeFrame: "フレーム削除",
+    noFrames: "フレームなし",
+    promptExamples: "プロンプト例",
+    promptExamplesTitle: "プロンプト例",
+    promptExamplesIntro: "仕上がり例を見て選び、調整済みpromptをコピーまたは入力できます。",
+    copyPrompt: "プロンプトをコピー",
+    usePrompt: "この例を使う",
+    closePromptExamples: "閉じる",
+    promptCopied: "プロンプトをコピーしました",
+    promptCopyFailed: "プロンプトをコピーできませんでした",
+    promptExampleApplied: "プロンプト例をピクセルアート生成へ入れました",
+    animationStepSourceTitle: "1. ピクセルアートをアップロード",
+    animationStepSourceBody: "生成または取り込んだピクセルアートをアニメーション元にします。",
+    animationMethodTitle: "生成方式",
+    animationStandardSheet: "5方向シート",
+    animationStandardSheetBody: "選択した各方向に8フレームのゲーム用アニメーションを生成します。",
+    animationStandardLockedSize: "1セルは256 x 256 px固定です。",
+    animationHatchPet: "hatch-pet",
+    animationHatchPetBody: "実験版のCodex pet atlas。8 x 9、192 x 208セル、pet.json対応です。",
+    animationDirectionalHatchPet: "5方向hatch-pet",
+    animationDirectionalHatchPetBody: "5方向それぞれにhatch-pet atlasを生成します。",
+    animationStepMotionTitle: "2. 動きを選ぶ",
+    animationStepMotionBody: "固定プリセットから動きを選びます。",
+    animationDirectionCount: "方向数",
+    animationDirectionFive: "5方向",
+    animationDirectionThree: "3方向",
+    animationDirectionOne: "1方向",
+    animationSingleDirection: "生成する方向",
+    animationSingleDirectionHint: "1方向だけ生成します。初期値は横です。",
+    animationStepGenerateTitle: "3. 生成する",
+    animationStepGenerateBody: "アップロード画像からanimation sheetとtimeline framesを生成します。",
+    hatchPetGenerateBody: "アップロード画像をCodexに渡し、hatch-pet工程でCodex pet atlasを試作します。",
+    hatchPetLockedSize: "hatch-petは1536 x 1872、192 x 208セルに固定します。",
+    directionalHatchPetGenerateBody: "アップロード画像をCodexに渡し、方向別のhatch-pet atlasを5枚生成します。",
+    directionalHatchPetLockedSize: "1536 x 1872、192 x 208セルのatlasを5枚作り、preview/export用に結合します。",
+    animationStepDownloadTitle: "4. ダウンロード",
+    animationStepDownloadBody: "生成結果をanimated GIF、animated WebP、sprite sheetで書き出します。",
+    hatchPetDownloadBody: "Codex petの各状態をアニメGIF/WebPで書き出し、全体atlasもダウンロードできます。",
+    directionalHatchPetDownloadBody: "方向ごとに代表stateをアニメGIF/WebPで確認し、結合済み5方向hatch-pet atlasもダウンロードできます。",
+    uploadPixelArt: "ピクセルアートをアップロード",
+    selectedSource: "選択中の元画像",
+    noAnimationSource: "まだ元になるピクセルアートがありません",
+    motionPreset: "選択中のアニメーション",
+    chooseAnimation: "アニメーションを選ぶ",
+    animationPresetExamples: "アニメーションを選ぶ",
+    animationPresetExamplesTitle: "アニメーションを選ぶ",
+    animationPresetExamplesIntro: "動いているサンプルを見て、使うアニメーションを選びます。",
+    useAnimationPreset: "このアニメーションを選ぶ",
+    animationPresetExampleApplied: "アニメーションを選択しました",
+    generationMayTakeMinutes: "生成は数分かかります",
+    animationReady: "アニメーションframes準備完了",
+    animatedGif: "アニメGIF",
+    animatedWebP: "アニメWebP",
+    animatedApng: "アニメAPNG",
+    spriteSheetDownload: "スプライトシート",
+    directionalPreviews: "方向別プレビュー",
+    previewFront: "正面",
+    previewBack: "背面",
+    previewBackThreeQuarter: "斜め後ろ",
+    previewFrontThreeQuarter: "斜め前",
+    previewSide: "横",
+    previewGif: "GIF Preview",
+    previewWebP: "WebP Preview",
+    previewSpriteSheet: "Sprite Sheet Preview",
+    animationDownloadsLocked: "ダウンロード前にアニメーションを生成してください。",
+    animationPreviewsBuilding: "アニメーションプレビューを準備中です...",
+    animationGeneratedFrom: "生成元",
+    animationSourceUnknown: "生成元画像が記録されていません",
+    imageEditGeneratedFrom: "編集元",
+    imageEditSourceUnknown: "編集元画像が記録されていません",
+    openSourcePreview: "元画像を開く",
+    statusSourceSelectedForAnimation: "アニメーション元画像を選択しました",
+    imageDownloadTitle: "ダウンロード",
+    imageDownloadBody: "プレビューに表示している画像をPNGで書き出します。",
+    imageDownloadReady: "選択中の画像を書き出せます",
+    imageDownloadLocked: "画像を生成または選択するとダウンロードできます。",
+    openDownloadModal: "ダウンロード",
+    downloadModalTitle: "ダウンロード",
+    downloadModalIntro: "選択中のプレビューから書き出すファイルを選びます。",
+    closeDownloadModal: "ダウンロードを閉じる",
+    downloadPng: "PNG",
+    animationLibraryTitle: "アニメーションライブラリ",
+    animationLibraryBody: "公式プリセットとインポートしたユーザー素材を、再利用できる棚として扱います。",
+    officialAnimations: "Official Animations",
+    userAnimations: "User Animations",
+    importAnimation: "アニメーションをインポート",
+    exportAnimationPack: "アニメーションパックを書き出し",
+    exportAnimationSample: "サンプルを書き出し",
+    useAnimationLibraryItem: "使う",
+    renameAnimation: "名前変更",
+    deleteAnimation: "削除",
+    animationLibraryEmpty: "ユーザーアニメーションはまだありません。ローカルのアニメーションパックをインポートするとここに並びます。",
+    animationPackImported: "アニメーションパックをインポートしました",
+    animationPackImportFailed: "アニメーションパックをインポートできませんでした",
+    animationPackUsed: "ライブラリからアニメーションを読み込みました",
+    animationPackExported: "アニメーションパックを書き出しました",
+    animationPackExportFailed: "アニメーションパックを書き出せませんでした",
+    animationPackExportTitle: "アニメーションパックを書き出し",
+    animationPackExportIntro: "manifest、プレビュー、シート、metadataを含むローカルZIPを書き出します。",
+    animationPackTitleLabel: "タイトル",
+    animationPackTagsLabel: "タグ",
+    animationPackLicenseLabel: "ライセンス / 利用メモ",
+    animationPackSourceLabel: "出所メモ",
+    animationPackPromptSummaryLabel: "プロンプト要約",
+    animationPackPromptToggle: "プロンプト要約を含める",
+    animationPackRightsHint: "インポート素材や生成素材を共有する前に、権利関係を確認してください。",
+    cancel: "キャンセル",
+    saveExport: "書き出し",
+    uploadImageForEdit: "画像をアップロード",
+    selectedEditSource: "選択中の画像",
+    noEditSource: "まだ画像が選択されていません",
+    animationFinalNotEditableTitle: "アニメーション生成物",
+    animationFinalNotEditableBody: "アニメーション結果は最終成果物です。番号付き編集範囲を使う場合は、画像生成または画像編集で作った画像を選択してください。",
+    imageEditRegionsTitle: "番号付き編集範囲",
+    imageEditRegionsHelp: "プレビュー上をドラッグして矩形選択します。矩形には番号が付き、番号ごとにコメントできます。",
+    noEditRegions: "まだ編集範囲がありません。プレビュー上をドラッグして #1 を追加してください。",
+    editRegionLabel: "範囲",
+    editRegionPlaceholder: "例: ここにXというテキスト追加 / ここのXを削除",
+    removeRegion: "範囲を削除",
+    clearRegions: "範囲を全削除",
+    imageEditRegionAdded: "編集範囲を追加しました",
+    editImage: "画像編集",
+    statusUsesImport: "はImportまたはドラッグ&ドロップを使います",
+    statusCodexJobWritten: "Codexジョブを書き込みました",
+    statusCodexJobError: "Codex handoffジョブを作成できませんでした",
+    statusInboxEmpty: "Codex outboxに画像ファイルが見つかりません",
+    statusInboxImported: "Local Inboxから取り込みました",
+    statusInboxError: "Local Inboxから取り込めませんでした",
+    statusLocalGenerated: "ローカル生成しました",
+    statusLocalGenerateError: "ローカル生成できませんでした",
+    statusAnimationSourceRequired: "アニメーション生成の前にピクセルアートをアップロードするか、生成結果を選択してください",
+    statusAnimationGenerated: "アニメーションを生成しました",
+    statusAnimationFinalNotEditable: "アニメーション結果は最終成果物です。編集する場合は生成画像または編集後画像を選択してください",
+    statusCodexJobPending: "Codexから画像が戻るのを待っています",
+    statusCodexRunnerUnavailable: "Codex runner起動不可。outboxへ画像を戻したらImport Latestを押してください",
+    statusCodexRunnerFailed: "Codex runnerが画像を返す前に停止しました",
+    statusCodexRunnerCompletedNoImage: "Codex runnerは完了しましたが、戻り画像が見つかりません",
+    jobNotifications: "完了を通知",
+    jobNotificationDone: "Codexジョブ完了",
+    jobNotificationFailed: "Codexジョブ要確認",
+    codexFailureTitle: "生成できませんでした",
+    codexFailurePolicyMessage: "安全または利用ポリシーの確認により、この画像は生成できなかった可能性があります。",
+    codexFailurePolicySuggestion: "センシティブ、露骨、または許可されない可能性のある表現を避けてpromptを調整し、再試行してください。",
+    codexFailureImagegenUnavailableTitle: "imagegenを利用できません",
+    codexFailureImagegenUnavailableMessage: "このCodex環境ではimagegenを利用できません。",
+    codexFailureImagegenUnavailableSuggestion: "手動handoffまたは別providerを使い、outboxへ画像を戻してください。",
+    codexFailureUsageLimitTitle: "Codex利用上限に達しました",
+    codexFailureUsageLimitMessage: "設定中のアカウントが利用上限に達しているため、Codexがこの生成を実行できませんでした。",
+    codexFailureUsageLimitSuggestion: "利用枠のリセットを待つか、アカウントをアップグレードするか、利用可能な別runner/providerへ切り替えてください。",
+    codexFailureRunnerFailedTitle: "Codex runnerが失敗しました",
+    codexFailureRunnerFailedMessage: "Codex runnerが画像を返す前に失敗しました。",
+    codexFailureRunnerFailedSuggestion: "runner設定を確認するか、promptを簡単にして再試行してください。",
+    codexFailureImportFailedTitle: "outbox取り込みに失敗しました",
+    codexFailureDirectionSplitImportFailedTitle: "Direction split import failed",
+    codexFailureImportFailedMessage: "完了したCodex jobのoutboxファイルはありますが、アプリで取り込めませんでした。",
+    codexFailureImportFailedReason: "理由",
+    codexFailureImportFailedSuggestion: "ブラウザ保存容量を空けてImport Latestを押すか、jobを再試行してください。outboxファイルは削除していません。",
+    codexFailureNoImageTitle: "戻り画像が見つかりません",
+    codexFailureNoImageMessage: "Codex runnerは完了しましたが、戻り画像が見つかりませんでした。",
+    codexFailureNoImageSuggestion: "ジョブを再試行するか、job id prefix付きの画像をoutboxへ置いてください。",
+    codexFailureUnknownMessage: "画像を生成できませんでしたが、具体的な理由は返されませんでした。",
+    codexFailureUnknownSuggestion: "promptを簡単にして再試行するか、手動handoffを使ってください。",
+    codexFailureRetryHint: "再試行ヒント",
+    codexFailureRetryImport: "再取り込み",
+    codexLogTitle: "Codexログ",
+    codexLogLive: "stdout / stderr の末尾",
+    codexLogEmpty: "まだCodexログはありません",
+    codexLogWaiting: "Codexのログ出力を待っています...",
+    codexLogElapsed: "経過",
+    codexLogUpdated: "更新",
+    codexLogNoOutput: "まだ出力がありません。Codexが画像生成の準備中かもしれません。",
+    codexLogTruncated: "最新ログの末尾を表示中",
+    codexLogCollapse: "ログを閉じる",
+    codexLogExpand: "ログを開く",
+    codexLogFullscreen: "ログを全画面で見る",
+    codexLogExitFullscreen: "全画面を閉じる",
+    runnerChecking: "Codex runner: 確認中",
+    runnerReady: "Codex runner: 使用可能",
+    runnerMock: "Codex runner: mock/test",
+    runnerDisabled: "Codex runner: 手動受け渡し",
+    runnerUnavailable: "Codex runner: 起動不可",
+    statusSelectedAsFrame: "選択画像をスプライトフレームに追加しました",
+    statusChromaApplied: "選択フレームにクロマキーを適用しました",
+    createCodexJob: "Codexジョブ作成",
+    generateLocalImage: "ピクセルアート生成",
+    generateLocalSprite: "アニメーション生成",
+    waitingForCodexResult: "Codex結果待ち",
+    importLatest: "最新を取り込み",
+    importFile: "ファイル取り込み",
+    currentWorkflow: "現在のワークフロー",
+    selectedProvider: "受け渡し先",
+    results: "結果",
+    spriteActions: "スプライト動作",
+    exportSprite: "スプライト書き出し",
+    splitSheet: "シート分割",
+    addFrame: "フレーム追加",
+    annotatedPng: "注釈PNG",
+    jobNotes: "編集メモ",
+    jobNotesPlaceholder: "Codexに残してほしい点、直してほしい点、切り出し方、出力形式を書きます"
+  }
+} satisfies Record<BaseLanguage, Record<string, string>>;
+
+type UiCopy = typeof baseUiCopy.en;
+
+const uiCopy = {
+  ...baseUiCopy,
+  "zh-CN": withUiCopy({
+    language: "语言",
+    workflowPanelTitle: "工作流",
+    canvasAnnotationTitle: "预览",
+    previewLabel: "预览",
+    canvasEmpty: "导入或生成图像后开始",
+    promptExamples: "提示词示例",
+    promptExamplesTitle: "提示词示例",
+    promptExamplesIntro: "按示例图选择，然后复制或载入优化后的提示词。",
+    copyPrompt: "复制提示词",
+    usePrompt: "使用提示词",
+    closePromptExamples: "关闭",
+    promptCopied: "提示词已复制",
+    promptExampleApplied: "提示词示例已载入像素艺术生成",
+    animationStepSourceTitle: "1. 上传像素艺术",
+    animationStepMotionTitle: "2. 选择动作",
+    animationStepGenerateTitle: "3. 生成",
+    animationStepDownloadTitle: "4. 下载",
+    uploadPixelArt: "上传像素艺术",
+    selectedSource: "已选来源",
+    noAnimationSource: "尚未上传像素艺术来源",
+    motionPreset: "已选动画",
+    chooseAnimation: "选择动画",
+    animationPresetExamples: "选择动画",
+    animationPresetExamplesTitle: "选择动画",
+    animationPresetExamplesIntro: "查看动态示例，然后选择动作预设。",
+    useAnimationPreset: "选择动画",
+    animationPresetExampleApplied: "已选择动画",
+    generationMayTakeMinutes: "生成可能需要几分钟。",
+    animationReady: "动画帧已准备好",
+    animatedGif: "动画 GIF",
+    animatedWebP: "动画 WebP",
+    spriteSheetDownload: "精灵表",
+    directionalPreviews: "方向预览",
+    animationGeneratedFrom: "生成自",
+    imageEditGeneratedFrom: "编辑自",
+    imageDownloadTitle: "下载",
+    imageDownloadBody: "将预览中的图像导出为 PNG。",
+    imageDownloadReady: "已选图像可导出",
+    imageDownloadLocked: "请先选择或生成图像。",
+    downloadPng: "PNG",
+    animationLibraryTitle: "动画库",
+    animationLibraryBody: "将官方预设和导入的动画包作为可复用素材。",
+    officialAnimations: "官方动画",
+    userAnimations: "用户动画",
+    importAnimation: "导入动画",
+    exportAnimationPack: "导出动画包",
+    exportAnimationSample: "导出示例",
+    useAnimationLibraryItem: "使用",
+    renameAnimation: "重命名",
+    deleteAnimation: "删除",
+    animationLibraryEmpty: "还没有用户动画。导入本地动画包后会显示在这里。",
+    animationPackImported: "动画包已导入",
+    animationPackImportFailed: "无法导入动画包",
+    animationPackUsed: "已从库载入动画",
+    animationPackExported: "动画包已导出",
+    animationPackExportFailed: "无法导出动画包",
+    animationPackExportTitle: "导出动画包",
+    animationPackExportIntro: "写出包含清单、预览、精灵表和元数据的本地 ZIP。",
+    cancel: "取消",
+    saveExport: "导出",
+    uploadImageForEdit: "上传图像",
+    selectedEditSource: "已选图像",
+    noEditSource: "尚未选择图像",
+    imageEditRegionsTitle: "编号编辑区域",
+    editImage: "编辑图像",
+    statusAnimationSourceRequired: "生成动画前请上传或选择像素艺术来源",
+    statusAnimationGenerated: "动画已生成",
+    codexFailureTitle: "生成失败",
+    createCodexJob: "创建 Codex 作业",
+    generateLocalImage: "生成像素艺术",
+    generateLocalSprite: "生成动画",
+    waitingForCodexResult: "等待 Codex 结果",
+    importLatest: "导入最新结果",
+    importFile: "导入文件",
+    currentWorkflow: "当前工作流",
+    selectedProvider: "路线",
+    results: "结果",
+    jobNotes: "备注"
+  }),
+  "zh-TW": withUiCopy({
+    language: "語言",
+    workflowPanelTitle: "工作流程",
+    canvasAnnotationTitle: "預覽",
+    previewLabel: "預覽",
+    canvasEmpty: "匯入或生成圖像後開始",
+    promptExamples: "提示詞範例",
+    promptExamplesTitle: "提示詞範例",
+    promptExamplesIntro: "依範例圖選擇，然後複製或載入調整好的提示詞。",
+    copyPrompt: "複製提示詞",
+    usePrompt: "使用提示詞",
+    closePromptExamples: "關閉",
+    promptCopied: "提示詞已複製",
+    promptExampleApplied: "提示詞範例已載入像素藝術生成",
+    animationStepSourceTitle: "1. 上傳像素藝術",
+    animationStepMotionTitle: "2. 選擇動作",
+    animationStepGenerateTitle: "3. 生成",
+    animationStepDownloadTitle: "4. 下載",
+    uploadPixelArt: "上傳像素藝術",
+    selectedSource: "已選來源",
+    noAnimationSource: "尚未上傳像素藝術來源",
+    motionPreset: "已選動畫",
+    chooseAnimation: "選擇動畫",
+    animationPresetExamples: "選擇動畫",
+    animationPresetExamplesTitle: "選擇動畫",
+    animationPresetExamplesIntro: "查看動態範例，然後選擇動作預設。",
+    useAnimationPreset: "選擇動畫",
+    animationPresetExampleApplied: "已選擇動畫",
+    generationMayTakeMinutes: "生成可能需要幾分鐘。",
+    animationReady: "動畫影格已準備好",
+    animatedGif: "動畫 GIF",
+    animatedWebP: "動畫 WebP",
+    spriteSheetDownload: "精靈表",
+    directionalPreviews: "方向預覽",
+    animationGeneratedFrom: "生成自",
+    imageEditGeneratedFrom: "編輯自",
+    imageDownloadTitle: "下載",
+    imageDownloadBody: "將預覽中的圖像匯出為 PNG。",
+    imageDownloadReady: "已選圖像可匯出",
+    imageDownloadLocked: "請先選擇或生成圖像。",
+    downloadPng: "PNG",
+    animationLibraryTitle: "動畫庫",
+    animationLibraryBody: "將官方預設與匯入的動畫包作為可重用素材。",
+    officialAnimations: "官方動畫",
+    userAnimations: "使用者動畫",
+    importAnimation: "匯入動畫",
+    exportAnimationPack: "匯出動畫包",
+    exportAnimationSample: "匯出範例",
+    useAnimationLibraryItem: "使用",
+    renameAnimation: "重新命名",
+    deleteAnimation: "刪除",
+    animationLibraryEmpty: "尚無使用者動畫。匯入本地動畫包後會顯示在這裡。",
+    animationPackImported: "動畫包已匯入",
+    animationPackImportFailed: "無法匯入動畫包",
+    animationPackUsed: "已從庫載入動畫",
+    animationPackExported: "動畫包已匯出",
+    animationPackExportFailed: "無法匯出動畫包",
+    animationPackExportTitle: "匯出動畫包",
+    animationPackExportIntro: "寫出包含 manifest、預覽、精靈表與 metadata 的本地 ZIP。",
+    cancel: "取消",
+    saveExport: "匯出",
+    uploadImageForEdit: "上傳圖像",
+    selectedEditSource: "已選圖像",
+    noEditSource: "尚未選擇圖像",
+    imageEditRegionsTitle: "編號編輯區域",
+    editImage: "編輯圖像",
+    statusAnimationSourceRequired: "生成動畫前請上傳或選擇像素藝術來源",
+    statusAnimationGenerated: "動畫已生成",
+    codexFailureTitle: "生成失敗",
+    createCodexJob: "建立 Codex 作業",
+    generateLocalImage: "生成像素藝術",
+    generateLocalSprite: "生成動畫",
+    waitingForCodexResult: "等待 Codex 結果",
+    importLatest: "匯入最新結果",
+    importFile: "匯入檔案",
+    currentWorkflow: "目前工作流程",
+    selectedProvider: "路線",
+    results: "結果",
+    jobNotes: "備註"
+  }),
+  ko: withUiCopy({
+    language: "언어",
+    workflowPanelTitle: "워크플로",
+    canvasAnnotationTitle: "미리보기",
+    previewLabel: "미리보기",
+    canvasEmpty: "이미지를 가져오거나 생성하면 시작할 수 있습니다",
+    promptExamples: "프롬프트 예시",
+    promptExamplesTitle: "프롬프트 예시",
+    promptExamplesIntro: "예시 이미지를 보고 조정된 프롬프트를 복사하거나 불러옵니다.",
+    copyPrompt: "프롬프트 복사",
+    usePrompt: "프롬프트 사용",
+    closePromptExamples: "닫기",
+    promptCopied: "프롬프트를 복사했습니다",
+    promptExampleApplied: "프롬프트 예시를 픽셀 아트 생성에 불러왔습니다",
+    animationStepSourceTitle: "1. 픽셀 아트 업로드",
+    animationStepMotionTitle: "2. 움직임 선택",
+    animationStepGenerateTitle: "3. 생성",
+    animationStepDownloadTitle: "4. 다운로드",
+    uploadPixelArt: "픽셀 아트 업로드",
+    selectedSource: "선택한 원본",
+    noAnimationSource: "아직 픽셀 아트 원본이 없습니다",
+    motionPreset: "선택한 애니메이션",
+    chooseAnimation: "애니메이션 선택",
+    animationPresetExamples: "애니메이션 선택",
+    animationPresetExamplesTitle: "애니메이션 선택",
+    animationPresetExamplesIntro: "움직이는 샘플을 보고 사용할 동작을 선택합니다.",
+    useAnimationPreset: "애니메이션 선택",
+    animationPresetExampleApplied: "애니메이션을 선택했습니다",
+    generationMayTakeMinutes: "생성에는 몇 분이 걸릴 수 있습니다.",
+    animationReady: "애니메이션 프레임 준비 완료",
+    animatedGif: "애니메이션 GIF",
+    animatedWebP: "애니메이션 WebP",
+    spriteSheetDownload: "스프라이트 시트",
+    directionalPreviews: "방향별 미리보기",
+    animationGeneratedFrom: "생성 원본",
+    imageEditGeneratedFrom: "편집 원본",
+    imageDownloadTitle: "다운로드",
+    imageDownloadBody: "미리보기의 이미지를 PNG로 내보냅니다.",
+    imageDownloadReady: "선택한 이미지를 내보낼 수 있습니다",
+    imageDownloadLocked: "먼저 이미지를 선택하거나 생성하세요.",
+    animationLibraryTitle: "애니메이션 라이브러리",
+    animationLibraryBody: "공식 프리셋과 가져온 사용자 애니메이션 팩을 재사용합니다.",
+    officialAnimations: "공식 애니메이션",
+    userAnimations: "사용자 애니메이션",
+    importAnimation: "애니메이션 가져오기",
+    exportAnimationPack: "애니메이션 팩 내보내기",
+    exportAnimationSample: "샘플 내보내기",
+    useAnimationLibraryItem: "사용",
+    renameAnimation: "이름 변경",
+    deleteAnimation: "삭제",
+    animationLibraryEmpty: "사용자 애니메이션이 없습니다. 로컬 애니메이션 팩을 가져오면 여기에 표시됩니다.",
+    cancel: "취소",
+    saveExport: "내보내기",
+    uploadImageForEdit: "이미지 업로드",
+    imageEditRegionsTitle: "번호가 있는 편집 영역",
+    editImage: "이미지 편집",
+    statusAnimationSourceRequired: "애니메이션 생성 전에 픽셀 아트 원본을 업로드하거나 선택하세요",
+    statusAnimationGenerated: "애니메이션 생성 완료",
+    codexFailureTitle: "생성 실패",
+    createCodexJob: "Codex 작업 만들기",
+    generateLocalImage: "픽셀 아트 생성",
+    generateLocalSprite: "애니메이션 생성",
+    waitingForCodexResult: "Codex 결과 대기 중",
+    importLatest: "최신 결과 가져오기",
+    importFile: "파일 가져오기",
+    currentWorkflow: "현재 워크플로",
+    selectedProvider: "경로",
+    results: "결과",
+    jobNotes: "메모"
+  }),
+  ru: withUiCopy({
+    language: "Язык",
+    workflowPanelTitle: "Рабочий процесс",
+    canvasAnnotationTitle: "Предпросмотр",
+    previewLabel: "Предпросмотр",
+    canvasEmpty: "Импортируйте или создайте изображение, чтобы начать",
+    promptExamples: "Примеры промптов",
+    promptExamplesTitle: "Примеры промптов",
+    promptExamplesIntro: "Выберите пример по изображению, затем скопируйте или загрузите промпт.",
+    copyPrompt: "Скопировать промпт",
+    usePrompt: "Использовать промпт",
+    closePromptExamples: "Закрыть",
+    promptCopied: "Промпт скопирован",
+    promptExampleApplied: "Пример промпта загружен в генерацию пиксель-арта",
+    animationStepSourceTitle: "1. Загрузите пиксель-арт",
+    animationStepMotionTitle: "2. Выберите движение",
+    animationStepGenerateTitle: "3. Создать",
+    animationStepDownloadTitle: "4. Скачать",
+    uploadPixelArt: "Загрузить пиксель-арт",
+    selectedSource: "Выбранный источник",
+    noAnimationSource: "Источник пиксель-арта еще не загружен",
+    motionPreset: "Выбранная анимация",
+    chooseAnimation: "Выбрать анимацию",
+    animationPresetExamples: "Выбрать анимацию",
+    animationPresetExamplesTitle: "Выбрать анимацию",
+    animationPresetExamplesIntro: "Посмотрите движущийся пример и выберите пресет.",
+    useAnimationPreset: "Выбрать анимацию",
+    animationPresetExampleApplied: "Анимация выбрана",
+    generationMayTakeMinutes: "Создание может занять несколько минут.",
+    animationReady: "Кадры анимации готовы",
+    animatedGif: "Анимированный GIF",
+    animatedWebP: "Анимированный WebP",
+    spriteSheetDownload: "Спрайт-лист",
+    directionalPreviews: "Предпросмотр направлений",
+    animationGeneratedFrom: "Создано из",
+    imageEditGeneratedFrom: "Отредактировано из",
+    imageDownloadTitle: "Скачать",
+    imageDownloadBody: "Экспортируйте изображение в предпросмотре как PNG.",
+    imageDownloadReady: "Выбранное изображение готово",
+    imageDownloadLocked: "Сначала выберите или создайте изображение.",
+    animationLibraryTitle: "Библиотека анимаций",
+    animationLibraryBody: "Используйте официальные пресеты и импортированные пакеты как материалы.",
+    officialAnimations: "Официальные анимации",
+    userAnimations: "Пользовательские анимации",
+    importAnimation: "Импортировать анимацию",
+    exportAnimationPack: "Экспорт пакета анимации",
+    exportAnimationSample: "Экспорт примера",
+    useAnimationLibraryItem: "Использовать",
+    renameAnimation: "Переименовать",
+    deleteAnimation: "Удалить",
+    animationLibraryEmpty: "Пользовательских анимаций пока нет. Импортируйте локальный пакет.",
+    cancel: "Отмена",
+    saveExport: "Экспорт",
+    uploadImageForEdit: "Загрузить изображение",
+    imageEditRegionsTitle: "Нумерованные области правки",
+    editImage: "Редактировать изображение",
+    statusAnimationSourceRequired: "Перед созданием анимации загрузите или выберите пиксель-арт",
+    statusAnimationGenerated: "Анимация создана",
+    codexFailureTitle: "Не удалось создать",
+    createCodexJob: "Создать задание Codex",
+    generateLocalImage: "Создать пиксель-арт",
+    generateLocalSprite: "Создать анимацию",
+    waitingForCodexResult: "Ожидание результата Codex",
+    importLatest: "Импортировать последнее",
+    importFile: "Импортировать файл",
+    currentWorkflow: "Текущий процесс",
+    selectedProvider: "Маршрут",
+    results: "Результаты",
+    jobNotes: "Заметки"
+  }),
+  es: withUiCopy({
+    language: "Idioma",
+    workflowPanelTitle: "Flujo",
+    canvasAnnotationTitle: "Vista previa",
+    previewLabel: "Vista previa",
+    canvasEmpty: "Importa o genera una imagen para empezar",
+    promptExamples: "Ejemplos de prompts",
+    promptExamplesTitle: "Ejemplos de prompts",
+    copyPrompt: "Copiar prompt",
+    usePrompt: "Usar prompt",
+    closePromptExamples: "Cerrar",
+    animationStepSourceTitle: "1. Sube pixel art",
+    animationStepMotionTitle: "2. Elige movimiento",
+    animationStepGenerateTitle: "3. Generar",
+    animationStepDownloadTitle: "4. Descargar",
+    uploadPixelArt: "Subir pixel art",
+    motionPreset: "Animación seleccionada",
+    chooseAnimation: "Elegir animación",
+    useAnimationPreset: "Elegir animación",
+    generationMayTakeMinutes: "La generación puede tardar unos minutos.",
+    animationReady: "Fotogramas de animación listos",
+    animatedGif: "GIF animado",
+    animatedWebP: "WebP animado",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Vistas por dirección",
+    animationGeneratedFrom: "Generado desde",
+    imageDownloadTitle: "Descargar",
+    animationLibraryTitle: "Biblioteca de animaciones",
+    officialAnimations: "Animaciones oficiales",
+    userAnimations: "Animaciones de usuario",
+    importAnimation: "Importar animación",
+    exportAnimationPack: "Exportar paquete",
+    exportAnimationSample: "Exportar muestra",
+    useAnimationLibraryItem: "Usar",
+    renameAnimation: "Renombrar",
+    deleteAnimation: "Eliminar",
+    cancel: "Cancelar",
+    saveExport: "Exportar",
+    uploadImageForEdit: "Subir imagen",
+    editImage: "Editar imagen",
+    statusAnimationGenerated: "Animación generada",
+    codexFailureTitle: "Error al generar",
+    createCodexJob: "Crear trabajo Codex",
+    generateLocalImage: "Generar pixel art",
+    generateLocalSprite: "Generar animación",
+    importLatest: "Importar último resultado",
+    importFile: "Importar archivo",
+    currentWorkflow: "Flujo actual",
+    results: "Resultados"
+  }),
+  "pt-BR": withUiCopy({
+    language: "Idioma",
+    workflowPanelTitle: "Fluxo",
+    canvasAnnotationTitle: "Prévia",
+    previewLabel: "Prévia",
+    canvasEmpty: "Importe ou gere uma imagem para começar",
+    promptExamples: "Exemplos de prompts",
+    promptExamplesTitle: "Exemplos de prompts",
+    copyPrompt: "Copiar prompt",
+    usePrompt: "Usar prompt",
+    closePromptExamples: "Fechar",
+    animationStepSourceTitle: "1. Envie pixel art",
+    animationStepMotionTitle: "2. Escolha o movimento",
+    animationStepGenerateTitle: "3. Gerar",
+    animationStepDownloadTitle: "4. Baixar",
+    uploadPixelArt: "Enviar pixel art",
+    motionPreset: "Animação selecionada",
+    chooseAnimation: "Escolher animação",
+    useAnimationPreset: "Escolher animação",
+    generationMayTakeMinutes: "A geração pode levar alguns minutos.",
+    animationReady: "Quadros da animação prontos",
+    animatedGif: "GIF animado",
+    animatedWebP: "WebP animado",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Prévias por direção",
+    animationGeneratedFrom: "Gerado de",
+    imageDownloadTitle: "Baixar",
+    animationLibraryTitle: "Biblioteca de animações",
+    officialAnimations: "Animações oficiais",
+    userAnimations: "Animações do usuário",
+    importAnimation: "Importar animação",
+    exportAnimationPack: "Exportar pacote",
+    exportAnimationSample: "Exportar amostra",
+    useAnimationLibraryItem: "Usar",
+    renameAnimation: "Renomear",
+    deleteAnimation: "Excluir",
+    cancel: "Cancelar",
+    saveExport: "Exportar",
+    uploadImageForEdit: "Enviar imagem",
+    editImage: "Editar imagem",
+    statusAnimationGenerated: "Animação gerada",
+    codexFailureTitle: "Falha na geração",
+    createCodexJob: "Criar job Codex",
+    generateLocalImage: "Gerar pixel art",
+    generateLocalSprite: "Gerar animação",
+    importLatest: "Importar resultado mais recente",
+    importFile: "Importar arquivo",
+    currentWorkflow: "Fluxo atual",
+    results: "Resultados"
+  }),
+  de: withUiCopy({
+    language: "Sprache",
+    workflowPanelTitle: "Workflow",
+    canvasAnnotationTitle: "Vorschau",
+    previewLabel: "Vorschau",
+    canvasEmpty: "Bild importieren oder erzeugen, um zu starten",
+    promptExamples: "Prompt-Beispiele",
+    promptExamplesTitle: "Prompt-Beispiele",
+    copyPrompt: "Prompt kopieren",
+    usePrompt: "Prompt verwenden",
+    closePromptExamples: "Schließen",
+    animationStepSourceTitle: "1. Pixel-Art hochladen",
+    animationStepMotionTitle: "2. Bewegung wählen",
+    animationStepGenerateTitle: "3. Erstellen",
+    animationStepDownloadTitle: "4. Herunterladen",
+    uploadPixelArt: "Pixel-Art hochladen",
+    motionPreset: "Gewählte Animation",
+    chooseAnimation: "Animation wählen",
+    useAnimationPreset: "Animation wählen",
+    generationMayTakeMinutes: "Die Erstellung kann einige Minuten dauern.",
+    animationReady: "Animationsframes bereit",
+    animatedGif: "Animiertes GIF",
+    animatedWebP: "Animiertes WebP",
+    spriteSheetDownload: "Sprite-Sheet",
+    directionalPreviews: "Richtungsvorschau",
+    animationGeneratedFrom: "Erstellt aus",
+    imageDownloadTitle: "Herunterladen",
+    animationLibraryTitle: "Animationsbibliothek",
+    officialAnimations: "Offizielle Animationen",
+    userAnimations: "Nutzeranimationen",
+    importAnimation: "Animation importieren",
+    exportAnimationPack: "Animationspaket exportieren",
+    exportAnimationSample: "Beispiel exportieren",
+    useAnimationLibraryItem: "Nutzen",
+    renameAnimation: "Umbenennen",
+    deleteAnimation: "Löschen",
+    cancel: "Abbrechen",
+    saveExport: "Exportieren",
+    uploadImageForEdit: "Bild hochladen",
+    editImage: "Bild bearbeiten",
+    statusAnimationGenerated: "Animation erstellt",
+    codexFailureTitle: "Erstellung fehlgeschlagen",
+    createCodexJob: "Codex-Job erstellen",
+    generateLocalImage: "Pixel-Art erstellen",
+    generateLocalSprite: "Animation erstellen",
+    importLatest: "Neuestes Ergebnis importieren",
+    importFile: "Datei importieren",
+    currentWorkflow: "Aktueller Workflow",
+    results: "Ergebnisse"
+  }),
+  fr: withUiCopy({
+    language: "Langue",
+    workflowPanelTitle: "Flux",
+    canvasAnnotationTitle: "Aperçu",
+    previewLabel: "Aperçu",
+    canvasEmpty: "Importez ou générez une image pour commencer",
+    promptExamples: "Exemples de prompts",
+    promptExamplesTitle: "Exemples de prompts",
+    copyPrompt: "Copier le prompt",
+    usePrompt: "Utiliser le prompt",
+    closePromptExamples: "Fermer",
+    animationStepSourceTitle: "1. Importer le pixel art",
+    animationStepMotionTitle: "2. Choisir le mouvement",
+    animationStepGenerateTitle: "3. Générer",
+    animationStepDownloadTitle: "4. Télécharger",
+    uploadPixelArt: "Importer le pixel art",
+    motionPreset: "Animation choisie",
+    chooseAnimation: "Choisir une animation",
+    useAnimationPreset: "Choisir l'animation",
+    generationMayTakeMinutes: "La génération peut prendre quelques minutes.",
+    animationReady: "Images d'animation prêtes",
+    animatedGif: "GIF animé",
+    animatedWebP: "WebP animé",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Aperçus par direction",
+    animationGeneratedFrom: "Généré depuis",
+    imageDownloadTitle: "Télécharger",
+    animationLibraryTitle: "Bibliothèque d'animations",
+    officialAnimations: "Animations officielles",
+    userAnimations: "Animations utilisateur",
+    importAnimation: "Importer une animation",
+    exportAnimationPack: "Exporter le pack",
+    exportAnimationSample: "Exporter l'exemple",
+    useAnimationLibraryItem: "Utiliser",
+    renameAnimation: "Renommer",
+    deleteAnimation: "Supprimer",
+    cancel: "Annuler",
+    saveExport: "Exporter",
+    uploadImageForEdit: "Importer une image",
+    editImage: "Modifier l'image",
+    statusAnimationGenerated: "Animation générée",
+    codexFailureTitle: "Échec de la génération",
+    createCodexJob: "Créer une tâche Codex",
+    generateLocalImage: "Générer du pixel art",
+    generateLocalSprite: "Générer l'animation",
+    importLatest: "Importer le dernier résultat",
+    importFile: "Importer un fichier",
+    currentWorkflow: "Flux actuel",
+    results: "Résultats"
+  }),
+  id: withUiCopy({
+    language: "Bahasa",
+    workflowPanelTitle: "Alur kerja",
+    canvasAnnotationTitle: "Pratinjau",
+    previewLabel: "Pratinjau",
+    canvasEmpty: "Impor atau buat gambar untuk memulai",
+    promptExamples: "Contoh prompt",
+    promptExamplesTitle: "Contoh prompt",
+    copyPrompt: "Salin prompt",
+    usePrompt: "Gunakan prompt",
+    closePromptExamples: "Tutup",
+    animationStepSourceTitle: "1. Unggah pixel art",
+    animationStepMotionTitle: "2. Pilih gerakan",
+    animationStepGenerateTitle: "3. Buat",
+    animationStepDownloadTitle: "4. Unduh",
+    uploadPixelArt: "Unggah pixel art",
+    motionPreset: "Animasi terpilih",
+    chooseAnimation: "Pilih animasi",
+    useAnimationPreset: "Pilih animasi",
+    generationMayTakeMinutes: "Pembuatan bisa memakan beberapa menit.",
+    animationReady: "Frame animasi siap",
+    animatedGif: "GIF animasi",
+    animatedWebP: "WebP animasi",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Pratinjau arah",
+    animationGeneratedFrom: "Dibuat dari",
+    imageDownloadTitle: "Unduh",
+    animationLibraryTitle: "Pustaka animasi",
+    officialAnimations: "Animasi resmi",
+    userAnimations: "Animasi pengguna",
+    importAnimation: "Impor animasi",
+    exportAnimationPack: "Ekspor paket",
+    exportAnimationSample: "Ekspor sampel",
+    useAnimationLibraryItem: "Gunakan",
+    renameAnimation: "Ganti nama",
+    deleteAnimation: "Hapus",
+    cancel: "Batal",
+    saveExport: "Ekspor",
+    uploadImageForEdit: "Unggah gambar",
+    editImage: "Edit gambar",
+    statusAnimationGenerated: "Animasi dibuat",
+    codexFailureTitle: "Pembuatan gagal",
+    createCodexJob: "Buat job Codex",
+    generateLocalImage: "Buat pixel art",
+    generateLocalSprite: "Buat animasi",
+    importLatest: "Impor hasil terbaru",
+    importFile: "Impor file",
+    currentWorkflow: "Alur saat ini",
+    results: "Hasil"
+  }),
+  tr: withUiCopy({
+    language: "Dil",
+    workflowPanelTitle: "İş akışı",
+    canvasAnnotationTitle: "Önizleme",
+    previewLabel: "Önizleme",
+    canvasEmpty: "Başlamak için bir görsel içe aktarın veya üretin",
+    promptExamples: "Prompt örnekleri",
+    promptExamplesTitle: "Prompt örnekleri",
+    copyPrompt: "Promptu kopyala",
+    usePrompt: "Promptu kullan",
+    closePromptExamples: "Kapat",
+    animationStepSourceTitle: "1. Piksel sanat yükle",
+    animationStepMotionTitle: "2. Hareket seç",
+    animationStepGenerateTitle: "3. Üret",
+    animationStepDownloadTitle: "4. İndir",
+    uploadPixelArt: "Piksel sanat yükle",
+    motionPreset: "Seçili animasyon",
+    chooseAnimation: "Animasyon seç",
+    useAnimationPreset: "Animasyon seç",
+    generationMayTakeMinutes: "Üretim birkaç dakika sürebilir.",
+    animationReady: "Animasyon kareleri hazır",
+    animatedGif: "Animasyonlu GIF",
+    animatedWebP: "Animasyonlu WebP",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Yön önizlemeleri",
+    animationGeneratedFrom: "Kaynak",
+    imageDownloadTitle: "İndir",
+    animationLibraryTitle: "Animasyon kitaplığı",
+    officialAnimations: "Resmi animasyonlar",
+    userAnimations: "Kullanıcı animasyonları",
+    importAnimation: "Animasyon içe aktar",
+    exportAnimationPack: "Animasyon paketi dışa aktar",
+    exportAnimationSample: "Örnek dışa aktar",
+    useAnimationLibraryItem: "Kullan",
+    renameAnimation: "Yeniden adlandır",
+    deleteAnimation: "Sil",
+    cancel: "İptal",
+    saveExport: "Dışa aktar",
+    uploadImageForEdit: "Görsel yükle",
+    editImage: "Görsel düzenle",
+    statusAnimationGenerated: "Animasyon üretildi",
+    codexFailureTitle: "Oluşturma başarısız",
+    createCodexJob: "Codex işi oluştur",
+    generateLocalImage: "Piksel sanat üret",
+    generateLocalSprite: "Animasyon üret",
+    importLatest: "En son sonucu içe aktar",
+    importFile: "Dosya içe aktar",
+    currentWorkflow: "Geçerli iş akışı",
+    results: "Sonuçlar"
+  }),
+  vi: withUiCopy({
+    language: "Ngôn ngữ",
+    workflowPanelTitle: "Quy trình",
+    canvasAnnotationTitle: "Xem trước",
+    previewLabel: "Xem trước",
+    canvasEmpty: "Nhập hoặc tạo ảnh để bắt đầu",
+    promptExamples: "Ví dụ prompt",
+    promptExamplesTitle: "Ví dụ prompt",
+    copyPrompt: "Sao chép prompt",
+    usePrompt: "Dùng prompt",
+    closePromptExamples: "Đóng",
+    animationStepSourceTitle: "1. Tải pixel art lên",
+    animationStepMotionTitle: "2. Chọn chuyển động",
+    animationStepGenerateTitle: "3. Tạo",
+    animationStepDownloadTitle: "4. Tải xuống",
+    uploadPixelArt: "Tải pixel art lên",
+    motionPreset: "Hoạt ảnh đã chọn",
+    chooseAnimation: "Chọn hoạt ảnh",
+    useAnimationPreset: "Chọn hoạt ảnh",
+    generationMayTakeMinutes: "Việc tạo có thể mất vài phút.",
+    animationReady: "Khung hoạt ảnh đã sẵn sàng",
+    animatedGif: "GIF động",
+    animatedWebP: "WebP động",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Xem trước theo hướng",
+    animationGeneratedFrom: "Tạo từ",
+    imageDownloadTitle: "Tải xuống",
+    animationLibraryTitle: "Thư viện hoạt ảnh",
+    officialAnimations: "Hoạt ảnh chính thức",
+    userAnimations: "Hoạt ảnh người dùng",
+    importAnimation: "Nhập hoạt ảnh",
+    exportAnimationPack: "Xuất gói hoạt ảnh",
+    exportAnimationSample: "Xuất mẫu",
+    useAnimationLibraryItem: "Dùng",
+    renameAnimation: "Đổi tên",
+    deleteAnimation: "Xóa",
+    cancel: "Hủy",
+    saveExport: "Xuất",
+    uploadImageForEdit: "Tải ảnh lên",
+    editImage: "Chỉnh sửa ảnh",
+    statusAnimationGenerated: "Đã tạo hoạt ảnh",
+    codexFailureTitle: "Tạo thất bại",
+    createCodexJob: "Tạo job Codex",
+    generateLocalImage: "Tạo pixel art",
+    generateLocalSprite: "Tạo hoạt ảnh",
+    importLatest: "Nhập kết quả mới nhất",
+    importFile: "Nhập tệp",
+    currentWorkflow: "Quy trình hiện tại",
+    results: "Kết quả"
+  }),
+  pl: withUiCopy({
+    language: "Język",
+    workflowPanelTitle: "Proces",
+    canvasAnnotationTitle: "Podgląd",
+    previewLabel: "Podgląd",
+    canvasEmpty: "Zaimportuj lub wygeneruj obraz, aby zacząć",
+    promptExamples: "Przykłady promptów",
+    promptExamplesTitle: "Przykłady promptów",
+    copyPrompt: "Kopiuj prompt",
+    usePrompt: "Użyj promptu",
+    closePromptExamples: "Zamknij",
+    animationStepSourceTitle: "1. Prześlij pixel art",
+    animationStepMotionTitle: "2. Wybierz ruch",
+    animationStepGenerateTitle: "3. Generuj",
+    animationStepDownloadTitle: "4. Pobierz",
+    uploadPixelArt: "Prześlij pixel art",
+    motionPreset: "Wybrana animacja",
+    chooseAnimation: "Wybierz animację",
+    useAnimationPreset: "Wybierz animację",
+    generationMayTakeMinutes: "Generowanie może potrwać kilka minut.",
+    animationReady: "Klatki animacji gotowe",
+    animatedGif: "Animowany GIF",
+    animatedWebP: "Animowany WebP",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Podglądy kierunków",
+    animationGeneratedFrom: "Wygenerowano z",
+    imageDownloadTitle: "Pobierz",
+    animationLibraryTitle: "Biblioteka animacji",
+    officialAnimations: "Oficjalne animacje",
+    userAnimations: "Animacje użytkownika",
+    importAnimation: "Importuj animację",
+    exportAnimationPack: "Eksportuj pakiet",
+    exportAnimationSample: "Eksportuj przykład",
+    useAnimationLibraryItem: "Użyj",
+    renameAnimation: "Zmień nazwę",
+    deleteAnimation: "Usuń",
+    cancel: "Anuluj",
+    saveExport: "Eksportuj",
+    uploadImageForEdit: "Prześlij obraz",
+    editImage: "Edytuj obraz",
+    statusAnimationGenerated: "Animacja wygenerowana",
+    codexFailureTitle: "Generowanie nie powiodło się",
+    createCodexJob: "Utwórz zadanie Codex",
+    generateLocalImage: "Generuj pixel art",
+    generateLocalSprite: "Generuj animację",
+    importLatest: "Importuj najnowszy wynik",
+    importFile: "Importuj plik",
+    currentWorkflow: "Bieżący proces",
+    results: "Wyniki"
+  }),
+  it: withUiCopy({
+    language: "Lingua",
+    workflowPanelTitle: "Flusso",
+    canvasAnnotationTitle: "Anteprima",
+    previewLabel: "Anteprima",
+    canvasEmpty: "Importa o genera un'immagine per iniziare",
+    promptExamples: "Esempi di prompt",
+    promptExamplesTitle: "Esempi di prompt",
+    copyPrompt: "Copia prompt",
+    usePrompt: "Usa prompt",
+    closePromptExamples: "Chiudi",
+    animationStepSourceTitle: "1. Carica pixel art",
+    animationStepMotionTitle: "2. Scegli movimento",
+    animationStepGenerateTitle: "3. Genera",
+    animationStepDownloadTitle: "4. Scarica",
+    uploadPixelArt: "Carica pixel art",
+    motionPreset: "Animazione selezionata",
+    chooseAnimation: "Scegli animazione",
+    useAnimationPreset: "Scegli animazione",
+    generationMayTakeMinutes: "La generazione può richiedere alcuni minuti.",
+    animationReady: "Frame animazione pronti",
+    animatedGif: "GIF animata",
+    animatedWebP: "WebP animata",
+    spriteSheetDownload: "Sprite sheet",
+    directionalPreviews: "Anteprime direzioni",
+    animationGeneratedFrom: "Generato da",
+    imageDownloadTitle: "Scarica",
+    animationLibraryTitle: "Libreria animazioni",
+    officialAnimations: "Animazioni ufficiali",
+    userAnimations: "Animazioni utente",
+    importAnimation: "Importa animazione",
+    exportAnimationPack: "Esporta pacchetto",
+    exportAnimationSample: "Esporta esempio",
+    useAnimationLibraryItem: "Usa",
+    renameAnimation: "Rinomina",
+    deleteAnimation: "Elimina",
+    cancel: "Annulla",
+    saveExport: "Esporta",
+    uploadImageForEdit: "Carica immagine",
+    editImage: "Modifica immagine",
+    statusAnimationGenerated: "Animazione generata",
+    codexFailureTitle: "Generazione non riuscita",
+    createCodexJob: "Crea job Codex",
+    generateLocalImage: "Genera pixel art",
+    generateLocalSprite: "Genera animazione",
+    importLatest: "Importa risultato più recente",
+    importFile: "Importa file",
+    currentWorkflow: "Flusso corrente",
+    results: "Risultati"
+  })
+} satisfies Record<Language, UiCopy>;
+
+function withUiCopy(overrides: Partial<UiCopy>): UiCopy {
+  return { ...baseUiCopy.en, ...overrides };
+}
+
+function localizedText(text: LocalizedText, language: Language) {
+  return text[language] ?? text.en;
+}
+
+type WorkflowCopy = Record<WorkflowMode, { label: string; detail: string; status: string }>;
+
+const baseWorkflowCopy = {
+  en: {
+    "image-generate": {
+      label: "Pixel Art Generation",
+      detail: "Send the prompt to local Codex imagegen and return the generated image to the cockpit.",
+      status: "Generate pixel art through the local Codex imagegen handoff"
+    },
+    "image-edit": {
+      label: "Image Editing",
+      detail: "Select numbered rectangles on an image, comment on each region, then ask Codex to edit it.",
+      status: "Select numbered edit regions, add comments, then create a Codex handoff job"
+    },
+    "sprite-generate": {
+      label: "Animation Generation",
+      detail: "Upload or select pixel art, then ask Codex for direction-split animation frames.",
+      status: "Upload or select pixel art, then generate animation frames"
+    },
+    "effect-animation": {
+      label: "Effect Animation",
+      detail: "Generate transparent VFX sheets for slashes, sparks, casts, projectiles, and impacts.",
+      status: "Set effect type, frames, layout, and QC rules before creating a Codex handoff job"
+    },
+    "sprite-edit": {
+      label: "4. Sprite Sheet Editing",
+      detail: "Tune timeline order, transparency, anchors, QC, and exports.",
+      status: "Review frames, anchors, QC, and export the sprite package"
+    }
+  },
+  ja: {
+    "image-generate": {
+      label: "ピクセルアートの生成",
+      detail: "プロンプトをローカルCodex imagegenへ渡し、生成画像をcockpitへ戻します。",
+      status: "ローカルCodex imagegen受け渡しでピクセルアートを生成します"
+    },
+    "image-edit": {
+      label: "画像編集",
+      detail: "画像を矩形選択して番号を付け、番号ごとのコメントをCodexへ渡します。",
+      status: "番号付き編集範囲とコメントを作ってから、Codex受け渡しジョブを作成します"
+    },
+    "sprite-generate": {
+      label: "アニメーションの生成",
+      detail: "ピクセルアートをアップロードまたは選択し、アニメーションシートとframesを生成します。",
+      status: "ピクセルアートをアップロードまたは選択して、アニメーションframesを生成します"
+    },
+    "effect-animation": {
+      label: "エフェクトアニメーション",
+      detail: "斬撃、火花、詠唱、飛び道具、着弾の透過VFXシートを生成します。",
+      status: "effect type、frames、layout、QC条件を決めてCodex受け渡しジョブを作成します"
+    },
+    "sprite-edit": {
+      label: "4. スプライトシート編集",
+      detail: "タイムライン順、透明化、アンカー、QC、書き出しを調整します。",
+      status: "フレーム、アンカー、QC、スプライトパッケージ書き出しを確認します"
+    }
+  }
+} satisfies Record<BaseLanguage, WorkflowCopy>;
+
+const workflowCopy = {
+  ...baseWorkflowCopy,
+  "zh-CN": withWorkflowCopy({
+    "image-generate": { label: "像素艺术生成", detail: "将提示词发送到本地 Codex imagegen，并把生成图像带回 cockpit。", status: "通过本地 Codex imagegen 生成像素艺术" },
+    "image-edit": { label: "图像编辑", detail: "在图像上选择编号矩形、添加评论，然后请求 Codex 编辑。", status: "选择编号编辑区域并创建 Codex 交接作业" },
+    "sprite-generate": { label: "动画生成", detail: "上传或选择像素艺术，然后让 Codex 生成按方向拆分的动画帧。", status: "上传或选择像素艺术，然后生成动画帧" },
+    "sprite-edit": { label: "4. 精灵表编辑" }
+  }),
+  "zh-TW": withWorkflowCopy({
+    "image-generate": { label: "像素藝術生成", detail: "將提示詞送到本地 Codex imagegen，並把生成圖像帶回 cockpit。", status: "透過本地 Codex imagegen 生成像素藝術" },
+    "image-edit": { label: "圖像編輯", detail: "在圖像上選擇編號矩形、加入註解，然後請 Codex 編輯。", status: "選擇編號編輯區域並建立 Codex 交接作業" },
+    "sprite-generate": { label: "動畫生成", detail: "上傳或選擇像素藝術，然後讓 Codex 生成依方向拆分的動畫影格。", status: "上傳或選擇像素藝術，然後生成動畫影格" },
+    "sprite-edit": { label: "4. 精靈表編輯" }
+  }),
+  ko: withWorkflowCopy({
+    "image-generate": { label: "픽셀 아트 생성", detail: "프롬프트를 로컬 Codex imagegen에 보내고 생성 이미지를 cockpit으로 가져옵니다.", status: "로컬 Codex imagegen으로 픽셀 아트를 생성합니다" },
+    "image-edit": { label: "이미지 편집", detail: "이미지에 번호가 있는 사각형을 선택하고 영역별 코멘트를 Codex에 전달합니다.", status: "번호가 있는 편집 영역과 코멘트로 Codex 작업을 만듭니다" },
+    "sprite-generate": { label: "애니메이션 생성", detail: "픽셀 아트를 업로드하거나 선택한 뒤 Codex에 방향별 애니메이션 프레임을 요청합니다.", status: "픽셀 아트를 업로드하거나 선택한 뒤 애니메이션 프레임을 생성합니다" },
+    "sprite-edit": { label: "4. 스프라이트 시트 편집" }
+  }),
+  ru: withWorkflowCopy({
+    "image-generate": { label: "Генерация пиксель-арта", detail: "Отправьте промпт в локальный Codex imagegen и верните созданное изображение в cockpit.", status: "Создание пиксель-арта через локальный Codex imagegen" },
+    "image-edit": { label: "Редактирование изображения", detail: "Выделите нумерованные прямоугольники, добавьте комментарии и попросите Codex отредактировать изображение.", status: "Создайте области правки и задание Codex" },
+    "sprite-generate": { label: "Генерация анимации", detail: "Загрузите или выберите пиксель-арт, затем попросите Codex создать кадры анимации по направлениям.", status: "Загрузите или выберите пиксель-арт, затем создайте кадры анимации" },
+    "sprite-edit": { label: "4. Редактирование спрайт-листа" }
+  }),
+  es: withWorkflowCopy({
+    "image-generate": { label: "Generación de pixel art", detail: "Envía el prompt a Codex imagegen local y devuelve la imagen generada al cockpit.", status: "Genera pixel art con el handoff local de Codex imagegen" },
+    "image-edit": { label: "Edición de imagen", detail: "Marca rectángulos numerados, comenta cada región y pide a Codex que edite la imagen.", status: "Crea regiones numeradas y un trabajo Codex" },
+    "sprite-generate": { label: "Generación de animación", detail: "Sube o selecciona pixel art y pide a Codex fotogramas separados por dirección.", status: "Sube o selecciona pixel art y genera fotogramas" },
+    "sprite-edit": { label: "4. Edición de sprite sheet" }
+  }),
+  "pt-BR": withWorkflowCopy({
+    "image-generate": { label: "Geração de pixel art", detail: "Envie o prompt para o Codex imagegen local e retorne a imagem gerada ao cockpit.", status: "Gere pixel art pelo handoff local do Codex imagegen" },
+    "image-edit": { label: "Edição de imagem", detail: "Selecione retângulos numerados, comente cada região e peça a edição ao Codex.", status: "Crie regiões numeradas e um job Codex" },
+    "sprite-generate": { label: "Geração de animação", detail: "Envie ou selecione pixel art e peça ao Codex quadros separados por direção.", status: "Envie ou selecione pixel art e gere os quadros" },
+    "sprite-edit": { label: "4. Edição de sprite sheet" }
+  }),
+  de: withWorkflowCopy({
+    "image-generate": { label: "Pixel-Art-Erstellung", detail: "Sende den Prompt an lokales Codex imagegen und hole das Bild zurück ins Cockpit.", status: "Pixel-Art über lokales Codex imagegen erstellen" },
+    "image-edit": { label: "Bildbearbeitung", detail: "Markiere nummerierte Rechtecke, kommentiere sie und lasse Codex das Bild bearbeiten.", status: "Nummerierte Bereiche und einen Codex-Job erstellen" },
+    "sprite-generate": { label: "Animation erstellen", detail: "Lade Pixel-Art hoch oder wähle sie aus und fordere richtungsgetrennte Animationsframes an.", status: "Pixel-Art auswählen und Animationsframes erstellen" },
+    "sprite-edit": { label: "4. Sprite-Sheet bearbeiten" }
+  }),
+  fr: withWorkflowCopy({
+    "image-generate": { label: "Génération de pixel art", detail: "Envoyez le prompt à Codex imagegen local et ramenez l'image générée dans le cockpit.", status: "Générer du pixel art via le handoff Codex local" },
+    "image-edit": { label: "Édition d'image", detail: "Sélectionnez des rectangles numérotés, commentez chaque zone, puis demandez l'édition à Codex.", status: "Créer des zones numérotées et une tâche Codex" },
+    "sprite-generate": { label: "Génération d'animation", detail: "Importez ou sélectionnez du pixel art, puis demandez des images séparées par direction.", status: "Importer ou sélectionner du pixel art, puis générer les images" },
+    "sprite-edit": { label: "4. Édition de sprite sheet" }
+  }),
+  id: withWorkflowCopy({
+    "image-generate": { label: "Pembuatan pixel art", detail: "Kirim prompt ke Codex imagegen lokal dan kembalikan gambar ke cockpit.", status: "Buat pixel art melalui handoff Codex imagegen lokal" },
+    "image-edit": { label: "Pengeditan gambar", detail: "Pilih kotak bernomor, beri komentar, lalu minta Codex mengedit gambar.", status: "Buat area edit bernomor dan job Codex" },
+    "sprite-generate": { label: "Pembuatan animasi", detail: "Unggah atau pilih pixel art, lalu minta frame animasi yang dipisah per arah dari Codex.", status: "Unggah atau pilih pixel art, lalu buat frame animasi" },
+    "sprite-edit": { label: "4. Edit sprite sheet" }
+  }),
+  tr: withWorkflowCopy({
+    "image-generate": { label: "Piksel sanat üretimi", detail: "Promptu yerel Codex imagegen'e gönderip üretilen görseli cockpit'e döndürür.", status: "Yerel Codex imagegen ile piksel sanat üret" },
+    "image-edit": { label: "Görsel düzenleme", detail: "Görselde numaralı dikdörtgenler seçin, yorum ekleyin ve Codex'ten düzenleme isteyin.", status: "Numaralı düzenleme alanları ve Codex işi oluştur" },
+    "sprite-generate": { label: "Animasyon üretimi", detail: "Piksel sanatı yükleyin veya seçin, Codex'ten yönlere ayrılmış animasyon kareleri isteyin.", status: "Piksel sanat seçip animasyon kareleri üret" },
+    "sprite-edit": { label: "4. Sprite sheet düzenleme" }
+  }),
+  vi: withWorkflowCopy({
+    "image-generate": { label: "Tạo pixel art", detail: "Gửi prompt tới Codex imagegen cục bộ và đưa ảnh đã tạo về cockpit.", status: "Tạo pixel art qua handoff Codex imagegen cục bộ" },
+    "image-edit": { label: "Chỉnh sửa hình ảnh", detail: "Chọn vùng chữ nhật có số, thêm nhận xét, rồi yêu cầu Codex chỉnh sửa.", status: "Tạo vùng chỉnh sửa có số và job Codex" },
+    "sprite-generate": { label: "Tạo hoạt ảnh", detail: "Tải lên hoặc chọn pixel art, rồi yêu cầu Codex tạo khung hoạt ảnh tách theo hướng.", status: "Tải lên hoặc chọn pixel art rồi tạo khung hoạt ảnh" },
+    "sprite-edit": { label: "4. Chỉnh sửa sprite sheet" }
+  }),
+  pl: withWorkflowCopy({
+    "image-generate": { label: "Generowanie pixel art", detail: "Wyślij prompt do lokalnego Codex imagegen i zwróć obraz do cockpit.", status: "Generuj pixel art przez lokalny handoff Codex imagegen" },
+    "image-edit": { label: "Edycja obrazu", detail: "Zaznacz numerowane prostokąty, dodaj komentarze i poproś Codex o edycję.", status: "Utwórz numerowane obszary i zadanie Codex" },
+    "sprite-generate": { label: "Generowanie animacji", detail: "Prześlij lub wybierz pixel art, a potem poproś Codex o klatki rozdzielone według kierunku.", status: "Prześlij lub wybierz pixel art i generuj klatki" },
+    "sprite-edit": { label: "4. Edycja sprite sheet" }
+  }),
+  it: withWorkflowCopy({
+    "image-generate": { label: "Generazione pixel art", detail: "Invia il prompt a Codex imagegen locale e riporta l'immagine nel cockpit.", status: "Genera pixel art con handoff locale Codex imagegen" },
+    "image-edit": { label: "Modifica immagine", detail: "Seleziona rettangoli numerati, commenta ogni area e chiedi a Codex di modificare.", status: "Crea aree numerate e un job Codex" },
+    "sprite-generate": { label: "Generazione animazione", detail: "Carica o seleziona pixel art e chiedi a Codex frame separati per direzione.", status: "Carica o seleziona pixel art e genera frame" },
+    "sprite-edit": { label: "4. Modifica sprite sheet" }
+  })
+} satisfies Record<Language, WorkflowCopy>;
+
+function withWorkflowCopy(overrides: Partial<Record<WorkflowMode, Partial<WorkflowCopy[WorkflowMode]>>>): WorkflowCopy {
+  return {
+    "image-generate": { ...baseWorkflowCopy.en["image-generate"], ...overrides["image-generate"] },
+    "image-edit": { ...baseWorkflowCopy.en["image-edit"], ...overrides["image-edit"] },
+    "sprite-generate": { ...baseWorkflowCopy.en["sprite-generate"], ...overrides["sprite-generate"] },
+    "effect-animation": { ...baseWorkflowCopy.en["effect-animation"], ...overrides["effect-animation"] },
+    "sprite-edit": { ...baseWorkflowCopy.en["sprite-edit"], ...overrides["sprite-edit"] }
+  };
+}
+
+type WorkflowFormCopy = Record<WorkflowMode, { promptLabel: string; negativeLabel: string; notesLabel: string; notesPlaceholder: string }>;
+
+const baseWorkflowFormCopy = {
+  en: {
+    "image-generate": {
+      promptLabel: "Pixel Art Prompt",
+      negativeLabel: "Negative Prompt",
+      notesLabel: "Generation Notes",
+      notesPlaceholder: "Style, aspect, transparency, sprite-readiness, or output details"
+    },
+    "image-edit": {
+      promptLabel: "Edit Prompt",
+      negativeLabel: "Avoid",
+      notesLabel: "Edit Notes",
+      notesPlaceholder: "What should Codex preserve, fix, crop, split, or export?"
+    },
+    "sprite-generate": {
+      promptLabel: "Animation Prompt",
+      negativeLabel: "Avoid",
+      notesLabel: "Animation Notes",
+      notesPlaceholder: "Motion preset, timing, pose, bounce, or export details"
+    },
+    "effect-animation": {
+      promptLabel: "Effect Prompt",
+      negativeLabel: "Avoid",
+      notesLabel: "Effect Notes",
+      notesPlaceholder: "Optional timing, color, silhouette, motion readability, or engine notes"
+    },
+    "sprite-edit": {
+      promptLabel: "Sprite Prompt",
+      negativeLabel: "Avoid",
+      notesLabel: "Sprite Notes",
+      notesPlaceholder: "Timeline order, anchor, cleanup, frame size, or export details"
+    }
+  },
+  ja: {
+    "image-generate": {
+      promptLabel: "ピクセルアートプロンプト",
+      negativeLabel: "避けたい要素",
+      notesLabel: "生成メモ",
+      notesPlaceholder: "画風、比率、透過、スプライト化しやすさ、出力条件を書きます"
+    },
+    "image-edit": {
+      promptLabel: "編集プロンプト",
+      negativeLabel: "避けたい要素",
+      notesLabel: "編集メモ",
+      notesPlaceholder: "Codexに残してほしい点、直してほしい点、切り出し方、出力形式を書きます"
+    },
+    "sprite-generate": {
+      promptLabel: "アニメーションプロンプト",
+      negativeLabel: "避けたい要素",
+      notesLabel: "アニメーションメモ",
+      notesPlaceholder: "動き、タイミング、ポーズ、揺れ、出力条件を書きます"
+    },
+    "effect-animation": {
+      promptLabel: "エフェクトプロンプト",
+      negativeLabel: "避けたい要素",
+      notesLabel: "エフェクトメモ",
+      notesPlaceholder: "タイミング、色、シルエット、動きの読みやすさ、エンジン用途を書きます"
+    },
+    "sprite-edit": {
+      promptLabel: "スプライトプロンプト",
+      negativeLabel: "避けたい要素",
+      notesLabel: "調整メモ",
+      notesPlaceholder: "順番、anchor、透明化、frame size、出力条件を書きます"
+    }
+  }
+} satisfies Record<BaseLanguage, WorkflowFormCopy>;
+
+const workflowFormCopy = {
+  ...baseWorkflowFormCopy,
+  "zh-CN": withWorkflowFormCopy({
+    "image-generate": { promptLabel: "像素艺术提示词", negativeLabel: "避免内容", notesLabel: "生成备注", notesPlaceholder: "风格、比例、透明、适合制作精灵的要求" },
+    "image-edit": { promptLabel: "编辑提示词", negativeLabel: "避免内容", notesLabel: "编辑备注" },
+    "sprite-generate": { promptLabel: "动画提示词", negativeLabel: "避免内容", notesLabel: "动画备注" },
+    "sprite-edit": { promptLabel: "精灵提示词", negativeLabel: "避免内容", notesLabel: "调整备注" }
+  }),
+  "zh-TW": withWorkflowFormCopy({
+    "image-generate": { promptLabel: "像素藝術提示詞", negativeLabel: "避免內容", notesLabel: "生成備註", notesPlaceholder: "風格、比例、透明、適合製作精靈的要求" },
+    "image-edit": { promptLabel: "編輯提示詞", negativeLabel: "避免內容", notesLabel: "編輯備註" },
+    "sprite-generate": { promptLabel: "動畫提示詞", negativeLabel: "避免內容", notesLabel: "動畫備註" },
+    "sprite-edit": { promptLabel: "精靈提示詞", negativeLabel: "避免內容", notesLabel: "調整備註" }
+  }),
+  ko: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "픽셀 아트 프롬프트", negativeLabel: "피할 요소", notesLabel: "생성 메모" },
+    "image-edit": { promptLabel: "편집 프롬프트", negativeLabel: "피할 요소", notesLabel: "편집 메모" },
+    "sprite-generate": { promptLabel: "애니메이션 프롬프트", negativeLabel: "피할 요소", notesLabel: "애니메이션 메모" },
+    "sprite-edit": { promptLabel: "스프라이트 프롬프트", negativeLabel: "피할 요소", notesLabel: "조정 메모" }
+  }),
+  ru: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Промпт пиксель-арта", negativeLabel: "Избегать", notesLabel: "Заметки генерации" },
+    "image-edit": { promptLabel: "Промпт правки", negativeLabel: "Избегать", notesLabel: "Заметки правки" },
+    "sprite-generate": { promptLabel: "Промпт анимации", negativeLabel: "Избегать", notesLabel: "Заметки анимации" },
+    "sprite-edit": { promptLabel: "Промпт спрайта", negativeLabel: "Избегать", notesLabel: "Заметки спрайта" }
+  }),
+  es: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt de pixel art", negativeLabel: "Evitar", notesLabel: "Notas de generación" },
+    "image-edit": { promptLabel: "Prompt de edición", negativeLabel: "Evitar", notesLabel: "Notas de edición" },
+    "sprite-generate": { promptLabel: "Prompt de animación", negativeLabel: "Evitar", notesLabel: "Notas de animación" },
+    "sprite-edit": { promptLabel: "Prompt de sprite", negativeLabel: "Evitar", notesLabel: "Notas de sprite" }
+  }),
+  "pt-BR": withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt de pixel art", negativeLabel: "Evitar", notesLabel: "Notas de geração" },
+    "image-edit": { promptLabel: "Prompt de edição", negativeLabel: "Evitar", notesLabel: "Notas de edição" },
+    "sprite-generate": { promptLabel: "Prompt de animação", negativeLabel: "Evitar", notesLabel: "Notas de animação" },
+    "sprite-edit": { promptLabel: "Prompt de sprite", negativeLabel: "Evitar", notesLabel: "Notas de sprite" }
+  }),
+  de: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Pixel-Art-Prompt", negativeLabel: "Vermeiden", notesLabel: "Erstellungsnotizen" },
+    "image-edit": { promptLabel: "Bearbeitungs-Prompt", negativeLabel: "Vermeiden", notesLabel: "Bearbeitungsnotizen" },
+    "sprite-generate": { promptLabel: "Animations-Prompt", negativeLabel: "Vermeiden", notesLabel: "Animationsnotizen" },
+    "sprite-edit": { promptLabel: "Sprite-Prompt", negativeLabel: "Vermeiden", notesLabel: "Sprite-Notizen" }
+  }),
+  fr: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt pixel art", negativeLabel: "À éviter", notesLabel: "Notes de génération" },
+    "image-edit": { promptLabel: "Prompt d'édition", negativeLabel: "À éviter", notesLabel: "Notes d'édition" },
+    "sprite-generate": { promptLabel: "Prompt d'animation", negativeLabel: "À éviter", notesLabel: "Notes d'animation" },
+    "sprite-edit": { promptLabel: "Prompt de sprite", negativeLabel: "À éviter", notesLabel: "Notes de sprite" }
+  }),
+  id: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt pixel art", negativeLabel: "Hindari", notesLabel: "Catatan pembuatan" },
+    "image-edit": { promptLabel: "Prompt edit", negativeLabel: "Hindari", notesLabel: "Catatan edit" },
+    "sprite-generate": { promptLabel: "Prompt animasi", negativeLabel: "Hindari", notesLabel: "Catatan animasi" },
+    "sprite-edit": { promptLabel: "Prompt sprite", negativeLabel: "Hindari", notesLabel: "Catatan sprite" }
+  }),
+  tr: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Piksel sanat promptu", negativeLabel: "Kaçınılacaklar", notesLabel: "Üretim notları" },
+    "image-edit": { promptLabel: "Düzenleme promptu", negativeLabel: "Kaçınılacaklar", notesLabel: "Düzenleme notları" },
+    "sprite-generate": { promptLabel: "Animasyon promptu", negativeLabel: "Kaçınılacaklar", notesLabel: "Animasyon notları" },
+    "sprite-edit": { promptLabel: "Sprite promptu", negativeLabel: "Kaçınılacaklar", notesLabel: "Sprite notları" }
+  }),
+  vi: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt pixel art", negativeLabel: "Tránh", notesLabel: "Ghi chú tạo" },
+    "image-edit": { promptLabel: "Prompt chỉnh sửa", negativeLabel: "Tránh", notesLabel: "Ghi chú chỉnh sửa" },
+    "sprite-generate": { promptLabel: "Prompt hoạt ảnh", negativeLabel: "Tránh", notesLabel: "Ghi chú hoạt ảnh" },
+    "sprite-edit": { promptLabel: "Prompt sprite", negativeLabel: "Tránh", notesLabel: "Ghi chú sprite" }
+  }),
+  pl: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt pixel art", negativeLabel: "Unikaj", notesLabel: "Notatki generowania" },
+    "image-edit": { promptLabel: "Prompt edycji", negativeLabel: "Unikaj", notesLabel: "Notatki edycji" },
+    "sprite-generate": { promptLabel: "Prompt animacji", negativeLabel: "Unikaj", notesLabel: "Notatki animacji" },
+    "sprite-edit": { promptLabel: "Prompt sprite", negativeLabel: "Unikaj", notesLabel: "Notatki sprite" }
+  }),
+  it: withWorkflowFormCopy({
+    "image-generate": { promptLabel: "Prompt pixel art", negativeLabel: "Evita", notesLabel: "Note generazione" },
+    "image-edit": { promptLabel: "Prompt modifica", negativeLabel: "Evita", notesLabel: "Note modifica" },
+    "sprite-generate": { promptLabel: "Prompt animazione", negativeLabel: "Evita", notesLabel: "Note animazione" },
+    "sprite-edit": { promptLabel: "Prompt sprite", negativeLabel: "Evita", notesLabel: "Note sprite" }
+  })
+} satisfies Record<Language, WorkflowFormCopy>;
+
+function withWorkflowFormCopy(overrides: Partial<Record<WorkflowMode, Partial<WorkflowFormCopy[WorkflowMode]>>>): WorkflowFormCopy {
+  return {
+    "image-generate": { ...baseWorkflowFormCopy.en["image-generate"], ...overrides["image-generate"] },
+    "image-edit": { ...baseWorkflowFormCopy.en["image-edit"], ...overrides["image-edit"] },
+    "sprite-generate": { ...baseWorkflowFormCopy.en["sprite-generate"], ...overrides["sprite-generate"] },
+    "effect-animation": { ...baseWorkflowFormCopy.en["effect-animation"], ...overrides["effect-animation"] },
+    "sprite-edit": { ...baseWorkflowFormCopy.en["sprite-edit"], ...overrides["sprite-edit"] }
+  };
+}
+
+const DEFAULT_ANIMATION_PRESET_ID = "idle-breathing";
+
+const defaultActions: SpriteAction[] = MOTION_RECIPES.map((recipe) => ({
+  name: recipe.actionName,
+  fps: recipe.defaultFps,
+  loop: recipe.loopMode !== "one-shot",
+  playbackMode: recipe.exportDefaults.playback,
+  frameIds: [],
+  cell: STANDARD_ANIMATION_CELL,
+  anchor: STANDARD_ANIMATION_ANCHOR
+}));
+
+const animationPresetExamples: AnimationPresetExample[] = MOTION_RECIPES
+  .map((recipe) => ({
+    id: recipe.id,
+    actionName: recipe.actionName,
+    previewClassName: recipe.previewClassName,
+    category: motionRecipeCategory(recipe),
+    title: recipe.displayName,
+    summary: recipe.localizedDescription,
+    prompt: recipe.promptSegments.motion[0] ?? "",
+    notes: recipe.notes,
+    experimental: recipe.experimental,
+    family: recipe.family,
+    loopMode: recipe.loopMode,
+    supportedTopologies: recipe.supportedTopologies,
+    allowedFrameCounts: recipe.allowedFrameCounts,
+    allowedModifiers: recipe.allowedModifiers,
+    tags: recipe.tags
+  }));
+
+export function animationScaleReferenceLabel(directions: readonly string[]) {
+  const referenceDirection = directions.includes("front") ? "front" : directions[0];
+  return referenceDirection ? referenceDirection + " ready stance" : "source image ready stance";
+}
+
+function animationScaleConsistencyContractLines(directions: readonly string[]) {
+  const scaleReference = animationScaleReferenceLabel(directions);
+  return [
+    "Scale consistency contract: use the " + scaleReference + " as the reference character scale for every direction and frame.",
+    "Across all directions and frames, keep the same real character scale, head size, torso width, limb thickness, pixel density, and costume detail size. Do not auto-fit each direction or pose to fill the cell.",
+    "For crouch, sit, kneel, downed, cast, attack, hurt, or other lower poses, the character may become lower because of the pose, but must not be enlarged. A seated, crouched, kneeling, or downed pose should occupy less vertical height, not a larger body scale.",
+    "Keep head size and clothing-detail size consistent with the ready stance even when the pose is lower, turned away, or partly hidden by a robe, cape, weapon, or effect."
+  ];
+}
+
+function getAnimationPresetById(id: string): AnimationPresetExample {
+  return animationPresetExamples.find((example) => example.id === id)
+    ?? animationPresetExamples.find((example) => example.id === DEFAULT_ANIMATION_PRESET_ID)
+    ?? animationPresetExamples[0]!;
+}
+
+function motionRecipeCategory(recipe: MotionRecipe): LocalizedText {
+  const labels: Record<MotionRecipe["family"], LocalizedText> = {
+    core: { en: "Core", ja: "基礎" },
+    locomotion: { en: "Move", ja: "移動" },
+    combat: { en: "Combat", ja: "戦闘" },
+    magic: { en: "Magic / Skill", ja: "魔法 / スキル" },
+    social: { en: "Emotion / Social", ja: "感情 / ソーシャル" },
+    utility: { en: "Utility", ja: "ユーティリティ" }
+  };
+  return labels[recipe.family];
+}
+
+function motionRecipeForPreset(preset: AnimationPresetExample) {
+  return resolveMotionRecipe({ recipeId: preset.id, recipeVersion: 1, presetId: preset.id, actionName: preset.actionName }).recipe;
+}
+
+const MOTION_VARIANT_OPTIONS: Record<MotionVariantModifierKey, readonly string[]> = {
+  intensity: ["subtle", "normal", "strong"],
+  tempo: ["slow", "normal", "fast"],
+  weight: ["light", "normal", "heavy"],
+  exaggeration: ["low", "normal", "high"],
+  handedness: ["inherit", "left", "right", "ambidextrous"],
+  weaponClass: ["none", "unarmed", "sword", "heavy-weapon", "polearm", "bow", "firearm", "staff", "shield"],
+  travelAmount: ["in-place", "short", "medium", "long"],
+  secondaryMotionLevel: ["low", "normal", "high"],
+  vfxAmount: ["none", "low", "normal", "high"]
+};
+
+const MOTION_VARIANT_LABELS: Record<MotionVariantModifierKey, { en: string; ja: string }> = {
+  intensity: { en: "Intensity", ja: "強度" },
+  tempo: { en: "Tempo", ja: "速度" },
+  weight: { en: "Weight", ja: "重量感" },
+  exaggeration: { en: "Exaggeration", ja: "誇張" },
+  handedness: { en: "Handedness", ja: "利き手" },
+  weaponClass: { en: "Weapon", ja: "武器" },
+  travelAmount: { en: "Travel", ja: "移動量" },
+  secondaryMotionLevel: { en: "Secondary motion", ja: "二次動作" },
+  vfxAmount: { en: "VFX", ja: "VFX量" }
+};
+
+function getEffectCategoryById(id: string): EffectCategoryDefinition {
+  return effectCategoryDefinitions.find((category) => category.id === id) ?? effectCategoryDefinitions[0]!;
+}
+
+function getEffectTypeById(category: EffectCategoryDefinition, id: string) {
+  return category.types.find((type) => type.id === id) ?? category.types[0]!;
+}
+
+function effectSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "effect";
+}
+
+function resolveEffectSheetGrid(layoutId: EffectLayoutId, frameCount: number): GridSettings & { id: EffectLayoutId } {
+  const option = effectLayoutOptions.find((item) => item.id === layoutId) ?? effectLayoutOptions[0]!;
+  const safeFrameCount = clampInteger(frameCount, 1, 64);
+  return {
+    id: option.id,
+    columns: Math.max(1, option.columns(safeFrameCount)),
+    rows: Math.max(1, option.rows(safeFrameCount)),
+    gutter: 0
+  };
+}
+
+function effectAnchorForMode(mode: EffectAnchorMode, canvasSize: number): EffectAnimationMetadata["anchor"] {
+  const center = Math.round(canvasSize / 2);
+  const bottom = Math.round(canvasSize * 0.88);
+  if (mode === "bottom-center" || mode === "impact-ground") return { x: center, y: bottom, mode };
+  if (mode === "caster-hand") return { x: Math.round(canvasSize * 0.58), y: Math.round(canvasSize * 0.46), mode };
+  return { x: center, y: center, mode };
+}
+
+function buildEffectAnimationJobContext({
+  categoryId,
+  typeId,
+  styleId,
+  paletteId,
+  frameCount,
+  canvasSize,
+  layoutId,
+  loopMode,
+  anchorMode,
+  customPrompt,
+  negativePrompt: customNegativePrompt,
+  language
+}: {
+  categoryId: EffectCategoryId;
+  typeId: string;
+  styleId: EffectStyleId;
+  paletteId: EffectPaletteId;
+  frameCount: number;
+  canvasSize: number;
+  layoutId: EffectLayoutId;
+  loopMode: EffectLoopMode;
+  anchorMode: EffectAnchorMode;
+  customPrompt: string;
+  negativePrompt: string;
+  language: Language;
+}): EffectAnimationJobContext {
+  const category = getEffectCategoryById(categoryId);
+  const type = getEffectTypeById(category, typeId);
+  const style = effectStyleOptions.find((item) => item.id === styleId) ?? effectStyleOptions[0]!;
+  const palette = effectPaletteOptions.find((item) => item.id === paletteId) ?? effectPaletteOptions[0]!;
+  const layout = resolveEffectSheetGrid(layoutId, frameCount);
+  const safeFrameCount = clampInteger(frameCount, 1, layout.columns * layout.rows);
+  const safeCanvasSize = clampInteger(canvasSize, 32, 512);
+  const frameSize = { width: safeCanvasSize, height: safeCanvasSize };
+  const sheetSize = { width: safeCanvasSize * layout.columns, height: safeCanvasSize * layout.rows };
+  const categoryLabel = localizedText(category.label, language);
+  const typeLabel = localizedText(type.label, language);
+  const styleLabel = localizedText(style.label, language);
+  const paletteLabel = localizedText(palette.label, language);
+  const layoutLabel = localizedText((effectLayoutOptions.find((item) => item.id === layout.id) ?? effectLayoutOptions[0]!).label, language);
+  const name = `${effectSlug(category.label.en)}-${effectSlug(type.label.en)}-${safeFrameCount}f`;
+  const promptContract = [
+    `Workflow mode: effect-animation.`,
+    `Create exactly ${safeFrameCount} animation frames for a game VFX effect.`,
+    `Return one transparent PNG sprite sheet, not a mockup, not a contact sheet, and not an HTML/CSS preview.`,
+    `Sheet layout: ${layout.columns} columns x ${layout.rows} rows (${layoutLabel}); total canvas ${sheetSize.width}px x ${sheetSize.height}px.`,
+    `Each frame cell is exactly ${safeCanvasSize}px x ${safeCanvasSize}px, evenly aligned with no gutters and no overlapping neighboring cells.`,
+    `Use real alpha transparency. Do not bake in checkerboard, solid matte backgrounds, panels, drop shadows, UI chrome, or preview backgrounds.`,
+    `Do not include text, letters, watermark, logo, frame numbers, arrows, labels, or border guides.`,
+    `Keep the effect centered to anchor ${anchorMode} at (${effectAnchorForMode(anchorMode, safeCanvasSize).x}, ${effectAnchorForMode(anchorMode, safeCanvasSize).y}).`,
+    `Frames must show stable progression with no static copy frames, no random style jumps, and no crop at the cell bounds.`,
+    `Loop mode: ${loopMode}. One-shot effects should start small, peak, and dissipate; loop effects should bridge cleanly from last frame back to first.`,
+    `Effect category: ${categoryLabel}. Effect type: ${typeLabel}. Visual style: ${styleLabel}. Palette: ${paletteLabel}.`,
+    `Blend intent: ${category.defaultBlendMode}; preserve readable alpha edges for game-engine compositing.`,
+    `Energy envelope: ${category.energyEnvelope ?? (category.defaultLoop === "loop" ? "sustain" : "burst")}; keep the temporal brightness and opacity progression readable.`
+  ];
+
+  return {
+    kind: "effect-animation",
+    name,
+    category: category.id,
+    type: type.id,
+    style: style.id,
+    colorPalette: palette.id,
+    frameCount: safeFrameCount,
+    frameSize,
+    layout: { id: layout.id, columns: layout.columns, rows: layout.rows },
+    loopMode,
+    fps: EFFECT_DEFAULT_FPS,
+    anchor: effectAnchorForMode(anchorMode, safeCanvasSize),
+    blendMode: category.defaultBlendMode,
+    background: "transparent",
+    alphaPremultiplied: false,
+    qualityRank: "blocked",
+    warnings: [],
+    recipe: {
+      id: `effect-recipe:${category.id}`,
+      version: 1,
+      category: category.id,
+      frameCount: safeFrameCount,
+      canvasSize: safeCanvasSize,
+      loopMode,
+      anchorMode,
+      blendMode: category.defaultBlendMode,
+      energyEnvelope: category.energyEnvelope ?? (category.defaultLoop === "loop" ? "sustain" : "burst"),
+      experimental: category.experimental
+    },
+    categoryLabel,
+    typeLabel,
+    styleLabel,
+    paletteLabel,
+    sheetSize,
+    customPrompt: customPrompt.trim(),
+    promptContract,
+    negativePrompt: buildEffectNegativePrompt(customNegativePrompt)
+  };
+}
+
+function buildEffectNegativePrompt(customNegativePrompt: string) {
+  const requiredNegative = [
+    "text",
+    "watermark",
+    "logo",
+    "frame numbers",
+    "letters",
+    "checkerboard background",
+    "solid background",
+    "preview grid",
+    "contact sheet labels",
+    "border guides",
+    "cropped effect",
+    "opaque matte",
+    "shadow baked into background",
+    "photorealistic scene",
+    "character body",
+    "UI icons"
+  ].join(", ");
+  const custom = customNegativePrompt.trim();
+  return custom ? `${requiredNegative}, ${custom}` : requiredNegative;
+}
+
+function buildEffectAnimationPrompt(context: EffectAnimationJobContext) {
+  const extra = context.customPrompt ? [`User effect direction: ${context.customPrompt}`] : [];
+  return [
+    ...context.promptContract,
+    ...extra,
+    `Suggested filename prefix: ${context.name}.`
+  ].join("\n");
+}
+
+function buildEffectAnimationNotes(context: EffectAnimationJobContext, userNotes: string) {
+  return [
+    `Effect Animation MVP contract for ${context.categoryLabel} / ${context.typeLabel}.`,
+    `Frame count: ${context.frameCount}; frame size: ${context.frameSize.width}x${context.frameSize.height}; layout: ${context.layout.columns}x${context.layout.rows}; sheet: ${context.sheetSize.width}x${context.sheetSize.height}.`,
+    `Loop: ${context.loopMode}; anchor: ${context.anchor.mode} (${context.anchor.x}, ${context.anchor.y}); blend: ${context.blendMode}.`,
+    "Quality gate: import only after checking frame count, size, layout, alpha transparency, checkerboard residue, bounds, and static-copy risk. Gold and silver are downloadable; bronze/failed/blocked are quarantined.",
+    userNotes.trim() ? `User notes: ${userNotes.trim()}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function effectQualityRankAllowsDownload(rank: EffectQualityRank | undefined) {
+  return rank === "gold" || rank === "silver";
+}
+
+const fallbackProviders: ProviderStatus[] = [
+  { id: "local-file", label: "Local File", enabled: true, message: "Use images from this machine" },
+  { id: "local-generator", label: "Local Generator", enabled: true, message: "Generate local PNG images" },
+  { id: "codex-handoff", label: "Codex Handoff", enabled: true, message: "Write local jobs for Codex to pick up" },
+  { id: "local-inbox", label: "Local Inbox", enabled: true, message: "Import results returned by Codex" }
+];
+
+const workflowOptions: Array<{
+  id: WorkflowMode;
+  provider: ProviderId;
+}> = [
+  {
+    id: "image-generate",
+    provider: "codex-handoff"
+  },
+  {
+    id: "image-edit",
+    provider: "codex-handoff"
+  },
+  {
+    id: "sprite-generate",
+    provider: "codex-handoff"
+  },
+  {
+    id: "effect-animation",
+    provider: "codex-handoff"
+  }
+];
+
+const BASIC_CHARACTER_CATEGORY = { en: "Basic Character", ja: "基本キャラクター" };
+const BASIC_CHARACTER_NEGATIVE_PROMPT =
+  "blur, text, watermark, logo, cropped head, cropped feet, cut off body, extra limbs, duplicate character, scenery, detailed background, floor shadow, photorealistic, 3d render, vector art";
+const BASIC_CHARACTER_PROMPT_SOURCE = "docs/prompt-examples/basic-character-prompts.md";
+const BASIC_CHARACTER_NOTES = `${BASIC_CHARACTER_PROMPT_SOURCE}: full-body transparent-background starter character.`;
+const PROFESSION_CHARACTER_CATEGORY = { en: "Profession Character", ja: "職業キャラクター" };
+const PROFESSION_CHARACTER_PROMPT_SOURCE = "docs/prompt-examples/profession-character-prompts.md";
+const PROFESSION_CHARACTER_NOTES = `${PROFESSION_CHARACTER_PROMPT_SOURCE}: full-body animation-ready profession character.`;
+const MONSTER_CATEGORY = { en: "Monster", ja: "モンスター" };
+const MONSTER_PROMPT_SOURCE = "docs/prompt-examples/monster-prompts.md";
+const MONSTER_NOTES = `${MONSTER_PROMPT_SOURCE}: full-body animation-ready monster asset.`;
+const MONSTER_GIRL_CATEGORY = { en: "Monster Girl Chibi", ja: "モンスター娘ちび" };
+const MONSTER_GIRL_PROMPT_SOURCE = "docs/prompt-examples/monster-girl-prompts.md";
+const MONSTER_GIRL_NOTES = `${MONSTER_GIRL_PROMPT_SOURCE}: cute two-head-tall monster girl source character for Image Cockpit animation testing.`;
+const ANIMAL_CATEGORY = { en: "Animals", ja: "動物" };
+const ANIMAL_PROMPT_SOURCE = "docs/prompt-examples/animal-prompts.md";
+const ANIMAL_NOTES = `${ANIMAL_PROMPT_SOURCE}: isolated full-body animal asset with a transparent background.`;
+const CHIBI_BOY_CATEGORY = { en: "Chibi Boys", ja: "デフォルメ男の子" };
+const CHIBI_BOY_PROMPT_SOURCE = "docs/prompt-examples/chibi-boy-prompts.md";
+const CHIBI_BOY_NOTES = `${CHIBI_BOY_PROMPT_SOURCE}: two-head-tall chibi boy appearance variant prepared for later animation.`;
+const CHIBI_GIRL_CATEGORY = { en: "Chibi Girls", ja: "デフォルメ女の子" };
+const CHIBI_GIRL_PROMPT_SOURCE = "docs/prompt-examples/chibi-girl-prompts.md";
+const CHIBI_GIRL_NOTES = `${CHIBI_GIRL_PROMPT_SOURCE}: two-head-tall chibi girl appearance variant prepared for later animation.`;
+const BEASTFOLK_CATEGORY = { en: "Beastfolk", ja: "獣人" };
+const BEASTFOLK_PROMPT_SOURCE = "docs/prompt-examples/beastfolk-prompts.md";
+const BEASTFOLK_NOTES = `${BEASTFOLK_PROMPT_SOURCE}: full-body beastfolk character asset prepared for later animation.`;
+
+interface PromptCatalogOptions {
+  idPrefix: string;
+  category: LocalizedText;
+  sourcePath: string;
+  summary: LocalizedText;
+  notes: string;
+}
+
+function promptExampleSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function parsePromptCatalogTitle(value: string): LocalizedText {
+  const heading = value.trim();
+  const localizedTitle = heading.match(/^(.+?)\s+\/\s+(.+)$/);
+  if (!localizedTitle) return { en: heading, ja: heading };
+  return { en: localizedTitle[1].trim(), ja: localizedTitle[2].trim() };
+}
+
+function parsePromptCatalogMarkdown(markdown: string, options: PromptCatalogOptions): PromptExample[] {
+  const text = markdown.replace(/\r\n/g, "\n");
+  const negativePrompt = text.match(/## Common Negative Prompt[\s\S]*?```text\n([\s\S]*?)\n```/)?.[1]?.trim() ?? "";
+  return [...text.matchAll(/###\s+\d+\.\s+([^\n]+)\n\n```text\n([\s\S]*?)\n```/g)].map((match) => {
+    const title = parsePromptCatalogTitle(match[1]);
+    const id = `${options.idPrefix}-${promptExampleSlug(title.en)}`;
+    return {
+      id,
+      category: options.category,
+      title,
+      previewImage: `/prompt-examples/${id}.png`,
+      summary: options.summary,
+      prompt: match[2].trim(),
+      negativePrompt,
+      notes: options.notes
+    };
+  });
+}
+
+const basicCharacterPromptExamples: PromptExample[] = [
+  {
+    id: "basic-boy-adventurer",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Boy Adventurer", ja: "少年冒険者" },
+    previewImage: "/prompt-examples/basic-boy-adventurer.png",
+    summary: {
+      en: "Cheerful starter adventurer with backpack, cloak, boots, and sword.",
+      ja: "リュック、短いマント、ブーツ、剣を備えた明るい少年冒険者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a cheerful young boy adventurer with a small backpack, short cloak, leather boots, simple sword at his side, friendly brave expression, centered idle-animation-ready stance, clear feet contact, readable silhouette, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, props, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-girl-adventurer",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Girl Adventurer", ja: "少女冒険者" },
+    previewImage: "/prompt-examples/basic-girl-adventurer.png",
+    summary: {
+      en: "Curious starter adventurer with satchel, travel cape, boots, and dagger.",
+      ja: "サッチェル、旅マント、ブーツ、小さな短剣を持つ好奇心旺盛な少女冒険者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a cheerful young girl adventurer with a small satchel, short travel cape, leather boots, tiny dagger, bright curious expression, centered idle-animation-ready stance, clear feet contact, readable silhouette, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, props, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-young-male-hero",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Young Male Hero", ja: "若き男性勇者" },
+    previewImage: "/prompt-examples/basic-young-male-hero.png",
+    summary: {
+      en: "Light-armored hero with blue scarf and simple longsword.",
+      ja: "軽装鎧、青いスカーフ、シンプルな長剣を持つ若い男性勇者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a young male fantasy hero with light armor, blue scarf, simple longsword, confident relaxed pose, clean heroic silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, weapon, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-young-female-hero",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Young Female Hero", ja: "若き女性勇者" },
+    previewImage: "/prompt-examples/basic-young-female-hero.png",
+    summary: {
+      en: "Light-armored hero with red scarf and compact sword.",
+      ja: "軽装鎧、赤いスカーフ、短めの剣を持つ若い女性勇者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a young female fantasy hero with light armor, red scarf, compact sword, confident relaxed pose, clean heroic silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, weapon, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-middle-aged-male-mercenary",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Middle-Aged Male Mercenary", ja: "中年男性傭兵" },
+    previewImage: "/prompt-examples/basic-middle-aged-male-mercenary.png",
+    summary: {
+      en: "Experienced mercenary with worn leather armor, cloak, pouches, and sword.",
+      ja: "使い込まれた革鎧、マント、ポーチ、剣を備えた経験豊かな男性傭兵です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a middle-aged male mercenary with rugged leather armor, travel-worn cloak, stubble, heavy belt pouches, one hand resting near a sword, calm experienced expression, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, sword, pouches, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-middle-aged-female-ranger",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Middle-Aged Female Ranger", ja: "中年女性レンジャー" },
+    previewImage: "/prompt-examples/basic-middle-aged-female-ranger.png",
+    summary: {
+      en: "Composed ranger with practical leather armor, green-brown cloak, bow, and quiver.",
+      ja: "実用的な革鎧、緑褐色のマント、弓と矢筒を持つ落ち着いた女性レンジャーです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a middle-aged female ranger with practical leather armor, short green-brown cloak, bow and quiver, composed experienced expression, centered idle-animation-ready stance, clear feet contact, readable silhouette, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, bow, quiver, cloak, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #ff00ff chroma-key background because the character uses green clothing; no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-elder-male-sage",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Elder Male Sage", ja: "老年男性賢者" },
+    previewImage: "/prompt-examples/basic-elder-male-sage.png",
+    summary: {
+      en: "Gentle sage with long white beard, layered robe, staff, and charm ornaments.",
+      ja: "長い白ひげ、重ね着のローブ、杖、小さな護符を持つ穏やかな賢者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: an elderly male sage with long white beard, layered robe, wooden staff, small charm ornaments, gentle wise expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, beard, hands, staff, robe hem, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-elder-female-herbalist",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Elder Female Herbalist", ja: "老年女性薬草師" },
+    previewImage: "/prompt-examples/basic-elder-female-herbalist.png",
+    summary: {
+      en: "Kind herbalist with gray hair, warm shawl, herb pouch, basket, and cane.",
+      ja: "白髪、温かなショール、薬草袋、かご、杖を持つ優しい薬草師です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: an elderly female herbalist with gray hair, warm shawl, herb pouch, small basket, wooden cane, kind wise expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, basket, cane, shawl, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-androgynous-traveler",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Androgynous Traveler", ja: "中性的な旅人" },
+    previewImage: "/prompt-examples/basic-androgynous-traveler.png",
+    summary: {
+      en: "Neutral traveler with layered clothing, lowered hood, backpack, and map case.",
+      ja: "重ね着、下ろしたフード、リュック、地図筒を持つ中性的な旅人です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: an androgynous fantasy traveler with layered neutral clothing, hood lowered, small backpack, map case, calm observant expression, balanced slim silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, backpack, map case, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-small-village-child",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Small Village Child", ja: "村の子ども" },
+    previewImage: "/prompt-examples/basic-small-village-child.png",
+    summary: {
+      en: "Tiny non-combat NPC with simple tunic, boots, and shoulder bag.",
+      ja: "シンプルなチュニック、短いブーツ、小さな肩掛けバッグの非戦闘NPCです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a small village child NPC with simple tunic, short boots, tiny shoulder bag, innocent curious expression, non-combat pose, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, shoulder bag, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-large-veteran-warrior",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Large Veteran Warrior", ja: "大柄な歴戦の戦士" },
+    previewImage: "/prompt-examples/basic-large-veteran-warrior.png",
+    summary: {
+      en: "Broad veteran warrior with worn armor plates, gloves, boots, and short cape.",
+      ja: "使い込まれた鎧板、重い手袋、厚いブーツ、短いマントを備えた大柄な戦士です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a large veteran warrior with broad shoulders, worn armor plates, heavy gloves, thick boots, short cape, stern protective expression, strong readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, armor, hands, cape, boots, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-hooded-mysterious-figure",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Hooded Mysterious Figure", ja: "フードの謎めいた人物" },
+    previewImage: "/prompt-examples/basic-hooded-mysterious-figure.png",
+    summary: {
+      en: "Dark cloaked figure with hidden face, glowing charm, and quiet neutral pose.",
+      ja: "暗い重ねマント、隠れた顔、光る護符、静かな立ち姿の謎めいた人物です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a hooded mysterious figure with dark layered cloak, subtle glowing charm, hidden face with visible lower jaw only, slim readable silhouette, quiet neutral pose, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire hood, cloak edges, hands, charm, robe hem, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-knight",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Knight", ja: "2頭身ちび騎士" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-knight.png",
+    summary: {
+      en: "Oversized-head chibi knight with round shield and stubby sword.",
+      ja: "大きな頭、丸盾、短い剣を持つ2頭身のちび騎士です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi knight with an oversized expressive head, tiny armored body, short limbs, round shield, stubby sword, bright determined expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, helmet, hands, shield, sword, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-mage",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Mage", ja: "2頭身ちび魔法使い" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-mage.png",
+    summary: {
+      en: "Oversized-head chibi mage with starry hat, wand, and ribbon charm.",
+      ja: "星柄の帽子、杖、リボン護符を持つ2頭身のちび魔法使いです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi mage with an oversized expressive head, tiny robed body, short limbs, wide starry hat, small wand, floating ribbon charm, curious magical expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact or robe hem contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hat, hands, wand, robe hem, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-archer",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Archer", ja: "2頭身ちび弓使い" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-archer.png",
+    summary: {
+      en: "Oversized-head chibi archer with compact bow, quiver, and feathered cap.",
+      ja: "小さな弓、矢筒、羽根帽子を持つ2頭身のちび弓使いです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi archer with an oversized expressive head, tiny ranger body, short limbs, compact bow, tiny quiver, feathered cap, focused friendly expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, cap, hands, bow, quiver, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #ff00ff chroma-key background because the character uses green clothing; no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-healer",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Healer", ja: "2頭身ちびヒーラー" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-healer.png",
+    summary: {
+      en: "Oversized-head chibi healer with bell staff and medicine pouch.",
+      ja: "鈴付きの杖と薬袋を持つ2頭身のちびヒーラーです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi healer with an oversized expressive head, tiny white-and-gold robe body, short limbs, small bell staff, round medicine pouch, gentle reassuring smile, compact readable silhouette, centered idle-animation-ready stance, clear feet contact or robe hem contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hair, hands, staff, pouch, robe hem, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-ninja",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Ninja", ja: "2頭身ちび忍者" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-ninja.png",
+    summary: {
+      en: "Oversized-head chibi ninja with scarf tails and tiny kunai.",
+      ja: "小さなマフラーとクナイを持つ2頭身のちび忍者です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi ninja with an oversized expressive head, tiny dark shinobi outfit, short limbs, small scarf tails, tiny kunai, alert playful expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, mask, hands, scarf tails, kunai, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-alchemist",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Alchemist", ja: "2頭身ちび錬金術師" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-alchemist.png",
+    summary: {
+      en: "Oversized-head chibi alchemist with goggles, flask, and potion satchel.",
+      ja: "ゴーグル、フラスコ、ポーション鞄を持つ2頭身のちび錬金術師です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi alchemist with an oversized expressive head, tiny apron body, short limbs, round goggles, small potion satchel, one tiny glass flask, excited inventor expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, goggles, hands, flask, satchel, apron, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-pirate",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Pirate", ja: "2頭身ちび海賊" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-pirate.png",
+    summary: {
+      en: "Oversized-head chibi pirate with tricorn hat, coat, and tiny cutlass.",
+      ja: "三角帽、短いコート、小さなカトラスを持つ2頭身のちび海賊です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi pirate with an oversized expressive head, tiny coat body, short limbs, small tricorn hat, round belt buckle, tiny cutlass, confident mischievous grin, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, hat, hands, cutlass, coat tails, boots, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-robot",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Robot", ja: "2頭身ちびロボ" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-robot.png",
+    summary: {
+      en: "Oversized-head chibi robot with antenna, tiny body, and glowing core.",
+      ja: "アンテナ、小さな機械の体、光るコアを持つ2頭身のちびロボです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi robot with an oversized round metal head, tiny mechanical body, short arms and legs, small antenna, glowing chest core, friendly square eyes, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, antenna, hands, chest core, legs, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  },
+  {
+    id: "basic-two-head-chibi-dragon-tamer",
+    category: BASIC_CHARACTER_CATEGORY,
+    title: { en: "Two-Head Chibi Dragon Tamer", ja: "2頭身ちび竜使い" },
+    previewImage: "/prompt-examples/basic-two-head-chibi-dragon-tamer.png",
+    summary: {
+      en: "Oversized-head chibi dragon tamer with horned cap and scale cape.",
+      ja: "角付き帽子と竜鱗ケープを持つ2頭身のちび竜使いです。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a two-head-tall chibi dragon tamer with an oversized expressive head, tiny travel outfit, short limbs, small horned cap, little dragon-scale shoulder cape, training whistle charm, brave cheerful expression, compact readable silhouette, centered idle-animation-ready stance, clear feet contact, transparent background preferred, crisp 32-bit fantasy RPG pixel-art rendering, no scenery, no readable text, no logo, no watermark. Keep the entire head, horned cap, hands, shoulder cape, whistle charm, boots, and feet fully inside the image with comfortable transparent padding around the character. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: BASIC_CHARACTER_NEGATIVE_PROMPT,
+    notes: BASIC_CHARACTER_NOTES
+  }
+];
+
+const professionCharacterPromptExamples = parsePromptCatalogMarkdown(professionCharacterPromptsMarkdown, {
+  idPrefix: "profession",
+  category: PROFESSION_CHARACTER_CATEGORY,
+  sourcePath: PROFESSION_CHARACTER_PROMPT_SOURCE,
+  summary: {
+    en: "Full-body profession character asset prepared for later animation.",
+    ja: "後でアニメーション素材にしやすい全身職業キャラクター素材です。"
+  },
+  notes: PROFESSION_CHARACTER_NOTES
+});
+
+const chibiBoyPromptExamples = parsePromptCatalogMarkdown(chibiBoyPromptsMarkdown, {
+  idPrefix: "chibi-boy",
+  category: CHIBI_BOY_CATEGORY,
+  sourcePath: CHIBI_BOY_PROMPT_SOURCE,
+  summary: {
+    en: "Two-head-tall chibi boy with a distinct hairstyle, outfit, and silhouette.",
+    ja: "髪型、衣装、シルエットに外見差を持たせた2頭身の男の子素材です。"
+  },
+  notes: CHIBI_BOY_NOTES
+});
+
+const chibiGirlPromptExamples = parsePromptCatalogMarkdown(chibiGirlPromptsMarkdown, {
+  idPrefix: "chibi-girl",
+  category: CHIBI_GIRL_CATEGORY,
+  sourcePath: CHIBI_GIRL_PROMPT_SOURCE,
+  summary: {
+    en: "Two-head-tall chibi girl with a distinct hairstyle, outfit, and silhouette.",
+    ja: "髪型、衣装、シルエットに外見差を持たせた2頭身の女の子素材です。"
+  },
+  notes: CHIBI_GIRL_NOTES
+});
+
+const animalPromptExamples = parsePromptCatalogMarkdown(animalPromptsMarkdown, {
+  idPrefix: "animal",
+  category: ANIMAL_CATEGORY,
+  sourcePath: ANIMAL_PROMPT_SOURCE,
+  summary: {
+    en: "Single full-body animal asset with a clean readable silhouette.",
+    ja: "読みやすいシルエットで単体化した全身の動物素材です。"
+  },
+  notes: ANIMAL_NOTES
+});
+
+const beastfolkPromptExamples = parsePromptCatalogMarkdown(beastfolkPromptsMarkdown, {
+  idPrefix: "beastfolk",
+  category: BEASTFOLK_CATEGORY,
+  sourcePath: BEASTFOLK_PROMPT_SOURCE,
+  summary: {
+    en: "Single full-body beastfolk character with a clean readable silhouette.",
+    ja: "読みやすいシルエットで単体化した全身の獣人キャラクター素材です。"
+  },
+  notes: BEASTFOLK_NOTES
+});
+
+const monsterPromptExamples = parsePromptCatalogMarkdown(monsterPromptsMarkdown, {
+  idPrefix: "monster",
+  category: MONSTER_CATEGORY,
+  sourcePath: MONSTER_PROMPT_SOURCE,
+  summary: {
+    en: "Single full-body monster asset with a clean readable silhouette.",
+    ja: "読みやすいシルエットで単体化した全身モンスター素材です。"
+  },
+  notes: MONSTER_NOTES
+});
+
+const monsterGirlPromptExamples = parsePromptCatalogMarkdown(monsterGirlPromptsMarkdown, {
+  idPrefix: "monster-girl",
+  category: MONSTER_GIRL_CATEGORY,
+  sourcePath: MONSTER_GIRL_PROMPT_SOURCE,
+  summary: {
+    en: "Cute two-head-tall monster girl source character prepared for 20x5 animation testing.",
+    ja: "20x5アニメーション検証の元画像にしやすい2頭身ちびモンスター娘素材です。"
+  },
+  notes: MONSTER_GIRL_NOTES
+});
+
+const promptExamples: PromptExample[] = [
+  {
+    id: "clockwork-mushroom-courier",
+    category: { en: "Character", ja: "キャラクター" },
+    title: { en: "Clockwork Mushroom Courier", ja: "ぜんまい茸の配達人" },
+    previewImage: "/prompt-examples/clockwork-mushroom-courier.png",
+    summary: {
+      en: "Isolated full-body character asset with transparent output in mind.",
+      ja: "背景なしで使う前提の全身キャラクター素材です。"
+    },
+    prompt:
+      "Create one original pixel-art game asset concept image: a tiny clockwork mushroom courier carrying a glowing blue delivery satchel, isolated full body, transparent background preferred, crisp readable silhouette, 16-bit pixel-art inspired rendering, transparent-game-asset feel, warm amber satchel glow, no scenery, no readable text, no logo, no watermark, no numbers. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: "text, logo, watermark, numbers, photorealistic face, blurry silhouette, placeholder geometric-only output, busy background, detailed scenery, floor plane, cast shadow, gradient background",
+    notes: "Prompt-only image generation. Prefer no background so the character can become an animation source; use flat chroma-key only as a fallback."
+  },
+  {
+    id: "forest-mage-idle",
+    category: { en: "Character", ja: "キャラクター" },
+    title: { en: "Forest Mage Idle Sprite", ja: "森の魔法使いアイドル" },
+    previewImage: "/prompt-examples/forest-mage-idle.png",
+    summary: {
+      en: "Neutral stance character designed to be uploaded into animation generation.",
+      ja: "アニメーション生成へ渡しやすいニュートラル立ち絵です。"
+    },
+    prompt:
+      "Create a single full-body pixel-art character asset: a small forest mage with a leaf hood, carved wooden staff, soft green cloak, amber charm, friendly confident pose, idle-animation ready stance, clear feet contact, centered subject, transparent background preferred, 32-bit fantasy RPG palette, crisp silhouette, no scenery, no readable text, no logo, no watermark. If transparency is unavailable, use a perfectly flat solid #ff00ff chroma-key background because the character uses green clothing; no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: "cropped feet, extra arms, text, logo, watermark, blurry edges, realistic skin, busy background, gradient background, floor plane, cast shadow",
+    notes: "Character should be easy to cut out and animate later. Keep pose neutral, balanced, readable, and background-free when possible."
+  },
+  ...basicCharacterPromptExamples,
+  ...professionCharacterPromptExamples,
+  ...chibiBoyPromptExamples,
+  ...chibiGirlPromptExamples,
+  ...animalPromptExamples,
+  ...beastfolkPromptExamples,
+  ...monsterPromptExamples,
+  ...monsterGirlPromptExamples,
+  {
+    id: "ember-slime-companion",
+    category: { en: "Creature", ja: "クリーチャー" },
+    title: { en: "Ember Slime Companion", ja: "火種スライム" },
+    previewImage: "/prompt-examples/ember-slime-companion.png",
+    summary: {
+      en: "Simple creature silhouette for idle, hop, and attack variants.",
+      ja: "アイドル、跳ね、攻撃へ展開しやすい小型クリーチャーです。"
+    },
+    prompt:
+      "Create a cute pixel-art creature asset: a small ember slime companion with a warm orange core, tiny charcoal feet, two expressive glowing eyes, faint heat shimmer, simple rounded body, readable silhouette, transparent background preferred, collectible monster game style, clean 16-bit pixel-art inspired rendering, no scenery, no text, no logo, no watermark. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: "scary horror, text, logo, watermark, photorealistic fire, over-detailed smoke, cropped body, complex background, floor plane, cast shadow, gradient background",
+    notes: "Creature design should be simple enough for idle, hop, and attack animation variants, with no background when possible."
+  },
+  {
+    id: "crystal-export-station",
+    category: { en: "Prop", ja: "小物" },
+    title: { en: "Crystal Export Station", ja: "水晶の書き出し台" },
+    previewImage: "/prompt-examples/crystal-export-station.png",
+    summary: {
+      en: "Readable prop asset that can be separated cleanly from the canvas.",
+      ja: "画面から切り出しやすい読みやすい小物素材です。"
+    },
+    prompt:
+      "Create a pixel-art game prop asset: a compact crystal export station made of mossy stone and brass rails, three amber crystals glowing above small sockets, teal interface sparks, isometric-front readable angle, isolated prop, transparent background preferred, crisp edge clusters, no scenery, no readable text, no logo, no watermark, no numbers. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: "letters, labels, UI words, logo, watermark, photorealism, cluttered background, broken perspective, detailed room, floor plane, cast shadow",
+    notes: "Prop should read clearly as a small interactive workstation and stay easy to separate from the background."
+  },
+  {
+    id: "rainy-neon-forest-tile",
+    category: { en: "Environment", ja: "背景" },
+    title: { en: "Rainy Neon Forest Tile", ja: "雨のネオン森タイル" },
+    previewImage: "/prompt-examples/rainy-neon-forest-tile.png",
+    summary: {
+      en: "An isolated tile example; scenery stays inside the tile footprint.",
+      ja: "風景要素をタイル内だけに収めた孤立タイル例です。"
+    },
+    prompt:
+      "Create a pixel-art environment tile concept: a small isolated rainy neon forest ground tile with wet stone path, cyan puddle reflections, small purple mushrooms, dark green leaves, top-down three-quarter RPG perspective, tile edges clearly visible, transparent background outside the tile footprint preferred, no characters, no readable text, no logo, no watermark. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background outside the tile footprint only.",
+    negativePrompt: "characters, text, logo, watermark, photorealistic rain, unreadable clutter, full landscape, complex surrounding background, gradient background",
+    notes: "Keep it tile-friendly, isolated, and surrounded by transparency or a flat removable background."
+  },
+  {
+    id: "sprite-sheet-workbench",
+    category: { en: "Scene", ja: "シーン" },
+    title: { en: "Sprite-Sheet Workbench", ja: "スプライト作業台" },
+    previewImage: "/prompt-examples/sprite-sheet-workbench.png",
+    summary: {
+      en: "Complex production-tool concept kept as one clean isolated object.",
+      ja: "複雑な制作ツール案を単体オブジェクトとしてまとめた例です。"
+    },
+    prompt:
+      "Create a pixel-art inspired production-tool prop: a compact fantasy sprite-sheet workbench with glowing teal grid panels, tiny frame thumbnails as abstract blocks, amber export crystals, pinned annotation marks, wooden desk silhouette, isolated object, transparent background preferred, crisp readable composition, no scenery wall, no readable text, no logo, no watermark, no numbers. If transparency is unavailable, use a perfectly flat solid #00ff00 chroma-key background with no shadows, gradients, texture, floor plane, or lighting variation.",
+    negativePrompt: "readable UI text, letters, numbers, logo, watermark, photorealistic monitor, blurry composition, complex room background, floor plane, cast shadow",
+    notes: "Use this when testing whether complex production-tool concepts survive the imagegen prompt while still remaining easy to cut out."
+  }
+];
+
+const quickPromptPresets: QuickPromptPreset[] = [
+  {
+    id: "quick-elder-man",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Elderly Man", ja: "老人" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art elderly man",
+      ja: "2Dのデフォルメされたピクセルアートの老人"
+    },
+    relatedExampleIds: ["basic-elder-male-sage"],
+    relatedExamplePrefixes: ["profession-elder-male-"]
+  },
+  {
+    id: "quick-elder-woman",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Elderly Woman", ja: "老婆" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art elderly woman",
+      ja: "2Dのデフォルメされたピクセルアートの老婆"
+    },
+    relatedExampleIds: ["basic-elder-female-herbalist"],
+    relatedExamplePrefixes: ["profession-elder-female-"]
+  },
+  {
+    id: "quick-man",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Man", ja: "男性" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art man",
+      ja: "2Dのデフォルメされたピクセルアートの男性"
+    },
+    relatedExampleIds: ["basic-young-male-hero", "basic-middle-aged-male-mercenary", "basic-large-veteran-warrior"],
+    relatedExamplePrefixes: ["profession-young-male-", "profession-middle-aged-male-"]
+  },
+  {
+    id: "quick-woman",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Woman", ja: "女性" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art woman",
+      ja: "2Dのデフォルメされたピクセルアートの女性"
+    },
+    relatedExampleIds: ["basic-young-female-hero", "basic-middle-aged-female-ranger"],
+    relatedExamplePrefixes: ["profession-young-female-", "profession-middle-aged-female-"]
+  },
+  {
+    id: "quick-girl",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Girl", ja: "女の子" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art girl",
+      ja: "2Dのデフォルメされたピクセルアートの女の子"
+    },
+    relatedExampleIds: ["basic-girl-adventurer"],
+    relatedExamplePrefixes: ["profession-girl-", "chibi-girl-"]
+  },
+  {
+    id: "quick-boy",
+    group: { en: "People", ja: "人物" },
+    title: { en: "Boy", ja: "男の子" },
+    summary: {
+      en: "Add any hairstyle, clothes, colors, or expression you like.",
+      ja: "髪型、服、色、表情などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art boy",
+      ja: "2Dのデフォルメされたピクセルアートの男の子"
+    },
+    relatedExampleIds: ["basic-boy-adventurer"],
+    relatedExamplePrefixes: ["profession-boy-", "chibi-boy-"]
+  },
+  {
+    id: "quick-cat",
+    group: { en: "Animals", ja: "動物" },
+    title: { en: "Cat", ja: "猫" },
+    summary: {
+      en: "Add any fur color, pattern, expression, or accessory you like.",
+      ja: "毛色、模様、表情、小物などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art cat",
+      ja: "2Dのデフォルメされたピクセルアートの猫"
+    },
+    relatedExampleIds: ["animal-curious-cat"],
+    relatedExamplePrefixes: []
+  },
+  {
+    id: "quick-dog",
+    group: { en: "Animals", ja: "動物" },
+    title: { en: "Dog", ja: "犬" },
+    summary: {
+      en: "Add any fur color, breed, expression, or accessory you like.",
+      ja: "毛色、犬種、表情、小物などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art dog",
+      ja: "2Dのデフォルメされたピクセルアートの犬"
+    },
+    relatedExampleIds: ["animal-loyal-dog"],
+    relatedExamplePrefixes: []
+  },
+  {
+    id: "quick-monster",
+    group: { en: "Monsters", ja: "モンスター" },
+    title: { en: "Monster", ja: "モンスター" },
+    summary: {
+      en: "Add any shape, color, element, or personality you like.",
+      ja: "形、色、属性、性格などを自由に足せます。"
+    },
+    prompt: {
+      en: "A stylized 2D pixel-art monster",
+      ja: "2Dのデフォルメされたピクセルアートのモンスター"
+    },
+    relatedExampleIds: ["ember-slime-companion"],
+    relatedExamplePrefixes: ["monster-"]
+  }
+];
+
+interface PromptExampleLayerUiCopy {
+  quickTitle: string;
+  quickIntro: string;
+  startWithThis: string;
+  viewExamples: string;
+  viewAllExamples: string;
+  backToQuick: string;
+  relatedTitle: string;
+  relatedIntro: string;
+  allTitle: string;
+  allIntro: string;
+  exampleCountSuffix: string;
+}
+
+const promptExampleLayerCopy = {
+  en: {
+    quickTitle: "Start broad",
+    quickIntro: "Start with a short prompt, then add hair, clothes, colors, or anything you want.",
+    startWithThis: "Start with this",
+    viewExamples: "View concrete examples",
+    viewAllExamples: "View all concrete examples",
+    backToQuick: "Back to simple prompts",
+    relatedTitle: "{title} examples",
+    relatedIntro: "Use a finished example as-is, or load it and change the details.",
+    allTitle: "All concrete examples",
+    allIntro: "Browse all tuned prompts by preview image and category.",
+    exampleCountSuffix: "examples"
+  },
+  ja: {
+    quickTitle: "ざっくり作る",
+    quickIntro: "短い指示から始めて、髪型や服、色などを好きに足していけます。",
+    startWithThis: "この指示から始める",
+    viewExamples: "具体例を見る",
+    viewAllExamples: "すべての具体例を見る",
+    backToQuick: "ざっくり作るに戻る",
+    relatedTitle: "{title}の具体例",
+    relatedIntro: "完成イメージから選び、そのまま使うか細部を変えられます。",
+    allTitle: "すべての具体例",
+    allIntro: "調整済みのプロンプトを仕上がり画像やカテゴリから選べます。",
+    exampleCountSuffix: "件"
+  },
+  "zh-CN": {
+    quickTitle: "先简单开始",
+    quickIntro: "先用一句简短提示，再自由添加发型、服装、颜色等细节。",
+    startWithThis: "从这条指示开始",
+    viewExamples: "查看具体示例",
+    viewAllExamples: "查看所有具体示例",
+    backToQuick: "返回简单提示",
+    relatedTitle: "{title}的具体示例",
+    relatedIntro: "可以直接使用成品示例，也可以载入后修改细节。",
+    allTitle: "所有具体示例",
+    allIntro: "按预览图和分类浏览所有已调好的提示词。",
+    exampleCountSuffix: "个示例"
+  },
+  "zh-TW": {
+    quickTitle: "先簡單開始",
+    quickIntro: "先用一句簡短提示，再自由加入髮型、服裝、顏色等細節。",
+    startWithThis: "從這個指示開始",
+    viewExamples: "查看具體範例",
+    viewAllExamples: "查看所有具體範例",
+    backToQuick: "返回簡單提示",
+    relatedTitle: "{title}的具體範例",
+    relatedIntro: "可以直接使用完成範例，也可以載入後修改細節。",
+    allTitle: "所有具體範例",
+    allIntro: "依預覽圖和分類瀏覽所有已調整的提示詞。",
+    exampleCountSuffix: "個範例"
+  },
+  ko: {
+    quickTitle: "간단하게 시작",
+    quickIntro: "짧은 프롬프트로 시작한 뒤 머리, 옷, 색상 등 원하는 세부 사항을 더하세요.",
+    startWithThis: "이 지시로 시작",
+    viewExamples: "구체적인 예 보기",
+    viewAllExamples: "모든 구체적인 예 보기",
+    backToQuick: "간단한 프롬프트로 돌아가기",
+    relatedTitle: "{title} 구체적인 예",
+    relatedIntro: "완성된 예를 그대로 사용하거나 불러온 뒤 세부 사항을 바꿀 수 있습니다.",
+    allTitle: "모든 구체적인 예",
+    allIntro: "미리보기 이미지와 카테고리로 조정된 프롬프트를 찾아보세요.",
+    exampleCountSuffix: "개"
+  },
+  ru: {
+    quickTitle: "Начать с простого",
+    quickIntro: "Начните с короткого промпта, а затем добавьте причёску, одежду, цвета и любые детали.",
+    startWithThis: "Начать с этого",
+    viewExamples: "Посмотреть примеры",
+    viewAllExamples: "Посмотреть все примеры",
+    backToQuick: "К простым промптам",
+    relatedTitle: "Подробные примеры: {title}",
+    relatedIntro: "Используйте готовый пример или загрузите его и измените детали.",
+    allTitle: "Все подробные примеры",
+    allIntro: "Просматривайте настроенные промпты по превью и категориям.",
+    exampleCountSuffix: "примеров"
+  },
+  es: {
+    quickTitle: "Empezar con algo simple",
+    quickIntro: "Empieza con un prompt corto y añade el peinado, la ropa, los colores o cualquier detalle.",
+    startWithThis: "Empezar con esto",
+    viewExamples: "Ver ejemplos concretos",
+    viewAllExamples: "Ver todos los ejemplos",
+    backToQuick: "Volver a prompts simples",
+    relatedTitle: "Ejemplos concretos: {title}",
+    relatedIntro: "Usa un ejemplo terminado tal cual o cárgalo y cambia los detalles.",
+    allTitle: "Todos los ejemplos concretos",
+    allIntro: "Explora todos los prompts ajustados por imagen y categoría.",
+    exampleCountSuffix: "ejemplos"
+  },
+  "pt-BR": {
+    quickTitle: "Começar de forma simples",
+    quickIntro: "Comece com um prompt curto e adicione cabelo, roupa, cores ou qualquer detalhe.",
+    startWithThis: "Começar com isto",
+    viewExamples: "Ver exemplos concretos",
+    viewAllExamples: "Ver todos os exemplos",
+    backToQuick: "Voltar aos prompts simples",
+    relatedTitle: "Exemplos concretos: {title}",
+    relatedIntro: "Use um exemplo pronto ou carregue-o e altere os detalhes.",
+    allTitle: "Todos os exemplos concretos",
+    allIntro: "Explore todos os prompts ajustados por imagem e categoria.",
+    exampleCountSuffix: "exemplos"
+  },
+  de: {
+    quickTitle: "Einfach anfangen",
+    quickIntro: "Beginne mit einem kurzen Prompt und ergänze Frisur, Kleidung, Farben oder andere Details.",
+    startWithThis: "Damit anfangen",
+    viewExamples: "Konkrete Beispiele ansehen",
+    viewAllExamples: "Alle Beispiele ansehen",
+    backToQuick: "Zurück zu einfachen Prompts",
+    relatedTitle: "Konkrete Beispiele: {title}",
+    relatedIntro: "Verwende ein fertiges Beispiel direkt oder lade es und ändere die Details.",
+    allTitle: "Alle konkreten Beispiele",
+    allIntro: "Durchsuche alle abgestimmten Prompts nach Vorschaubild und Kategorie.",
+    exampleCountSuffix: "Beispiele"
+  },
+  fr: {
+    quickTitle: "Commencer simplement",
+    quickIntro: "Commencez par un prompt court, puis ajoutez coiffure, vêtements, couleurs ou autres détails.",
+    startWithThis: "Commencer avec ceci",
+    viewExamples: "Voir des exemples concrets",
+    viewAllExamples: "Voir tous les exemples",
+    backToQuick: "Retour aux prompts simples",
+    relatedTitle: "Exemples concrets : {title}",
+    relatedIntro: "Utilisez un exemple finalisé tel quel ou chargez-le et modifiez les détails.",
+    allTitle: "Tous les exemples concrets",
+    allIntro: "Parcourez tous les prompts ajustés par aperçu et catégorie.",
+    exampleCountSuffix: "exemples"
+  },
+  id: {
+    quickTitle: "Mulai dari yang sederhana",
+    quickIntro: "Mulai dengan prompt singkat, lalu tambahkan rambut, pakaian, warna, atau detail apa pun.",
+    startWithThis: "Mulai dengan ini",
+    viewExamples: "Lihat contoh konkret",
+    viewAllExamples: "Lihat semua contoh",
+    backToQuick: "Kembali ke prompt sederhana",
+    relatedTitle: "Contoh konkret: {title}",
+    relatedIntro: "Gunakan contoh jadi apa adanya atau muat lalu ubah detailnya.",
+    allTitle: "Semua contoh konkret",
+    allIntro: "Telusuri semua prompt yang telah disetel berdasarkan pratinjau dan kategori.",
+    exampleCountSuffix: "contoh"
+  },
+  tr: {
+    quickTitle: "Basit başlayın",
+    quickIntro: "Kısa bir promptla başlayın; sonra saç, kıyafet, renk veya istediğiniz ayrıntıları ekleyin.",
+    startWithThis: "Bununla başla",
+    viewExamples: "Somut örnekleri gör",
+    viewAllExamples: "Tüm örnekleri gör",
+    backToQuick: "Basit promptlara dön",
+    relatedTitle: "{title} için somut örnekler",
+    relatedIntro: "Tamamlanmış bir örneği olduğu gibi kullanın veya yükleyip ayrıntıları değiştirin.",
+    allTitle: "Tüm somut örnekler",
+    allIntro: "Ayarlanmış tüm promptları önizleme ve kategoriye göre inceleyin.",
+    exampleCountSuffix: "örnek"
+  },
+  vi: {
+    quickTitle: "Bắt đầu đơn giản",
+    quickIntro: "Bắt đầu bằng prompt ngắn, rồi thêm tóc, trang phục, màu sắc hoặc bất kỳ chi tiết nào.",
+    startWithThis: "Bắt đầu với chỉ dẫn này",
+    viewExamples: "Xem ví dụ cụ thể",
+    viewAllExamples: "Xem tất cả ví dụ",
+    backToQuick: "Quay lại prompt đơn giản",
+    relatedTitle: "Ví dụ cụ thể: {title}",
+    relatedIntro: "Dùng nguyên một ví dụ hoàn chỉnh hoặc tải vào rồi thay đổi chi tiết.",
+    allTitle: "Tất cả ví dụ cụ thể",
+    allIntro: "Duyệt tất cả prompt đã tinh chỉnh theo ảnh xem trước và danh mục.",
+    exampleCountSuffix: "ví dụ"
+  },
+  pl: {
+    quickTitle: "Zacznij prosto",
+    quickIntro: "Zacznij od krótkiego promptu, a potem dodaj fryzurę, ubranie, kolory lub dowolne szczegóły.",
+    startWithThis: "Zacznij od tego",
+    viewExamples: "Zobacz konkretne przykłady",
+    viewAllExamples: "Zobacz wszystkie przykłady",
+    backToQuick: "Wróć do prostych promptów",
+    relatedTitle: "Konkretne przykłady: {title}",
+    relatedIntro: "Użyj gotowego przykładu albo wczytaj go i zmień szczegóły.",
+    allTitle: "Wszystkie konkretne przykłady",
+    allIntro: "Przeglądaj dostrojone prompty według podglądu i kategorii.",
+    exampleCountSuffix: "przykładów"
+  },
+  it: {
+    quickTitle: "Inizia in modo semplice",
+    quickIntro: "Inizia con un prompt breve, poi aggiungi capelli, abiti, colori o qualsiasi dettaglio.",
+    startWithThis: "Inizia da qui",
+    viewExamples: "Vedi esempi concreti",
+    viewAllExamples: "Vedi tutti gli esempi",
+    backToQuick: "Torna ai prompt semplici",
+    relatedTitle: "Esempi concreti: {title}",
+    relatedIntro: "Usa un esempio finito così com'è oppure caricalo e modifica i dettagli.",
+    allTitle: "Tutti gli esempi concreti",
+    allIntro: "Sfoglia tutti i prompt ottimizzati per anteprima e categoria.",
+    exampleCountSuffix: "esempi"
+  }
+} satisfies Record<Language, PromptExampleLayerUiCopy>;
+
+function relatedPromptExamplesForQuickPreset(preset: QuickPromptPreset) {
+  const relatedIdSet = new Set(preset.relatedExampleIds);
+  return promptExamples.filter(
+    (example) => relatedIdSet.has(example.id) || preset.relatedExamplePrefixes.some((prefix) => example.id.startsWith(prefix))
+  );
+}
+
+function normalizeAnimationActions(actions: SpriteAction[]) {
+  const source = actions.length > 0 ? actions : defaultActions;
+  return source.map((action) => normalizeAnimationAction(action));
+}
+
+function normalizeAnimationAction(action: SpriteAction): SpriteAction {
+  const defaultAction = defaultActions.find((item) => item.name === action.name);
+  return {
+    ...action,
+    fps: action.name === "run" && action.fps === 14 ? defaultAction?.fps ?? action.fps : action.fps,
+    playbackMode: action.name === "run" ? "ping-pong-reverse" : action.playbackMode,
+    cell: STANDARD_ANIMATION_CELL,
+    anchor: STANDARD_ANIMATION_ANCHOR
+  };
+}
+
+function hatchPetSpriteAction(): SpriteAction {
+  return {
+    name: "hatch-pet-atlas",
+    fps: 8,
+    loop: true,
+    frameIds: [],
+    cell: HATCH_PET_CELL,
+    anchor: animationExportAnchor(HATCH_PET_CELL.width, HATCH_PET_CELL.height)
+  };
+}
+
+function directionalHatchPetSpriteAction(): SpriteAction {
+  return {
+    ...hatchPetSpriteAction(),
+    name: "5-direction-hatch-pet-atlas"
+  };
+}
+
+function isHatchPetLikeMode(mode: AnimationGenerationMode) {
+  return mode === "hatch-pet" || mode === "directional-hatch-pet";
+}
+
+function inferAnimationGenerationMode(actionFrames: SpriteFrame[]): AnimationGenerationMode {
+  const firstFrame = actionFrames[0];
+  if (
+    actionFrames.length === DIRECTIONAL_HATCH_PET_GRID.columns * DIRECTIONAL_HATCH_PET_GRID.rows &&
+    firstFrame?.width === HATCH_PET_CELL.width &&
+    firstFrame?.height === HATCH_PET_CELL.height
+  ) {
+    return "directional-hatch-pet";
+  }
+  if (
+    actionFrames.length === HATCH_PET_GRID.columns * HATCH_PET_GRID.rows &&
+    firstFrame?.width === HATCH_PET_CELL.width &&
+    firstFrame?.height === HATCH_PET_CELL.height
+  ) {
+    return "hatch-pet";
+  }
+  return "standard";
+}
+
+function inferAnimationSheetGrid(actionFrames: SpriteFrame[], variant: AnimationGenerationMode, framesPerDirection: number = ANIMATION_FRAME_COUNT): GridSettings {
+  if (variant === "directional-hatch-pet") return DIRECTIONAL_HATCH_PET_GRID;
+  if (variant === "hatch-pet") return HATCH_PET_GRID;
+  const safeFramesPerDirection = MOTION_FRAME_COUNTS.includes(framesPerDirection as MotionFrameCount) ? framesPerDirection : ANIMATION_FRAME_COUNT;
+  const rows = Math.max(1, Math.ceil(actionFrames.length / safeFramesPerDirection));
+  return {
+    columns: safeFramesPerDirection,
+    rows: Math.min(ANIMATION_DIRECTION_COUNT, rows),
+    gutter: 0
+  };
+}
+
+function clampInteger(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+export function getVisibleHistoryCount(historyLength: number, requestedLimit: number, selectedIndex = -1) {
+  if (historyLength <= 0) return 0;
+  const selectedLimit = selectedIndex >= 0 ? selectedIndex + 1 : 0;
+  const safeLimit = Math.max(INITIAL_HISTORY_RENDER_COUNT, requestedLimit, selectedLimit);
+  return Math.min(historyLength, safeLimit);
+}
+
+export function getNextHistoryRenderLimit(currentLimit: number, historyLength: number) {
+  return Math.min(historyLength, Math.max(0, currentLimit) + HISTORY_RENDER_BATCH_SIZE);
+}
+
+export function imageDisplayRectForCanvas(
+  imageSize: ImageSizeCoordinates,
+  canvasSize: ImageSizeCoordinates = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+  padding = IMAGE_DISPLAY_PADDING
+): ImageRectCoordinates & { scale: number } {
+  const imageWidth = Math.max(1, Number.isFinite(imageSize.width) ? imageSize.width : 1);
+  const imageHeight = Math.max(1, Number.isFinite(imageSize.height) ? imageSize.height : 1);
+  const canvasWidth = Math.max(1, Number.isFinite(canvasSize.width) ? canvasSize.width : CANVAS_WIDTH);
+  const canvasHeight = Math.max(1, Number.isFinite(canvasSize.height) ? canvasSize.height : CANVAS_HEIGHT);
+  const safePadding = Math.max(0, Math.min(padding, canvasWidth / 2 - 1, canvasHeight / 2 - 1));
+  const availableWidth = Math.max(1, canvasWidth - safePadding * 2);
+  const availableHeight = Math.max(1, canvasHeight - safePadding * 2);
+  const scale = Math.min(availableWidth / imageWidth, availableHeight / imageHeight);
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+
+  return {
+    x: (canvasWidth - width) / 2,
+    y: (canvasHeight - height) / 2,
+    width,
+    height,
+    scale
+  };
+}
+
+export function annotationImageCoordinates(
+  annotation: Annotation,
+  imageSize: ImageSizeCoordinates,
+  canvasSize: ImageSizeCoordinates = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+  padding = IMAGE_DISPLAY_PADDING
+): Pick<Annotation, "displayedImageRect" | "imageRectNormalized" | "imageRectPixels" | "sourceImageNaturalSize" | "imageRectClamped"> {
+  const naturalSize = {
+    width: Math.max(1, Number.isFinite(imageSize.width) ? imageSize.width : 1),
+    height: Math.max(1, Number.isFinite(imageSize.height) ? imageSize.height : 1)
+  };
+  const displayed = imageDisplayRectForCanvas(naturalSize, canvasSize, padding);
+  const rect = annotationRect(annotation);
+  const displayRight = displayed.x + displayed.width;
+  const displayBottom = displayed.y + displayed.height;
+  const rectRight = rect.x + rect.width;
+  const rectBottom = rect.y + rect.height;
+  const clampedLeft = clampNumber(rect.x, displayed.x, displayRight);
+  const clampedTop = clampNumber(rect.y, displayed.y, displayBottom);
+  const clampedRight = clampNumber(rectRight, displayed.x, displayRight);
+  const clampedBottom = clampNumber(rectBottom, displayed.y, displayBottom);
+  const clampedWidth = Math.max(0, clampedRight - clampedLeft);
+  const clampedHeight = Math.max(0, clampedBottom - clampedTop);
+  const normalized = {
+    x: roundNumber((clampedLeft - displayed.x) / displayed.width, 6),
+    y: roundNumber((clampedTop - displayed.y) / displayed.height, 6),
+    width: roundNumber(clampedWidth / displayed.width, 6),
+    height: roundNumber(clampedHeight / displayed.height, 6)
+  };
+  const clamped = Math.abs(clampedLeft - rect.x) > 0.001
+    || Math.abs(clampedTop - rect.y) > 0.001
+    || Math.abs(clampedRight - rectRight) > 0.001
+    || Math.abs(clampedBottom - rectBottom) > 0.001;
+
+  return {
+    displayedImageRect: roundRect(displayed, 3),
+    imageRectNormalized: normalized,
+    imageRectPixels: {
+      x: roundNumber(normalized.x * naturalSize.width, 2),
+      y: roundNumber(normalized.y * naturalSize.height, 2),
+      width: roundNumber(normalized.width * naturalSize.width, 2),
+      height: roundNumber(normalized.height * naturalSize.height, 2)
+    },
+    sourceImageNaturalSize: naturalSize,
+    imageRectClamped: clamped
+  };
+}
+
+export function isOutboxResultForJob(resultName: string, jobId: string) {
+  return resultName.startsWith(`${jobId}-`) || resultName.startsWith(`${jobId}.`);
+}
+
+export function isDirectionSplitAnimationManifestName(resultName: string, jobId: string) {
+  return resultName === `${jobId}-manifest.json`;
+}
+
+export function shouldIgnoreOutboxResultName(name: string) {
+  const normalized = name.toLowerCase();
+  const filterName = normalizeOutboxResultNameForFiltering(name);
+  return (
+    normalized.startsWith(".") ||
+    filterName.startsWith("local-gen-") ||
+    filterName.includes(".staging") ||
+    hasTemporaryOutboxResultMarker(normalized) ||
+    filterName.includes("-work-") ||
+    filterName.endsWith("-qa.json") ||
+    filterName.endsWith(".qa.json") ||
+    hasQaOutboxResultMarker(filterName) ||
+    hasDebugOutboxResultMarker(filterName) ||
+    [
+      "candidate-contact",
+      "contact-sheet",
+      "contact.tmp",
+      "grid-qa",
+      "mechanical-qa",
+      "transparent-contact",
+      "preview-grid",
+      "ab-gallery"
+    ].some((marker) => filterName.includes(marker))
+  );
+}
+
+function normalizeOutboxResultNameForFiltering(name: string) {
+  return name.toLowerCase().replace(/[_\s]+/g, "-");
+}
+
+function hasTemporaryOutboxResultMarker(normalizedName: string) {
+  return /(^|[._-])tmp([._-]|$)/.test(normalizedName);
+}
+
+function hasQaOutboxResultMarker(filterName: string) {
+  return /(^|[-.])qa([-.]|$)/.test(filterName);
+}
+
+function hasDebugOutboxResultMarker(filterName: string) {
+  return /(^|[-.])debug([-.]|$)/.test(filterName);
+}
+
+function isStaticImageResult(result: CodexOutboxResult) {
+  return !shouldIgnoreOutboxResultName(result.name) && result.mimeType.startsWith("image/") && result.mimeType !== "image/gif";
+}
+
+function clientQualityGateForOutboxResult(result: Pick<CodexOutboxResult, "name" | "qualityGate">) {
+  if (result.qualityGate) return result.qualityGate;
+  const filterName = normalizeOutboxResultNameForFiltering(result.name);
+  if (filterName.includes("bronze-candidate")) {
+    return {
+      classification: "quarantined-candidate" as const,
+      reason: "Bronze candidate is available for diagnostics only and is not a final usable result.",
+      code: "bronze-candidate",
+      historyAllowed: false,
+      downloadAllowed: false,
+      retryable: true
+    };
+  }
+  return {
+    classification: "usable-final" as const,
+    reason: "Usable final result.",
+    code: "usable-final",
+    historyAllowed: true,
+    downloadAllowed: true,
+    retryable: false
+  };
+}
+
+export function isUsableOutboxResult(result: Pick<CodexOutboxResult, "name" | "qualityGate">) {
+  const gate = clientQualityGateForOutboxResult(result);
+  return gate.classification === "usable-final" && gate.historyAllowed !== false && gate.downloadAllowed !== false;
+}
+
+export function directionSplitJobIdFromOutboxResultName(name: string) {
+  const baseName = name.split(/[\\/]/).pop() ?? name;
+  if (!baseName.toLowerCase().startsWith("codex-job-")) return "";
+  if (/-manifest\.json$/i.test(baseName)) return baseName.replace(/-manifest\.json$/i, "");
+  const withoutExtension = baseName.replace(/\.[^.]+$/, "");
+  const matchedSlug = DIRECTION_SPLIT_ANIMATION_FILE_SLUGS
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((slug) => withoutExtension.toLowerCase().endsWith(`-${slug}`));
+  return matchedSlug ? withoutExtension.slice(0, -(matchedSlug.length + 1)) : "";
+}
+
+export function isDirectionSplitComponentOutboxName(name: string) {
+  const baseName = name.split(/[\\/]/).pop() ?? name;
+  if (/-manifest\.json$/i.test(baseName)) return false;
+  return Boolean(directionSplitJobIdFromOutboxResultName(baseName));
+}
+
+export function isGenericStaticImageResult(result: CodexOutboxResult) {
+  return isStaticImageResult(result) && !isDirectionSplitComponentOutboxName(result.name) && isUsableOutboxResult(result);
+}
+
+export function selectDirectionSplitAnimationResults(
+  results: CodexOutboxResult[],
+  jobId: string,
+  manifest: DirectionSplitAnimationManifest | null = null,
+  expectedDirections?: readonly string[]
+): DirectionSplitSelection {
+  const artifactStatus = results.find((result) => result.artifact?.jobId === jobId && result.artifact.artifactKind === "direction-split")?.artifact;
+  const manifestResult = results.find((result) => isDirectionSplitAnimationManifestName(result.name, jobId));
+  const staticImageResults = results.filter(isStaticImageResult);
+  const manifestFiles = manifest ? directionSplitManifestFiles(manifest) : new Map<string, string>();
+  const artifactDirections = directionSplitDirectionsFromArtifactStatus(artifactStatus);
+  const directions = normalizeAnimationDirections(
+    expectedDirections ?? manifest?.directions ?? (artifactDirections.length > 0 ? artifactDirections : undefined)
+  );
+  const byDirection = directions.map((direction) => {
+    const canonicalIndex = ANIMATION_DIRECTIONS.findIndex((candidate) => candidate === direction);
+    const slug = DIRECTION_SPLIT_ANIMATION_FILE_SLUGS[canonicalIndex] ?? animationDirectionSlug(direction);
+    const manifestFile = manifestFiles.get(direction) ?? manifestFiles.get(slug);
+    if (manifestFile) {
+      const manifestBaseName = manifestFile.split(/[\\/]/).pop() ?? manifestFile;
+      return staticImageResults.find((result) => result.name === manifestBaseName);
+    }
+    return staticImageResults.find((result) => directionSplitResultDirectionIndex(result.name, jobId) === canonicalIndex);
+  });
+  const missingDirections = byDirection
+    .map((result, index) => (result ? "" : directions[index]))
+    .filter(Boolean);
+  const hasManifest = Boolean(manifestResult || manifest);
+  const hasDirectionFiles = byDirection.some(Boolean);
+  const qualityClassification = artifactStatus?.qualityGate?.classification;
+  const qualityFailed = Boolean(
+    artifactStatus?.quality === "blocked" ||
+      qualityClassification === "quality-failed" ||
+      qualityClassification === "failed" ||
+      qualityClassification === "debug-artifact"
+  );
+  const bronzeCandidate = artifactStatus?.quality === "bronze" || qualityClassification === "quarantined-candidate";
+  const serverVerified = !artifactStatus || (artifactStatus.ready && artifactStatus.verified);
+  const waitingForVerifiedArtifacts = Boolean(artifactStatus?.detected && !artifactStatus.ready && !bronzeCandidate && !qualityFailed);
+  const ready = hasManifest && missingDirections.length === 0 && serverVerified && !bronzeCandidate && !qualityFailed;
+  return {
+    detected: Boolean(artifactStatus?.detected || hasManifest || hasDirectionFiles),
+    ready,
+    waitingForFinalManifest: hasDirectionFiles && !hasManifest,
+    waitingForVerifiedArtifacts,
+    qualityFailed,
+    hasDirectionFiles,
+    bronzeCandidate,
+    artifactStatus,
+    manifestResult,
+    directions,
+    directionResults: byDirection.filter((result): result is CodexOutboxResult => Boolean(result)),
+    missingDirections
+  };
+}
+
+function directionSplitDirectionsFromArtifactStatus(artifactStatus?: CodexArtifactStatus) {
+  const directionIndexes = new Set(
+    (artifactStatus?.files ?? [])
+      .map((name) => directionSplitResultDirectionIndex(name, artifactStatus?.jobId ?? ""))
+      .filter((index) => index >= 0)
+  );
+  return ANIMATION_DIRECTIONS.filter((_, index) => directionIndexes.has(index));
+}
+
+export function findReadyDirectionSplitArtifacts(results: CodexOutboxResult[]): ReadyDirectionSplitArtifact[] {
+  const manifests = results
+    .filter((result) => !shouldIgnoreOutboxResultName(result.name))
+    .filter((result) => /-manifest\.json$/i.test(result.name))
+    .slice()
+    .sort((left, right) => outboxResultModifiedTime(right) - outboxResultModifiedTime(left));
+  const seenJobIds = new Set<string>();
+
+  return manifests.flatMap((manifestResult) => {
+    const jobId = directionSplitJobIdFromOutboxResultName(manifestResult.name);
+    if (!jobId || seenJobIds.has(jobId)) return [];
+    seenJobIds.add(jobId);
+
+    const jobResults = results.filter((result) => !shouldIgnoreOutboxResultName(result.name) && isOutboxResultForJob(result.name, jobId));
+    const selection = selectDirectionSplitAnimationResults(jobResults, jobId);
+    if (!selection.ready || !selection.manifestResult || selection.directionResults.length !== selection.directions.length) {
+      return [];
+    }
+
+    const modifiedAtTime = Math.max(
+      outboxResultModifiedTime(selection.manifestResult),
+      ...selection.directionResults.map(outboxResultModifiedTime)
+    );
+    return [{
+      jobId,
+      manifestResult: selection.manifestResult,
+      directionResults: selection.directionResults,
+      jobResults,
+      selection,
+      modifiedAt: new Date(Number.isFinite(modifiedAtTime) ? modifiedAtTime : Date.now()).toISOString()
+    }];
+  });
+}
+
+export function findLatestReadyDirectionSplitArtifact(results: CodexOutboxResult[]) {
+  return findReadyDirectionSplitArtifacts(results)[0];
+}
+
+function outboxResultModifiedTime(result: Pick<CodexOutboxResult, "modifiedAt">) {
+  const value = Date.parse(result.modifiedAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function directionSplitResultDirectionIndex(resultName: string, jobId: string) {
+  const normalized = resultName
+    .toLowerCase()
+    .replace(/\.[^.]+$/, "")
+    .replace(jobId.toLowerCase(), "")
+    .replace(/[_\s]+/g, "-")
+    .replace(/^-+/, "");
+  const numericMatch = normalized.match(/^direction-(\d{1,2})(?:-|$)/);
+  if (numericMatch) {
+    const index = Number(numericMatch[1]) - 1;
+    if (index >= 0 && index < ANIMATION_DIRECTION_COUNT) return index;
+  }
+  const matchedSlug = DIRECTION_SPLIT_ANIMATION_FILE_SLUGS
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((slug) => normalized === slug || normalized.endsWith(`-${slug}`));
+  return matchedSlug ? DIRECTION_SPLIT_ANIMATION_FILE_SLUGS.indexOf(matchedSlug) : -1;
+}
+
+function directionSplitManifestFiles(manifest: DirectionSplitAnimationManifest) {
+  const files = new Map<string, string>();
+  if (Array.isArray(manifest.files)) {
+    manifest.files.forEach((file, index) => {
+      const direction = file.direction ?? ANIMATION_DIRECTIONS[index] ?? "";
+      const name = file.file ?? file.name ?? file.path ?? "";
+      if (direction && name) files.set(direction, name);
+    });
+    return files;
+  }
+  Object.entries(manifest.files ?? {}).forEach(([direction, name]) => {
+    if (typeof name === "string" && direction) files.set(direction, name);
+  });
+  return files;
+}
+
+function directionSplitAnimationFileSet(jobIdPrefix: string, directions: readonly string[] = ANIMATION_DIRECTIONS) {
+  return directions.map((direction) => `${jobIdPrefix}-${animationDirectionSlug(direction)}.png`);
+}
+
+function isStandardDirectionSplitJob(job: Pick<CodexJobQueueItem, "workflowMode" | "spriteVariant">) {
+  return job.workflowMode === "sprite-generate" && (job.spriteVariant ?? "standard") === "standard";
+}
+
+function isStandardDirectionSplitDraft(draft: Pick<CodexJobDraft, "resultWorkflowMode" | "resultSpriteVariant">) {
+  return draft.resultWorkflowMode === "sprite-generate" && (draft.resultSpriteVariant ?? "standard") === "standard";
+}
+
+function isAnimationTournamentJob(job: Pick<CodexJobQueueItem, "workflowMode" | "spriteVariant" | "tournamentId">) {
+  return Boolean(job.tournamentId) && isStandardDirectionSplitJob(job);
+}
+
+function tournamentCandidateLabel(index: number, count: number) {
+  return `candidate ${index + 1}/${count}`;
+}
+
+function animationDirectionPresetLabel(id: AnimationDirectionPresetId, copy: UiCopy) {
+  if (id === "one") return copy.animationDirectionOne;
+  if (id === "three") return copy.animationDirectionThree;
+  return copy.animationDirectionFive;
+}
+
+function activeCodexJobCount(jobs: CodexJobQueueItem[], startingQueuedJobIds: Set<string>) {
+  return jobs.filter((job) => job.state === "running" || startingQueuedJobIds.has(job.id)).length;
+}
+
+function effectiveCodexRunnerCount(
+  jobs: CodexJobQueueItem[],
+  startingQueuedJobIds: Set<string>,
+  serverActiveRunnerCount: number
+) {
+  return Math.max(activeCodexJobCount(jobs, startingQueuedJobIds), serverActiveRunnerCount);
+}
+
+function activeStandardDirectionSplitJobCount(jobs: CodexJobQueueItem[], startingQueuedJobIds: Set<string>) {
+  return jobs.filter((job) => (job.state === "running" || startingQueuedJobIds.has(job.id)) && isStandardDirectionSplitJob(job)).length;
+}
+
+function reservedAnimationInitialCandidateSlots(reservations: Map<string, number>) {
+  return Array.from(reservations.values()).reduce((total, count) => total + count, 0);
+}
+
+function animationInitialAdmissionMessage(language: Language, occupiedSlots: number) {
+  const normalizedOccupiedSlots = Math.min(MAX_ACTIVE_CODEX_JOBS, Math.max(0, occupiedSlots));
+  if (language === "ja") {
+    return `アニメーション生成には3枠すべての空きが必要です。現在 ${normalizedOccupiedSlots}/${MAX_ACTIVE_CODEX_JOBS} 枠を使用中です。実行中のジョブが完了してから開始してください。`;
+  }
+  return `Animation Generation requires all ${MAX_ACTIVE_CODEX_JOBS} runner slots to be free. ${normalizedOccupiedSlots}/${MAX_ACTIVE_CODEX_JOBS} slots are currently in use. Wait for the running jobs to finish.`;
+}
+
+async function animationTournamentApiError(response: Response, language: Language) {
+  const text = await response.text();
+  type AnimationTournamentErrorPayload = {
+    error?: unknown;
+    code?: unknown;
+    capacity?: { active?: unknown };
+  };
+  let payload: AnimationTournamentErrorPayload | null = null;
+  try {
+    payload = JSON.parse(text) as AnimationTournamentErrorPayload;
+  } catch {
+    // Plain-text server errors remain readable below.
+  }
+  if (payload?.code === "insufficient_runner_slots") {
+    const active = typeof payload.capacity?.active === "number" ? payload.capacity.active : 1;
+    return animationInitialAdmissionMessage(language, active);
+  }
+  return typeof payload?.error === "string" ? payload.error : text || "Animation tournament request failed.";
+}
+
+export function summarizeCockpitHealthStatus(hasApiHealth: boolean, mismatches: readonly string[], unimportedResults: number) {
+  const state: CockpitHealthState = !hasApiHealth ? "broken" : mismatches.length > 0 ? "warning" : "ok";
+  const message = !hasApiHealth
+    ? "Cockpit connection issue: API route is not Image Cockpit."
+    : mismatches.length > 0
+      ? mismatches[0] ?? "Cockpit warning."
+      : unimportedResults > 0
+        ? `Cockpit OK. ${unimportedResults} outbox result${unimportedResults === 1 ? "" : "s"} available for Recover Results.`
+        : "Cockpit OK.";
+  return { state, message };
+}
+
+function canStartCodexJobDraft(
+  draft: CodexJobDraft,
+  jobs: CodexJobQueueItem[],
+  startingQueuedJobIds: Set<string>,
+  reservedTournamentStarts = 0,
+  serverActiveRunnerCount = 0
+) {
+  if (effectiveCodexRunnerCount(jobs, startingQueuedJobIds, serverActiveRunnerCount) + reservedTournamentStarts >= MAX_ACTIVE_CODEX_JOBS) return false;
+  if (!isStandardDirectionSplitDraft(draft)) return true;
+  return Math.max(activeStandardDirectionSplitJobCount(jobs, startingQueuedJobIds), serverActiveRunnerCount) + reservedTournamentStarts < MAX_ACTIVE_STANDARD_ANIMATION_CODEX_JOBS;
+}
+
+function isSingleDirectionIntermediateSheet(width: number, height: number, cell: SpriteAction["cell"]) {
+  return MOTION_FRAME_COUNTS.some((frameCount) => {
+    const grid = directionSplitAnimationGrid(frameCount);
+    return width === cell.width * grid.columns && height === cell.height * grid.rows;
+  });
+}
+
+function isDirectionSplitSourceAspectCompatible(width: number, height: number, expectedWidth: number, expectedHeight: number) {
+  if (width <= 0 || height <= 0 || expectedWidth <= 0 || expectedHeight <= 0) return false;
+  const sourceRatio = width / height;
+  const expectedRatio = expectedWidth / expectedHeight;
+  return Math.abs(sourceRatio - expectedRatio) / expectedRatio <= 0.03;
+}
+
+function normalizeDirectionSplitSourceCanvas(image: HTMLImageElement, expectedWidth: number, expectedHeight: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = expectedWidth;
+  canvas.height = expectedHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not normalize direction split source image.");
+  context.clearRect(0, 0, expectedWidth, expectedHeight);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, 0, 0, expectedWidth, expectedHeight);
+  return canvas;
+}
+
+function parseDirectionSplitAnimationManifest(imported: CodexOutboxImportResponse) {
+  const text = textFromDataUrl(imported.dataUrl);
+  const parsed = JSON.parse(text) as DirectionSplitAnimationManifest;
+  if (parsed.schema !== DIRECTION_SPLIT_ANIMATION_SCHEMA) {
+    throw new Error(`Direction split manifest has unsupported schema: ${String(parsed.schema ?? "missing")}`);
+  }
+  if (parsed.motionRecipe) {
+    const resolution = resolveMotionRecipe({
+      recipeId: parsed.motionRecipe.id,
+      recipeVersion: parsed.motionRecipe.version,
+      actionName: parsed.action
+    });
+    const topology = BODY_TOPOLOGY_PROFILES.some((profile) => profile.id === parsed.motionRecipe?.bodyTopology)
+      ? parsed.motionRecipe.bodyTopology
+      : undefined;
+    const frameCount = MOTION_FRAME_COUNTS.includes(parsed.motionRecipe.frameCount as MotionFrameCount)
+      ? parsed.motionRecipe.frameCount
+      : MOTION_FRAME_COUNTS.includes(parsed.framesPerDirection as MotionFrameCount)
+        ? parsed.framesPerDirection as MotionFrameCount
+        : undefined;
+    parsed.motionRecipe = motionRecipeReference(resolution.recipe, {
+      topology,
+      frameCount,
+      variant: parsed.motionRecipe.modifiers
+    });
+    parsed.motionRecipeWarnings = resolution.warnings;
+  }
+  return parsed;
+}
+
+function textFromDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:[^,]*,(.*)$/);
+  if (!match) return dataUrl;
+  const payload = match[1];
+  if (dataUrl.includes(";base64,")) {
+    const binary = atob(payload);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+  return decodeURIComponent(payload);
+}
+
+export function shouldReportCompletedCodexImportFailure(status: CodexRunnerStatus | undefined, imported: boolean) {
+  return Boolean(status && status.state === "completed" && !status.diagnostic && !imported);
+}
+
+export function summarizeCodexImportFailureReason(error: unknown, fallback = "Import Latest did not complete.") {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const firstLine = (raw || fallback).split(/\r?\n/)[0]?.trim() || fallback;
+  return firstLine
+    .replace(/\bfile:\/\/\/?[^\s"'`)]+/g, "local file")
+    .replace(/[A-Za-z]:[\\/][^\s"'`)]+/g, "local file")
+    .slice(0, 220);
+}
+
+export function buildOutboxImportKey(
+  kind: "single" | "image-edit" | "animation-sheet" | "direction-split" | "effect-animation" | "bronze-candidate",
+  options: { jobId?: string; filenames: string[]; manifestName?: string } | string
+) {
+  if (typeof options === "string") return `${kind}:${options}`;
+  const jobId = options.jobId?.trim();
+  const filenames = options.filenames.map((name) => name.trim()).filter(Boolean).sort((left, right) => left.localeCompare(right));
+  const fileSignature = filenames.join("|");
+  if (kind === "single") return `single:${fileSignature}`;
+  if (!jobId) return `${kind}:${fileSignature}`;
+  if (kind === "direction-split") return `direction-split:${jobId}:${fileSignature}:${options.manifestName ?? ""}`;
+  return `${kind}:${jobId}:${fileSignature}`;
+}
+
+export function fingerprintOutboxResults(results: CodexOutboxResult[], jobId?: string, newerThan?: string) {
+  const newerThanTime = newerThan ? Date.parse(newerThan) : Number.NEGATIVE_INFINITY;
+  return results
+    .filter((result) => !shouldIgnoreOutboxResultName(result.name))
+    .filter((result) => (jobId ? isOutboxResultForJob(result.name, jobId) : true))
+    .filter((result) => Date.parse(result.modifiedAt) >= newerThanTime)
+    .map((result) => `${result.name}:${result.size}:${result.modifiedAt}`)
+    .sort((left, right) => left.localeCompare(right))
+    .join("|");
+}
+
+export function redactEnvironmentReportText(value: string) {
+  return value
+    .replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, "[REDACTED_DATA_URL]")
+    .replace(/\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]+)\b/g, "[REDACTED_SECRET]")
+    .replace(/[A-Za-z]:\\Users\\[^\\\r\n/]+/g, (match) => `${match.slice(0, 9)}<USER>`)
+    .replace(/\/Users\/[^/\r\n]+/g, "/Users/<USER>");
+}
+
+export function placeholderSuspicionForResult(item: Pick<HistoryItem, "provider" | "size" | "source"> | undefined): PlaceholderSuspicion {
+  if (!item) return "unknown";
+  if (item.provider === "local-generator") return "no";
+  const match = item.size.match(/^(\d+)x(\d+)$/);
+  if (!match) return "unknown";
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return "unknown";
+  if (item.provider === "local-inbox" && item.source === "inbox" && (width < 256 || height < 256 || width * height < 120000)) {
+    return "yes";
+  }
+  return "unknown";
+}
+
+export function buildImageCockpitEnvironmentReport(input: EnvironmentReportInput): EnvironmentReport {
+  const timezoneHours = -input.timezoneOffsetMinutes / 60;
+  const timezone = `UTC${timezoneHours >= 0 ? "+" : ""}${timezoneHours.toFixed(Number.isInteger(timezoneHours) ? 0 : 1)}`;
+  const runnerState = input.runner?.state ?? input.apiHealth?.runner.state ?? "unknown";
+  const runnerErrorCode = input.runner?.errorCode ?? "<none>";
+  const runnerSetupHint = input.runner?.setupHint ?? "<none>";
+  const lastDiagnostic = input.lastFailure?.diagnostic;
+  const report = {
+    app: {
+      version: input.appVersion,
+      url: input.appUrl,
+      route: input.route,
+      localTime: input.localTime,
+      timezone
+    },
+    browser: {
+      userAgent: input.userAgent,
+      language: input.browserLanguage,
+      platform: input.browserPlatform,
+      viewport: `${input.viewport.width}x${input.viewport.height} @ ${input.viewport.devicePixelRatio}x`
+    },
+    api: {
+      health: input.apiHealth ? "ok" : "unavailable",
+      version: input.apiHealth?.version ?? "unknown",
+      port: input.apiHealth?.port ?? null,
+      inboxReadable: Boolean(input.apiHealth?.inboxReadable),
+      outboxReadable: Boolean(input.apiHealth?.outboxReadable),
+      statusReadable: Boolean(input.apiHealth?.statusReadable),
+      logsReadable: Boolean(input.apiHealth?.logsReadable)
+    },
+    supervisor: input.supervisor
+      ? {
+          port: input.supervisor.supervisor.port,
+          apiPort: input.supervisor.api.port,
+          vitePort: input.supervisor.vite.port,
+          mismatches: input.supervisor.mismatches
+        }
+      : { state: "unavailable" },
+    runner: {
+      autorun: input.runner?.autorun ?? input.apiHealth?.runner.autorun ?? false,
+      state: runnerState,
+      errorCode: runnerErrorCode,
+      setupHint: runnerSetupHint
+    },
+    workflow: {
+      providerId: input.providerId,
+      workflowMode: input.workflowMode,
+      activeJobCount: input.activeJobCount,
+      queuedJobCount: input.queuedJobCount,
+      lastJobId: input.lastJobId ?? "unknown"
+    },
+    storage: {
+      safeMode: input.safeMode,
+      skipStorage: input.skipStorage,
+      pressure: input.storagePressure ?? "unknown",
+      usageBytes: input.storageUsageBytes ?? null,
+      quotaBytes: input.storageQuotaBytes ?? null
+    },
+    imagegen: {
+      smoke: input.imagegenSmoke,
+      lastDiagnosticKind: lastDiagnostic?.kind ?? "none",
+      lastDiagnosticTitle: lastDiagnostic?.title ?? "none",
+      lastDiagnosticMessage: lastDiagnostic?.userMessage ?? "none",
+      lastResultProvider: input.lastResult?.provider ?? "none",
+      lastResultSource: input.lastResult?.source ?? "none",
+      lastResultMime: input.lastResult?.mimeType ?? "unknown",
+      lastResultSize: input.lastResult?.size ?? "unknown",
+      lastResultDimensions: input.lastResult?.dimensions ?? "unknown",
+      hasOutboxImportKey: Boolean(input.lastResult?.outboxImportKey),
+      localProcedural: Boolean(input.lastResult?.localProcedural),
+      placeholderSuspected: input.lastResult?.placeholderSuspected ?? "unknown"
+    },
+    safety: {
+      redacted: true,
+      omitted: ["api keys", "tokens", "image data URLs", "prompt text", "job notes", "full logs", "full outbox listings"]
+    }
+  };
+
+  const markdown = redactEnvironmentReportText(`## Image Cockpit Environment Report
+
+- App version: ${report.app.version}
+- App URL: ${report.app.url}
+- Route: ${report.app.route}
+- Browser: ${report.browser.userAgent}
+- Viewport: ${report.browser.viewport}
+- Language: ${report.browser.language}
+- Platform: ${report.browser.platform}
+- Timezone: ${report.app.timezone}
+
+### API
+
+- /api/health: ${report.api.health}
+- API port: ${report.api.port ?? "unknown"}
+- Handoff readable: inbox=${report.api.inboxReadable}, outbox=${report.api.outboxReadable}, status=${report.api.statusReadable}, logs=${report.api.logsReadable}
+
+### Codex Runner
+
+- Autorun: ${report.runner.autorun}
+- Runner state: ${report.runner.state}
+- Error code: ${report.runner.errorCode}
+- Setup hint: ${report.runner.setupHint}
+
+### Imagegen
+
+- imagegen smoke: ${report.imagegen.smoke}
+- Last image job diagnostic: ${report.imagegen.lastDiagnosticKind}
+- Last result provider: ${report.imagegen.lastResultProvider}
+- Last result source: ${report.imagegen.lastResultSource}
+- Local procedural result: ${report.imagegen.localProcedural ? "yes" : "no"}
+- Placeholder suspected: ${report.imagegen.placeholderSuspected}
+
+### Storage
+
+- Safe mode: ${report.storage.safeMode}
+- Skip storage: ${report.storage.skipStorage}
+- Storage pressure: ${report.storage.pressure}
+
+### Notes
+
+- ChatGPT image generation availability and local Codex runner imagegen availability are separate states.
+- I did not include prompts, images, API keys, tokens, full logs, or full outbox listings in this report.
+`);
+
+  return {
+    json: JSON.parse(redactEnvironmentReportText(JSON.stringify(report, null, 2))) as Record<string, unknown>,
+    markdown
+  };
+}
+
+export function settingsTabFromSearch(search = ""): SettingsTab {
+  const params = new URLSearchParams(search);
+  if (params.get("diagnostics") === "1") return "diagnostics";
+  if (params.get("settings") === "environment") return "environment";
+  if (params.get("settings") === "diagnostics") return "diagnostics";
+  if (params.get("settings") === "recovery" || params.get("safe") === "1" || params.get("skipStorage") === "1") return "recovery";
+  return "general";
+}
+
+export function shouldOpenSettingsFromSearch(search = "") {
+  const params = new URLSearchParams(search);
+  return (
+    params.get("settings") === "1" ||
+    Boolean(params.get("settings")) ||
+    params.get("diagnostics") === "1" ||
+    params.get("safe") === "1" ||
+    params.get("skipStorage") === "1"
+  );
+}
+
+type LocalStateScreenMode = "checking" | "normal" | "safe" | "recovery" | "reset" | "reset-complete";
+
+interface LocalStateScreenState {
+  mode: LocalStateScreenMode;
+  preflight?: LocalStateStoragePreflight;
+  summaries?: {
+    history: LocalStateSummary | null;
+    frames: LocalStateSummary | null;
+  };
+  message?: string;
+  error?: string;
+}
+
+function App() {
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyRenderLimit, setHistoryRenderLimit] = useState(INITIAL_HISTORY_RENDER_COUNT);
+  const [frames, setFrames] = useState<SpriteFrame[]>([]);
+  const [actions, setActions] = useState<SpriteAction[]>(() => normalizeAnimationActions(defaultActions));
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [activeActionName, setActiveActionName] = useState("run");
+  const [selectedAnimationPresetId, setSelectedAnimationPresetId] = useState(DEFAULT_ANIMATION_PRESET_ID);
+  const [animationFrameCount, setAnimationFrameCount] = useState<MotionFrameCount>(ANIMATION_FRAME_COUNT);
+  const [animationBodyTopology, setAnimationBodyTopology] = useState<BodyTopologyId>("biped");
+  const [animationMotionVariant, setAnimationMotionVariant] = useState<MotionVariantSelection>(() => ({ ...DEFAULT_MOTION_VARIANT }));
+  const [recentAnimationPresetIds, setRecentAnimationPresetIds] = useState<string[]>([]);
+  const [favoriteAnimationPresetIds, setFavoriteAnimationPresetIds] = useState<string[]>([]);
+  const [animationLibraryTab, setAnimationLibraryTab] = useState<AnimationLibraryKind>("official");
+  const [userAnimationLibrary, setUserAnimationLibrary] = useState<AnimationLibraryItem[]>([]);
+  const [showAnimationPackExportModal, setShowAnimationPackExportModal] = useState(false);
+  const [animationTimelineEditor, setAnimationTimelineEditor] = useState<AnimationTimelineEditorSession | null>(null);
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [animationPackExportDraft, setAnimationPackExportDraft] = useState<AnimationPackExportDraft>(() => createAnimationPackExportDraft());
+  const [language, setLanguage] = useState<Language>(loadLanguage);
+  const [storageHydrated, setStorageHydrated] = useState(false);
+  const [forceLargeStateLoad, setForceLargeStateLoad] = useState(false);
+  const [storageScreen, setStorageScreen] = useState<LocalStateScreenState>(() =>
+    isStorageSafeModeSearch() ? { mode: "safe" } : isStorageResetSearch() ? { mode: "reset" } : { mode: "checking" }
+  );
+  const [storageClearState, setStorageClearState] = useState<{
+    scope?: LocalStateResetScope;
+    message?: string;
+    error?: string;
+  }>({});
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("image-generate");
+  const [showPromptExamples, setShowPromptExamples] = useState(false);
+  const [showAnimationPresetExamples, setShowAnimationPresetExamples] = useState(false);
+  const [showAnimationAdvancedSettings, setShowAnimationAdvancedSettings] = useState(false);
+  const [showAnimationActivity, setShowAnimationActivity] = useState(false);
+  const [providerId, setProviderId] = useState<ProviderId>("codex-handoff");
+  const [animationGenerationMode, setAnimationGenerationMode] = useState<AnimationGenerationMode>("standard");
+  const [animationSourceId, setAnimationSourceId] = useState("");
+  const [animationSourceFingerprint, setAnimationSourceFingerprint] = useState("");
+  const [providers, setProviders] = useState<ProviderStatus[]>(fallbackProviders);
+  const [runnerPreflight, setRunnerPreflight] = useState<CodexRunnerPreflight | null>(null);
+  const [cockpitHealth, setCockpitHealth] = useState<CockpitHealthReport>({
+    state: "checking",
+    checkedAt: "",
+    message: "Checking Cockpit health.",
+    mismatches: [],
+    unimportedResults: 0,
+    repairAvailable: false
+  });
+  const [prompt, setPrompt] = useState("idle breathing loop with gentle robe sway, ready for direction-split sprite frames");
+  const [negativePrompt, setNegativePrompt] = useState("blur, text, watermark, cropped feet");
+  const [jobNotes, setJobNotes] = useState("");
+  const [seed, setSeed] = useState("24682");
+  const [size, setSize] = useState("1024x1024");
+  const [count, setCount] = useState(1);
+  const [quality, setQuality] = useState("auto");
+  const [grid, setGrid] = useState<GridSettings>({ columns: 8, rows: 4, gutter: 0 });
+  const [showGrid, setShowGrid] = useState(true);
+  const [showCenter, setShowCenter] = useState(true);
+  const [tool, setTool] = useState<ToolMode>("select");
+  const [annotationColor, setAnnotationColor] = useState("#1ba978");
+  const [annotationsByItem, setAnnotationsByItem] = useState<Record<string, Annotation[]>>({});
+  const [draftAnnotation, setDraftAnnotation] = useState<Annotation | null>(null);
+  const [selectedFrameId, setSelectedFrameId] = useState("");
+  const [chromaTolerance, setChromaTolerance] = useState(32);
+  const [status, setStatus] = useState("All changes saved locally");
+  const [isBusy, setIsBusy] = useState(false);
+  const [isCockpitRepairing, setIsCockpitRepairing] = useState(false);
+  const [isRecoveringOutboxResults, setIsRecoveringOutboxResults] = useState(false);
+  const [isDedupingHistory, setIsDedupingHistory] = useState(false);
+  const [codexJobs, setCodexJobs] = useState<CodexJobQueueItem[]>([]);
+  const [serverActiveCodexRunnerCount, setServerActiveCodexRunnerCount] = useState(0);
+  const gifPreviewUrl = "";
+  const [animationDirectionPreviews, setAnimationDirectionPreviews] = useState<AnimationDirectionPreview[]>([]);
+  const [isAnimationPreviewBuilding, setIsAnimationPreviewBuilding] = useState(false);
+  const [animationChromaKey, setAnimationChromaKey] = useState<AnimationChromaKeyName>("green");
+  const [animationDirectionPreset, setAnimationDirectionPreset] = useState<AnimationDirectionPresetId>("five");
+  const [animationSingleDirection, setAnimationSingleDirection] = useState<AnimationDirectionId>(DEFAULT_SINGLE_ANIMATION_DIRECTION);
+  const [animationGenerationProfile, setAnimationGenerationProfile] = useState<AnimationGenerationProfile>("best");
+  const [motionPilotEnabled, setMotionPilotEnabled] = useState(false);
+  const [animationTournamentMonitors, setAnimationTournamentMonitors] = useState<AnimationTournamentMonitorEntry[]>([]);
+  const [directionRepairSelections, setDirectionRepairSelections] = useState<Record<string, string[]>>({});
+  const [animationReviewManifest, setAnimationReviewManifest] = useState<AnimationTournamentManifestClient | null>(null);
+  const [animationReviewCandidates, setAnimationReviewCandidates] = useState<AnimationReviewCandidateView[]>([]);
+  const [animationReviewFrameCount, setAnimationReviewFrameCount] = useState<number>(ANIMATION_FRAME_COUNT);
+  const [animationReviewSourceDataUrl, setAnimationReviewSourceDataUrl] = useState<string>();
+  const [animationReviewLoading, setAnimationReviewLoading] = useState(false);
+  const [batchMatrixSourceIds, setBatchMatrixSourceIds] = useState<string[]>([]);
+  const [batchMatrixPresetIds, setBatchMatrixPresetIds] = useState<string[]>(["idle-breathing", "walk-cycle"]);
+  const [isBatchMatrixStarting, setIsBatchMatrixStarting] = useState(false);
+  const [effectCategoryId, setEffectCategoryId] = useState<EffectCategoryId>("slash-arc");
+  const [effectTypeId, setEffectTypeId] = useState("crescent");
+  const [effectStyleId, setEffectStyleId] = useState<EffectStyleId>("pixel-clean");
+  const [effectPaletteId, setEffectPaletteId] = useState<EffectPaletteId>("cyan-white");
+  const [effectFrameCount, setEffectFrameCount] = useState(EFFECT_DEFAULT_FRAME_COUNT);
+  const [effectCanvasSize, setEffectCanvasSize] = useState(EFFECT_DEFAULT_CANVAS_SIZE);
+  const [effectLayoutId, setEffectLayoutId] = useState<EffectLayoutId>(EFFECT_DEFAULT_LAYOUT);
+  const [effectLoopMode, setEffectLoopMode] = useState<EffectLoopMode>("one-shot");
+  const [effectAnchorMode, setEffectAnchorMode] = useState<EffectAnchorMode>("center");
+  const [effectBackgroundPreview, setEffectBackgroundPreview] = useState<EffectBackgroundPreview>("checkerboard");
+  const [effectGifPreviewUrl, setEffectGifPreviewUrl] = useState("");
+  const [isEffectPreviewBuilding, setIsEffectPreviewBuilding] = useState(false);
+  const [showEffectPicker, setShowEffectPicker] = useState(false);
+  const [effectPickerCategoryId, setEffectPickerCategoryId] = useState<EffectCategoryId>("slash-arc");
+  const [effectPickerTypeId, setEffectPickerTypeId] = useState("crescent");
+  const [showEffectAdvancedSettings, setShowEffectAdvancedSettings] = useState(false);
+  const [showVfxCompositeStage, setShowVfxCompositeStage] = useState(false);
+  const [imageEditComparison, setImageEditComparison] = useState<ImageEditComparison | null>(null);
+  const [codexFailureNotices, setCodexFailureNotices] = useState<CodexFailureNotice[]>([]);
+  const [codexJobLogs, setCodexJobLogs] = useState<CodexJobLogItem[]>([]);
+  const [codexLogsCollapsed, setCodexLogsCollapsed] = useState(false);
+  const [codexLogsFullscreen, setCodexLogsFullscreen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => shouldOpenSettingsFromSearch(window.location.search));
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => settingsTabFromSearch(window.location.search));
+  const [settingsCopyStatus, setSettingsCopyStatus] = useState("");
+  const [jobNotificationsEnabled, setJobNotificationsEnabled] = useState(loadJobNotificationsEnabled);
+  const [imagegenSmokeState] = useState<ImagegenSmokeState>("not_run");
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const promptExamplesReturnFocusRef = useRef<HTMLElement | null>(null);
+  const animationReviewReturnFocusRef = useRef<HTMLElement | null>(null);
+  const animationPresetReturnFocusRef = useRef<HTMLElement | null>(null);
+  const animationAdvancedReturnFocusRef = useRef<HTMLElement | null>(null);
+  const animationActivityReturnFocusRef = useRef<HTMLElement | null>(null);
+  const effectPickerReturnFocusRef = useRef<HTMLElement | null>(null);
+  const effectAdvancedReturnFocusRef = useRef<HTMLElement | null>(null);
+  const vfxCompositeReturnFocusRef = useRef<HTMLElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const animationPackInputRef = useRef<HTMLInputElement | null>(null);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const historyLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<HistoryItem[]>([]);
+  const startingQueuedJobIdsRef = useRef<Set<string>>(new Set());
+  const startingPersistedTournamentCandidatesRef = useRef<Map<string, number>>(new Map());
+  const pollingAnimationTournamentIdsRef = useRef<Set<string>>(new Set());
+  const serverTournamentRestoreStartedRef = useRef(false);
+  const recoveredAcceptedTournamentIdsRef = useRef<Set<string>>(new Set());
+  const sessionAllowedAnimationTournamentIdsRef = useRef<Set<string>>(new Set());
+  const handleGenerateInFlightRef = useRef(false);
+  const batchMatrixInitializedRef = useRef(false);
+  const retryingFailureJobIdsRef = useRef<Set<string>>(new Set());
+  const lastPointerEventAtRef = useRef(0);
+  const originalDocumentTitleRef = useRef(document.title);
+  const documentTitleResetTimerRef = useRef<number | null>(null);
+  const settingsAutoDismissedRef = useRef(sessionStorage.getItem("image-cockpit.settings.dismissed") === "1");
+  const copy = uiCopy[language];
+
+  const selected = useMemo(
+    () => history.find((item) => item.id === selectedId) ?? history[0],
+    [history, selectedId]
+  );
+  const batchMatrixSources = useMemo(
+    () => history.filter((item) => isAnimationSource(item)).slice(0, 12),
+    [history]
+  );
+
+  useEffect(() => {
+    if (batchMatrixInitializedRef.current || batchMatrixSources.length < 2) return;
+    batchMatrixInitializedRef.current = true;
+    setBatchMatrixSourceIds(batchMatrixSources.slice(0, 2).map((item) => item.id));
+  }, [batchMatrixSources]);
+  const selectedHistoryIndex = useMemo(
+    () => (selected?.id ? history.findIndex((item) => item.id === selected.id) : -1),
+    [history, selected?.id]
+  );
+  const visibleHistoryCount = useMemo(
+    () => getVisibleHistoryCount(history.length, historyRenderLimit, selectedHistoryIndex),
+    [history.length, historyRenderLimit, selectedHistoryIndex]
+  );
+  const visibleHistory = useMemo(
+    () => history.slice(0, visibleHistoryCount),
+    [history, visibleHistoryCount]
+  );
+  const hasMoreHistory = visibleHistoryCount < history.length;
+  const environmentReport = useMemo(() => {
+    const selectedMime = selected?.dataUrl.match(/^data:([^;,]+)/)?.[1];
+    const storageEstimate = storageScreen.preflight?.estimate;
+    return buildImageCockpitEnvironmentReport({
+      appVersion: "0.2.1",
+      appUrl: window.location.origin,
+      route: `${window.location.pathname}${window.location.search}`,
+      userAgent: navigator.userAgent,
+      browserLanguage: navigator.language,
+      browserPlatform: navigator.platform,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1
+      },
+      timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      localTime: new Date().toISOString(),
+      apiHealth: cockpitHealth.api,
+      runner: runnerPreflight,
+      supervisor: cockpitHealth.supervisor,
+      providerId,
+      workflowMode,
+      safeMode: storageScreen.mode === "safe" || Boolean(storageScreen.preflight?.safeModeRequested),
+      skipStorage: storageScreen.mode === "safe" || storageScreen.mode === "recovery",
+      storagePressure: storageScreen.preflight?.pressure,
+      storageUsageBytes: storageEstimate?.usage,
+      storageQuotaBytes: storageEstimate?.quota,
+      activeJobCount: codexJobs.filter((job) => job.state === "running").length,
+      queuedJobCount: codexJobs.filter((job) => job.state === "queued").length,
+      lastJobId: codexJobs[0]?.id ?? codexFailureNotices[0]?.jobId,
+      lastFailure: codexFailureNotices[0],
+      lastResult: selected
+        ? {
+            provider: selected.provider,
+            source: selected.source,
+            name: selected.name,
+            size: selected.size,
+            outboxImportKey: selected.outboxImportKey,
+            mimeType: selectedMime,
+            dimensions: selected.size,
+            placeholderSuspected: placeholderSuspicionForResult(selected),
+            localProcedural: selected.provider === "local-generator"
+          }
+        : undefined,
+      imagegenSmoke: imagegenSmokeState
+    });
+  }, [cockpitHealth.api, cockpitHealth.supervisor, codexFailureNotices, codexJobs, imagegenSmokeState, providerId, runnerPreflight, selected, storageScreen, workflowMode]);
+
+  useEffect(() => {
+    setDownloadModalOpen(false);
+  }, [selected?.id]);
+
+  const animationSource = useMemo(() => {
+    const explicitSource = history.find((item) => item.id === animationSourceId);
+    if (isAnimationSource(explicitSource)) return explicitSource;
+    if (isAnimationSource(selected)) return selected;
+    return undefined;
+  }, [animationSourceId, history, selected]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!animationSource?.dataUrl) {
+      setAnimationSourceFingerprint("");
+      return;
+    }
+    void fingerprintImageSource(animationSource.dataUrl)
+      .then((fingerprint) => {
+        if (!cancelled) setAnimationSourceFingerprint(fingerprint);
+      })
+      .catch(() => {
+        if (!cancelled) setAnimationSourceFingerprint("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [animationSource?.dataUrl]);
+
+  const activeAction = useMemo(
+    () => actions.find((action) => action.name === activeActionName) ?? actions[0],
+    [actions, activeActionName]
+  );
+  const selectedAnimationPreset = useMemo(
+    () => getAnimationPresetById(selectedAnimationPresetId),
+    [selectedAnimationPresetId]
+  );
+  const selectedMotionRecipe = useMemo(
+    () => motionRecipeForPreset(selectedAnimationPreset),
+    [selectedAnimationPreset]
+  );
+  const selectedBodyTopologyProfile = useMemo(
+    () => getBodyTopologyProfile(animationBodyTopology),
+    [animationBodyTopology]
+  );
+  const selectedAnimationDirections = useMemo(
+    () => animationDirectionsForPreset(animationDirectionPreset, animationSingleDirection),
+    [animationDirectionPreset, animationSingleDirection]
+  );
+  const selectedMotionRecipeCompilation = useMemo(
+    () => compileMotionRecipe({
+      recipe: selectedMotionRecipe,
+      directions: selectedAnimationDirections,
+      topology: animationBodyTopology,
+      frameCount: animationFrameCount,
+      variant: animationMotionVariant
+    }),
+    [selectedMotionRecipe, selectedAnimationDirections, animationBodyTopology, animationFrameCount, animationMotionVariant]
+  );
+  const activeEffectCategory = useMemo(
+    () => getEffectCategoryById(effectCategoryId),
+    [effectCategoryId]
+  );
+  const effectPickerCategory = useMemo(
+    () => getEffectCategoryById(effectPickerCategoryId),
+    [effectPickerCategoryId]
+  );
+  const activeEffectType = useMemo(
+    () => getEffectTypeById(activeEffectCategory, effectTypeId),
+    [activeEffectCategory, effectTypeId]
+  );
+  const activeEffectStyle = useMemo(
+    () => effectStyleOptions.find((item) => item.id === effectStyleId) ?? effectStyleOptions[0],
+    [effectStyleId]
+  );
+  const activeEffectPalette = useMemo(
+    () => effectPaletteOptions.find((item) => item.id === effectPaletteId) ?? effectPaletteOptions[0],
+    [effectPaletteId]
+  );
+  const activeEffectLayout = useMemo(
+    () => effectLayoutOptions.find((item) => item.id === effectLayoutId) ?? effectLayoutOptions[0],
+    [effectLayoutId]
+  );
+  const effectSheetGrid = useMemo(
+    () => resolveEffectSheetGrid(effectLayoutId, effectFrameCount),
+    [effectFrameCount, effectLayoutId]
+  );
+  const effectSheetGridStyle = useMemo(
+    () =>
+      ({
+        "--sprite-grid-columns": effectSheetGrid.columns,
+        "--sprite-grid-rows": effectSheetGrid.rows
+      }) as CSSProperties,
+    [effectSheetGrid.columns, effectSheetGrid.rows]
+  );
+  const effectSheetSize = useMemo(
+    () => ({
+      width: effectCanvasSize * effectSheetGrid.columns,
+      height: effectCanvasSize * effectSheetGrid.rows
+    }),
+    [effectCanvasSize, effectSheetGrid.columns, effectSheetGrid.rows]
+  );
+  const effectJobContext = useMemo(
+    () =>
+      buildEffectAnimationJobContext({
+        categoryId: effectCategoryId,
+        typeId: effectTypeId,
+        styleId: effectStyleId,
+        paletteId: effectPaletteId,
+        frameCount: effectFrameCount,
+        canvasSize: effectCanvasSize,
+        layoutId: effectLayoutId,
+        loopMode: effectLoopMode,
+        anchorMode: effectAnchorMode,
+        customPrompt: prompt,
+        negativePrompt,
+        language
+      }),
+    [
+      effectAnchorMode,
+      effectCanvasSize,
+      effectCategoryId,
+      effectFrameCount,
+      effectLayoutId,
+      effectLoopMode,
+      effectPaletteId,
+      effectStyleId,
+      effectTypeId,
+      language,
+      negativePrompt,
+      prompt
+    ]
+  );
+  const officialAnimationLibrary = OFFICIAL_ANIMATION_LIBRARY;
+  const activeAnimationLibraryItems = animationLibraryTab === "official"
+    ? officialAnimationLibrary
+    : userAnimationLibrary;
+
+  useEffect(() => {
+    const category = getEffectCategoryById(effectCategoryId);
+    if (!category.types.some((item) => item.id === effectTypeId)) {
+      setEffectTypeId(category.types[0]?.id ?? "");
+    }
+    setEffectLoopMode(category.defaultLoop);
+    setEffectAnchorMode(category.defaultAnchor);
+    setEffectFrameCount(category.defaultFrameCount ?? EFFECT_DEFAULT_FRAME_COUNT);
+    setEffectCanvasSize(category.defaultCanvasSize ?? EFFECT_DEFAULT_CANVAS_SIZE);
+  }, [effectCategoryId, effectTypeId]);
+
+  const actionFrames = useMemo(
+    () =>
+      activeAction.frameIds
+        .map((frameId) => frames.find((frame) => frame.id === frameId))
+        .filter((frame): frame is SpriteFrame => Boolean(frame)),
+    [activeAction.frameIds, frames]
+  );
+
+  const selectedIsEffectResult = isEffectAnimationHistoryItem(selected);
+  const selectedEffectMetadata = selectedIsEffectResult ? selected?.effectAnimation : undefined;
+  const selectedEffectFrames = useMemo(
+    () =>
+      selectedIsEffectResult && selected
+        ? frames
+            .filter((frame) => frame.sourceId === selected.id)
+            .slice()
+            .sort((left, right) => left.index - right.index)
+        : [],
+    [frames, selected, selectedIsEffectResult]
+  );
+  const selectedEffectSheetGrid = useMemo(
+    () => selectedEffectMetadata?.layout ?? resolveEffectSheetGrid(EFFECT_DEFAULT_LAYOUT, selectedEffectFrames.length || EFFECT_DEFAULT_FRAME_COUNT),
+    [selectedEffectFrames.length, selectedEffectMetadata?.layout]
+  );
+  const selectedEffectSheetGridStyle = useMemo(
+    () =>
+      ({
+        "--sprite-grid-columns": selectedEffectSheetGrid.columns,
+        "--sprite-grid-rows": selectedEffectSheetGrid.rows
+      }) as CSSProperties,
+    [selectedEffectSheetGrid.columns, selectedEffectSheetGrid.rows]
+  );
+  const selectedEffectAction = useMemo<SpriteAction>(() => {
+    const firstFrame = selectedEffectFrames[0];
+    const metadata = selectedEffectMetadata;
+    const baseName = selected?.name.replace(/\.[^.]+$/, "") || metadata?.name || "effect-animation";
+    const cell = metadata?.frameSize ?? (firstFrame ? { width: firstFrame.width, height: firstFrame.height } : activeAction.cell);
+    return {
+      name: `${baseName}_effect`,
+      fps: metadata?.fps ?? EFFECT_DEFAULT_FPS,
+      loop: metadata?.loopMode !== "one-shot",
+      playbackMode: metadata?.loopMode === "ping-pong-loop" ? "ping-pong-reverse" : undefined,
+      frameIds: selectedEffectFrames.map((frame) => frame.id),
+      cell,
+      anchor: metadata?.anchor ?? { x: Math.round(cell.width / 2), y: Math.round(cell.height / 2) }
+    };
+  }, [activeAction.cell, selected, selectedEffectFrames, selectedEffectMetadata]);
+  const selectedEffectExportReady = Boolean(
+    selected && selected.source === "generate" && selectedIsEffectResult && selectedEffectFrames.length > 0
+  );
+
+  const selectedAnimationFrames = useMemo(
+    () =>
+      selected && !selectedIsEffectResult
+        ? frames
+            .filter((frame) => frame.sourceId === selected.id)
+            .slice()
+            .sort((left, right) => left.index - right.index)
+        : [],
+    [frames, selected, selectedIsEffectResult]
+  );
+
+  const selectedAnimationAction = useMemo<SpriteAction>(() => {
+    const firstFrame = selectedAnimationFrames[0];
+    const baseName = selected?.name.replace(/\.[^.]+$/, "") || activeAction.name;
+    const cell = firstFrame ? { width: firstFrame.width, height: firstFrame.height } : activeAction.cell;
+    return {
+      ...activeAction,
+      name: `${baseName}_animation`,
+      frameIds: selectedAnimationFrames.map((frame) => frame.id),
+      cell,
+      anchor: firstFrame ? animationExportAnchor(cell.width, cell.height) : activeAction.anchor
+    };
+  }, [activeAction, selected, selectedAnimationFrames]);
+
+  const selectedAnimationVariant = inferAnimationGenerationMode(selectedAnimationFrames);
+  const selectedAnimationFramesPerDirection = historyAnimationFrameCount(selected);
+  const selectedAnimationSheetGrid = useMemo(
+    () => inferAnimationSheetGrid(selectedAnimationFrames, selectedAnimationVariant, selectedAnimationFramesPerDirection),
+    [selectedAnimationFrames, selectedAnimationVariant, selectedAnimationFramesPerDirection]
+  );
+  const selectedAnimationSheetGridStyle = useMemo(
+    () =>
+      ({
+        "--sprite-grid-columns": selectedAnimationSheetGrid.columns,
+        "--sprite-grid-rows": selectedAnimationSheetGrid.rows
+      }) as CSSProperties,
+    [selectedAnimationSheetGrid.columns, selectedAnimationSheetGrid.rows]
+  );
+  const selectedAnimationExportReady = Boolean(
+    selected && selected.source === "generate" && selectedAnimationFrames.length > 0
+  );
+  const selectedIsAnimationResult = selectedAnimationExportReady;
+  const selectedAnimationPreviewActions = useMemo(
+    () =>
+      selectedAnimationVariant === "directional-hatch-pet"
+        ? buildDirectionalHatchPetPreviewActions(selectedAnimationAction, selectedAnimationFrames)
+        : selectedAnimationVariant === "hatch-pet"
+        ? buildHatchPetStatePreviewActions(selectedAnimationAction, selectedAnimationFrames)
+        : buildAnimationDirectionPreviewActions(selectedAnimationAction, selectedAnimationFrames, selected?.animationDirections, selectedAnimationFramesPerDirection),
+    [selectedAnimationAction, selectedAnimationFrames, selectedAnimationVariant, selected, selectedAnimationFramesPerDirection]
+  );
+  const vfxCompositeCharacters = useMemo(
+    () => history.filter((item) => isAnimationResultHistoryItem(item) && frames.some((frame) => frame.sourceId === item.id)),
+    [frames, history]
+  );
+  const vfxCompositeEffects = useMemo(
+    () => history.filter((item): item is HistoryItem & { effectAnimation: EffectAnimationMetadata } =>
+      Boolean(item.effectAnimation && effectQualityRankAllowsDownload(item.effectAnimation.qualityRank) && frames.some((frame) => frame.sourceId === item.id))
+    ),
+    [frames, history]
+  );
+
+  const selectedAnimationSource = useMemo(
+    () =>
+      selected?.derivedFromId
+        ? history.find((item) => item.id === selected.derivedFromId)
+        : undefined,
+    [history, selected]
+  );
+
+  const selectedImageEditSource = useMemo(
+    () =>
+      selected?.derivedFromId && !selectedAnimationExportReady && !selectedEffectExportReady
+        ? history.find((item) => item.id === selected.derivedFromId)
+        : undefined,
+    [history, selected, selectedAnimationExportReady, selectedEffectExportReady]
+  );
+
+  const selectedFrame = useMemo(
+    () => frames.find((frame) => frame.id === selectedFrameId) ?? actionFrames[0],
+    [actionFrames, frames, selectedFrameId]
+  );
+
+  const selectedFrameForPreview = useMemo(
+    () => (selectedFrameId ? frames.find((frame) => frame.id === selectedFrameId) : undefined),
+    [frames, selectedFrameId]
+  );
+  const protectedPersistedFrameIds = useMemo(
+    () => new Set([
+      ...activeAction.frameIds,
+      ...selectedAnimationFrames.map((frame) => frame.id),
+      ...selectedEffectFrames.map((frame) => frame.id)
+    ]),
+    [activeAction.frameIds, selectedAnimationFrames, selectedEffectFrames]
+  );
+  const canPersistLocalState = storageHydrated && storageScreen.mode === "normal";
+
+  const isPreviewingSelectedFrame = Boolean(selectedFrameForPreview?.sourceId && selectedFrameForPreview.sourceId === selected?.id);
+  const selectedAnnotations = useMemo(
+    () => (selected ? annotationsByItem[selected.id] ?? [] : []),
+    [annotationsByItem, selected]
+  );
+
+  const qc = useMemo(
+    () => summarizeFrames(actionFrames, activeAction.cell.width, activeAction.cell.height),
+    [actionFrames, activeAction.cell.height, activeAction.cell.width]
+  );
+
+  const loadMoreHistoryResults = useCallback(() => {
+    setHistoryRenderLimit((current) =>
+      getNextHistoryRenderLimit(Math.max(current, visibleHistoryCount), history.length)
+    );
+  }, [history.length, visibleHistoryCount]);
+
+  const maybeLoadMoreHistoryResults = useCallback(
+    (target: HTMLElement) => {
+      if (!hasMoreHistory) return;
+      const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+      if (remaining > HISTORY_SCROLL_LOAD_THRESHOLD_PX) return;
+      loadMoreHistoryResults();
+    },
+    [hasMoreHistory, loadMoreHistoryResults]
+  );
+
+  useEffect(() => {
+    const list = historyListRef.current;
+    const sentinel = historyLoadMoreRef.current;
+    if (!list || !sentinel || !hasMoreHistory || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMoreHistoryResults();
+      },
+      {
+        root: list,
+        rootMargin: `${HISTORY_SCROLL_LOAD_THRESHOLD_PX}px`
+      }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreHistory, loadMoreHistoryResults]);
+
+  useEffect(() => {
+    const list = historyListRef.current;
+    if (!list || !hasMoreHistory) return;
+    const listener = () => maybeLoadMoreHistoryResults(list);
+    list.addEventListener("scroll", listener, { passive: true });
+    return () => list.removeEventListener("scroll", listener);
+  }, [hasMoreHistory, maybeLoadMoreHistoryResults]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateLocalState = async () => {
+      setStorageHydrated(false);
+      const preflight = await preflightLocalStateStorage();
+      if (cancelled) return;
+
+      const summaries = readLocalStateSummaries();
+      if (preflight.resetRequested) {
+        setHistory([]);
+        setFrames([]);
+        setActions(normalizeAnimationActions(defaultActions));
+        setUserAnimationLibrary([]);
+        setCodexJobs([]);
+        setStorageScreen({ mode: "reset", preflight, summaries, message: "Local state reset is ready." });
+        setStatus("Local state reset is ready. No large browser state was loaded.");
+        setStorageHydrated(true);
+        return;
+      }
+
+      if (!forceLargeStateLoad && preflight.shouldSkipLargeState) {
+        setHistory([]);
+        setFrames([]);
+        setActions(normalizeAnimationActions(defaultActions));
+        setUserAnimationLibrary([]);
+        setCodexJobs([]);
+        setStorageScreen({
+          mode: preflight.safeModeRequested ? "safe" : "recovery",
+          preflight,
+          summaries,
+          message: "Local state safe mode: large browser storage was not loaded."
+        });
+        setStatus("Local state safe mode: large browser storage was not loaded.");
+        setStorageHydrated(true);
+        return;
+      }
+
+      try {
+        const persisted = await loadPersistedState(defaultActions);
+        if (cancelled) return;
+        const dedupedHistory = dedupeLocalInboxHistory(persisted.history);
+        const remappedFrames = remapFrameSourceIds(persisted.frames, dedupedHistory.idReplacements);
+        setHistory(dedupedHistory.history);
+        historyRef.current = dedupedHistory.history;
+        setFrames(remappedFrames.frames);
+        setActions(normalizeAnimationActions(persisted.actions));
+        setUserAnimationLibrary(persisted.animationLibrary.slice(0, MAX_USER_ANIMATION_LIBRARY_ITEMS));
+        setCodexJobs(loadPendingCodexJobs());
+        setStorageScreen({
+          mode: "normal",
+          preflight,
+          summaries,
+          message: preflight.pressure === "warning" ? "Browser storage is above the warning threshold." : undefined
+        });
+        if (dedupedHistory.removedCount > 0) {
+          setStatus(
+            `Recovered local history: removed ${dedupedHistory.removedCount} duplicate Local Inbox result${dedupedHistory.removedCount === 1 ? "" : "s"}.`
+          );
+        } else if (preflight.pressure === "warning") {
+          setStatus(`Browser storage warning: ${formatStorageBytes(preflight.estimate?.usage)} used. Old local results will be retained conservatively.`);
+        }
+        setStorageHydrated(true);
+      } catch (error) {
+        if (cancelled) return;
+        setHistory([]);
+        setFrames([]);
+        setActions(normalizeAnimationActions(defaultActions));
+        setUserAnimationLibrary([]);
+        setCodexJobs([]);
+        setStorageScreen({
+          mode: "recovery",
+          preflight,
+          summaries,
+          error: error instanceof Error ? error.message : "Could not load local browser state."
+        });
+        setStatus("Could not load local browser state. Recovery mode is available.");
+        setStorageHydrated(true);
+      }
+    };
+    void hydrateLocalState();
+    return () => {
+      cancelled = true;
+    };
+  }, [forceLargeStateLoad]);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    if (canPersistLocalState) saveHistory(history, selectedId);
+  }, [canPersistLocalState, history, selectedId]);
+  useEffect(() => {
+    if (canPersistLocalState) saveFrames(frames, protectedPersistedFrameIds);
+  }, [canPersistLocalState, frames, protectedPersistedFrameIds]);
+  useEffect(() => {
+    if (canPersistLocalState) saveActions(actions);
+  }, [actions, canPersistLocalState]);
+  useEffect(() => {
+    if (canPersistLocalState) saveUserAnimationLibrary(userAnimationLibrary);
+  }, [canPersistLocalState, userAnimationLibrary]);
+  useEffect(() => saveLanguage(language), [language]);
+  useEffect(() => saveJobNotificationsEnabled(jobNotificationsEnabled), [jobNotificationsEnabled]);
+  useEffect(() => {
+    return () => {
+      if (documentTitleResetTimerRef.current) {
+        window.clearTimeout(documentTitleResetTimerRef.current);
+      }
+    };
+  }, []);
+  useEffect(() => {
+    if (canPersistLocalState) savePendingCodexJobs(codexJobs);
+  }, [canPersistLocalState, codexJobs]);
+
+  useEffect(() => {
+    if (!storageHydrated || serverTournamentRestoreStartedRef.current) return;
+    serverTournamentRestoreStartedRef.current = true;
+    let cancelled = false;
+
+    const restore = async () => {
+      const response = await fetch("/api/codex/tournaments");
+      if (!response.ok) throw new Error(await response.text());
+      const manifests = ((await response.json()) as { tournaments: AnimationTournamentManifestClient[] }).tournaments;
+      if (cancelled) return;
+      const resumableManifests = manifests.filter((item) => item.state === "queued" || item.state === "running" || item.state === "pilot-expanding");
+      const resumableIds = new Set(resumableManifests.map((item) => item.tournamentId));
+      const recentTerminalManifests = manifests
+        .filter((item) => !resumableIds.has(item.tournamentId))
+        .slice(0, Math.max(0, 12 - resumableManifests.length));
+      setAnimationTournamentMonitors(
+        [...resumableManifests, ...recentTerminalManifests]
+          .map((manifest) => ({ manifest, restoredAt: new Date().toISOString() }))
+      );
+      const existingIds = new Set(codexJobs.map((job) => job.id));
+      const restored: CodexJobQueueItem[] = [];
+      for (const manifest of resumableManifests) {
+        for (const candidate of manifest.candidates) {
+          if (
+            !candidate.jobId ||
+            existingIds.has(candidate.jobId) ||
+            candidate.state === "accepted" ||
+            candidate.state === "failed" ||
+            candidate.state === "cancelled"
+          ) continue;
+          restored.push(tournamentQueueItemFromManifest(manifest, candidate.index, {
+            id: candidate.jobId,
+            path: `server-tournament:${manifest.tournamentId}:${candidate.jobId}`,
+            outboxPath: undefined,
+            createdAt: candidate.createdAt ?? manifest.createdAt
+          }));
+          existingIds.add(candidate.jobId);
+        }
+      }
+      if (restored.length > 0 && !cancelled) {
+        setCodexJobs((current) => [...current, ...restored.filter((job) => !current.some((item) => item.id === job.id))]);
+      }
+      const acceptedSmartRaceManifests = manifests.filter(
+        (manifest) =>
+          manifest.state === "accepted" &&
+          manifest.selectionPolicy === "smart-race" &&
+          Boolean(manifest.winnerCandidateId) &&
+          !recoveredAcceptedTournamentIdsRef.current.has(manifest.tournamentId)
+      ).slice(0, 12);
+      for (const manifest of acceptedSmartRaceManifests) {
+        if (cancelled || !manifest.winnerCandidateId) return;
+        recoveredAcceptedTournamentIdsRef.current.add(manifest.tournamentId);
+        try {
+          const reconciled = await publishCodexTournamentWinner(
+            manifest.tournamentId,
+            manifest.winnerCandidateId,
+            undefined,
+            false
+          );
+          const unconfirmedCancellations = (reconciled.cancellationResults ?? []).filter((result) => !result.ok);
+          if (unconfirmedCancellations.length > 0) {
+            throw new Error(
+              `Winner is accepted, but loser runner cancellation is still unconfirmed: ${unconfirmedCancellations.map((result) => result.jobId).join(", ")}`
+            );
+          }
+          const alreadyImported = historyRef.current.some(
+            (item) =>
+              item.outboxImportKey?.includes(manifest.winnerCandidateId!) &&
+              item.name.includes("direction-split-animation-sheet")
+          );
+          if (!alreadyImported) await refreshAcceptedTournamentArtifact(reconciled.tournament);
+          if (!cancelled) setStatus(`Recovered accepted Smart Race winner after reload: ${manifest.winnerCandidateId}.`);
+        } catch (error) {
+          recoveredAcceptedTournamentIdsRef.current.delete(manifest.tournamentId);
+          if (!cancelled) {
+            setStatus(error instanceof Error
+              ? `Accepted Smart Race winner recovery failed: ${error.message}`
+              : "Accepted Smart Race winner recovery failed.");
+          }
+        }
+      }
+
+    };
+
+    void restore().catch((error) => {
+      if (!cancelled) setStatus(error instanceof Error ? `Tournament resume failed: ${error.message}` : "Tournament resume failed.");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [storageHydrated]);
+
+  useEffect(() => {
+    if (!storageHydrated || animationTournamentMonitors.length === 0) return;
+    const activeRunnerCount = effectiveCodexRunnerCount(
+      codexJobs,
+      startingQueuedJobIdsRef.current,
+      serverActiveCodexRunnerCount
+    );
+    const reservedRunnerCount = reservedAnimationInitialCandidateSlots(startingPersistedTournamentCandidatesRef.current);
+    if (activeRunnerCount > 0 || reservedRunnerCount > 0) return;
+
+    const manifest = animationTournamentMonitors
+      .map((entry) => entry.manifest)
+      .find((candidateManifest) => {
+        if (!isAnimationTournamentAllowedForSession(
+          sessionAllowedAnimationTournamentIdsRef.current,
+          candidateManifest.tournamentId
+        )) return false;
+        if (candidateManifest.state !== "queued") return false;
+        const initialCandidates = candidateManifest.candidates.slice(0, candidateManifest.initialCandidateCount);
+        return initialCandidates.length > 0 && initialCandidates.every((candidate) => !candidate.jobId && candidate.state === "queued");
+      });
+    if (!manifest || startingPersistedTournamentCandidatesRef.current.has(manifest.tournamentId)) return;
+
+    const admission = planAnimationInitialCandidateAdmission({
+      initialCandidateCount: manifest.initialCandidateCount,
+      activeRunnerCount,
+      reservedRunnerCount,
+      maxActiveRunnerCount: MAX_ACTIVE_CODEX_JOBS
+    });
+    if (!admission.allowed) return;
+
+    startingPersistedTournamentCandidatesRef.current.set(manifest.tournamentId, admission.requiredSlots);
+    void startPersistedTournamentInitialCandidates(manifest)
+      .catch((error) => setStatus(error instanceof Error ? error.message : "Could not resume the initial animation candidate wave."))
+      .finally(() => startingPersistedTournamentCandidatesRef.current.delete(manifest.tournamentId));
+  }, [animationTournamentMonitors, codexJobs, serverActiveCodexRunnerCount, storageHydrated]);
+
+  useEffect(() => {
+    if (settingsOpen || settingsAutoDismissedRef.current) return;
+    const hasStorageProblem = storageScreen.mode === "safe" || storageScreen.mode === "recovery" || storageScreen.mode === "reset";
+    const hasApiProblem = cockpitHealth.state === "broken";
+    const hasImagegenProblem = codexFailureNotices.some((notice) =>
+      notice.diagnostic.kind === "imagegen_unavailable" || notice.diagnostic.kind === "no_image_returned"
+    );
+    if (hasStorageProblem) {
+      setSettingsTab("recovery");
+      setSettingsOpen(true);
+    } else if (hasApiProblem || hasImagegenProblem) {
+      setSettingsTab("diagnostics");
+      setSettingsOpen(true);
+    }
+  }, [cockpitHealth.state, codexFailureNotices, settingsOpen, storageScreen.mode]);
+
+  function openSettings(tab: SettingsTab = "general") {
+    setSettingsTab(tab);
+    setSettingsCopyStatus("");
+    setSettingsOpen(true);
+  }
+
+  function closeSettings() {
+    settingsAutoDismissedRef.current = true;
+    sessionStorage.setItem("image-cockpit.settings.dismissed", "1");
+    setSettingsOpen(false);
+  }
+
+  async function copyEnvironmentReport(kind: "markdown" | "json") {
+    const value = kind === "markdown" ? environmentReport.markdown : JSON.stringify(environmentReport.json, null, 2);
+    try {
+      await navigator.clipboard.writeText(value);
+      setSettingsCopyStatus(kind === "markdown" ? "Markdown copied." : "JSON copied.");
+    } catch {
+      const textArea = document.createElement("textarea");
+      textArea.value = value;
+      textArea.setAttribute("readonly", "true");
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(textArea);
+      setSettingsCopyStatus(copied ? (kind === "markdown" ? "Markdown copied." : "JSON copied.") : "Copy failed.");
+    }
+  }
+
+  useEffect(() => {
+    if (!codexLogsFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCodexLogsFullscreen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [codexLogsFullscreen]);
+
+  useEffect(() => {
+    if (providerId !== "codex-handoff") return;
+    const runningJobs = codexJobs.filter((job) => job.state === "running");
+    if (runningJobs.length === 0) return;
+    let cancelled = false;
+
+    const pollCodexLogs = async () => {
+      const logItems = await Promise.all(
+        runningJobs.map(async (job) => {
+          try {
+            const log = await loadCodexJobLog(job.id);
+            return createCodexJobLogItem(job, log, "running");
+          } catch (error) {
+            return createCodexJobLogItem(job, undefined, "running", error instanceof Error ? error.message : "Could not read Codex log");
+          }
+        })
+      );
+      if (!cancelled) setCodexJobLogs((current) => mergeCodexJobLogs(current, logItems));
+    };
+
+    void pollCodexLogs();
+    const intervalId = window.setInterval(() => void pollCodexLogs(), CODEX_LOG_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [codexJobs, providerId]);
+
+  function enterCodexLogsFullscreen() {
+    setCodexLogsCollapsed(false);
+    setCodexLogsFullscreen(true);
+  }
+
+  useEffect(() => {
+    fetch("/api/providers")
+      .then((response) => response.json())
+      .then((data: { providers: ProviderStatus[] }) => setProviders(data.providers))
+      .catch(() => setProviders(fallbackProviders));
+  }, []);
+
+  useEffect(() => {
+    if (providerId !== "codex-handoff") {
+      setServerActiveCodexRunnerCount(0);
+      return;
+    }
+    let cancelled = false;
+    const pollCapacity = async () => {
+      try {
+        const response = await fetch("/api/codex/capacity");
+        if (!response.ok) return;
+        const payload = (await response.json()) as { capacity?: { active?: unknown } };
+        const active = typeof payload.capacity?.active === "number"
+          ? Math.min(MAX_ACTIVE_CODEX_JOBS, Math.max(0, Math.floor(payload.capacity.active)))
+          : 0;
+        if (!cancelled) setServerActiveCodexRunnerCount(active);
+      } catch {
+        // The next poll retries; server admission remains the final authority.
+      }
+    };
+    void pollCapacity();
+    const intervalId = window.setInterval(() => void pollCapacity(), CODEX_CAPACITY_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [providerId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadCodexRunnerPreflight()
+      .then((runner) => {
+        if (!cancelled) setRunnerPreflight(runner);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRunnerPreflight({
+            state: "unavailable",
+            message: "Could not read Codex runner preflight status.",
+            command: "",
+            checkedAt: new Date().toISOString(),
+            autorun: false,
+            sandbox: "",
+            approval: ""
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      if (!cancelled) await runCockpitHealthCheck({ quiet: true });
+    };
+    void check();
+    const intervalId = window.setInterval(() => void check(), COCKPIT_HEALTH_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+    if (history.length > 0) {
+      setSelectedId((current) => current || history[0].id);
+      return;
+    }
+
+    void seedSampleWorkspace();
+  }, [history.length, storageHydrated]);
+
+  useEffect(() => {
+    drawWorkspaceCanvas();
+  }, [
+    selected?.dataUrl,
+    selectedFrameForPreview?.dataUrl,
+    selectedId,
+    selectedFrameId,
+    workflowMode,
+    annotationsByItem,
+    draftAnnotation,
+    showGrid,
+    showCenter,
+    grid,
+    tool
+  ]);
+
+  useEffect(() => {
+    if (!selectedAnimationExportReady || selectedAnimationPreviewActions.length === 0) {
+      setAnimationDirectionPreviews([]);
+      setIsAnimationPreviewBuilding(false);
+      return;
+    }
+
+    let cancelled = false;
+    const objectUrls: string[] = [];
+    setAnimationDirectionPreviews([]);
+    setIsAnimationPreviewBuilding(true);
+
+    Promise.all(
+      selectedAnimationPreviewActions.map(async ({ directionId, action }) => {
+        const gifBlob = await createGifBlob(frames, action);
+        const gifUrl = URL.createObjectURL(gifBlob);
+        if (cancelled) {
+          URL.revokeObjectURL(gifUrl);
+          return null;
+        }
+        objectUrls.push(gifUrl);
+        return {
+          id: directionId,
+          label: animationDirectionLabel(directionId, language),
+          gifUrl
+        };
+      })
+    )
+      .then((previews) => {
+        if (!cancelled) {
+          setAnimationDirectionPreviews(
+            previews.filter((preview): preview is AnimationDirectionPreview => Boolean(preview))
+          );
+        }
+      })
+      .catch(() => {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+        objectUrls.length = 0;
+        if (!cancelled) setAnimationDirectionPreviews([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsAnimationPreviewBuilding(false);
+      });
+
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [frames, language, selectedAnimationExportReady, selectedAnimationPreviewActions]);
+
+  useEffect(() => {
+    if (!selectedEffectExportReady) {
+      setEffectGifPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return "";
+      });
+      setIsEffectPreviewBuilding(false);
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl = "";
+    setIsEffectPreviewBuilding(true);
+    void createGifBlob(frames, selectedEffectAction, { forceLoop: true })
+      .then((gifBlob) => {
+        objectUrl = URL.createObjectURL(gifBlob);
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setEffectGifPreviewUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return objectUrl;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setEffectGifPreviewUrl("");
+      })
+      .finally(() => {
+        if (!cancelled) setIsEffectPreviewBuilding(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [frames, selectedEffectAction, selectedEffectExportReady]);
+
+  useEffect(() => {
+    const pollableJobs = codexJobs.filter((job) => job.state === "running" || job.state === "evaluating");
+    if (pollableJobs.length === 0) return;
+    let cancelled = false;
+
+    const pollForReturnedImages = async () => {
+      const tournamentGroups = new Map<string, CodexJobQueueItem[]>();
+      const individualJobs: CodexJobQueueItem[] = [];
+      const directionRepairJobs: CodexJobQueueItem[] = [];
+      for (const job of codexJobs) {
+        if (isAnimationTournamentJob(job) && job.tournamentId && job.repairDirections?.length) {
+          directionRepairJobs.push(job);
+        } else if (isAnimationTournamentJob(job) && job.tournamentId) {
+          const group = tournamentGroups.get(job.tournamentId) ?? [];
+          group.push(job);
+          tournamentGroups.set(job.tournamentId, group);
+        } else if (job.state === "running") {
+          individualJobs.push(job);
+        }
+      }
+
+      const outcomes = await Promise.all([
+        ...individualJobs.map((job) => pollCodexJobForReturnedImage(job, () => cancelled).catch((error) => {
+          if (!cancelled) setStatus(error instanceof Error ? error.message : copy.statusInboxError);
+          return "pending";
+        })),
+        ...directionRepairJobs.map((job) => pollCodexDirectionRepair(job, () => cancelled).catch((error) => {
+          if (!cancelled) setStatus(error instanceof Error ? error.message : `Direction Repair failed: ${job.id}`);
+          return "pending";
+        })),
+        ...Array.from(tournamentGroups.entries())
+          .filter(([, jobs]) => jobs.some((job) => job.state === "running" || job.state === "evaluating"))
+          .map(([tournamentId, jobs]) => pollCodexAnimationTournament(tournamentId, jobs).catch((error) => {
+            if (!cancelled) setStatus(error instanceof Error ? error.message : `Animation tournament failed: ${tournamentId}`);
+            return "pending";
+          }))
+      ]);
+
+      if (!cancelled && outcomes.every((outcome) => outcome === "pending") && !codexJobs.some((job) => job.state === "queued")) {
+        setStatus(`${copy.statusCodexJobPending}: ${pollableJobs.map((job) => job.id).join(", ")}`);
+      }
+    };
+
+    void pollForReturnedImages();
+    const intervalId = window.setInterval(() => void pollForReturnedImages(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [codexJobs, language]);
+
+  async function pollCodexJobForReturnedImage(job: CodexJobQueueItem, isCancelled: () => boolean) {
+    let runnerStatus: CodexRunnerStatus | null | undefined;
+    try {
+      runnerStatus = await loadCodexRunnerStatus(job.id);
+    } catch {
+      return "pending";
+    }
+    if (isCancelled()) return "cancelled";
+    if (runnerStatus && shouldWaitForCodexRunner(runnerStatus)) return "pending";
+
+    let importError: unknown;
+    const imported = await importLatestOutboxResult({
+      background: true,
+      newerThan: job.createdAt,
+      quietEmpty: true,
+      job,
+      throwOnError: true,
+      failOnIncompleteDirectionSplit: true
+    }).catch((error) => {
+      importError = error;
+      return false;
+    });
+    if (isCancelled() || imported) return imported ? "imported" : "cancelled";
+
+    if (runnerStatus && !shouldWaitForCodexRunner(runnerStatus)) {
+      if (importError && isStandardDirectionSplitJob(job)) {
+        const diagnostic = recordCodexImportFailure(job, importError);
+        removeCodexJob(job.id, runnerStatus.state);
+        setStatus(`${diagnostic.title}: ${job.id}`);
+        return "terminal";
+      }
+      if (shouldReportCompletedCodexImportFailure(runnerStatus, imported)) {
+        const diagnostic = recordCodexImportFailure(
+          job,
+          importError ?? new Error("No matching outbox result could be imported after the runner completed.")
+        );
+        removeCodexJob(job.id, "completed");
+        setStatus(`${diagnostic.title}: ${job.id}`);
+        return "terminal";
+      }
+      recordCodexFailure(job, runnerStatus);
+      removeCodexJob(job.id, runnerStatus.state);
+      setStatus(`${runnerStatusMessage(runnerStatus, copy)}: ${job.id}`);
+      return "terminal";
+    }
+
+    return "pending";
+  }
+
+  async function pollCodexDirectionRepair(job: CodexJobQueueItem, isCancelled: () => boolean) {
+    if (!job.tournamentId) return "terminal";
+    const runnerStatus = await loadCodexRunnerStatus(job.id);
+    if (isCancelled()) return "cancelled";
+    if (shouldWaitForCodexRunner(runnerStatus ?? undefined)) return "pending";
+    const evaluation = await evaluateDirectionSplitTournamentCandidate(job, runnerStatus);
+    if (isCancelled()) return "cancelled";
+    if (!evaluation.ready && isTransientAnimationTournamentEvaluationError(evaluation.error)) return "pending";
+    await recordCodexAnimationTournamentEvaluation(job.tournamentId, evaluation);
+    const manifest = await loadCodexAnimationTournament(job.tournamentId);
+    updateAnimationTournamentMonitor(manifest);
+    clearCodexFailureNotice(job.id);
+    removeCodexJob(job.id, runnerStatus?.state ?? (evaluation.ready ? "completed" : "failed"), { notify: false });
+    if (evaluation.ready) {
+      setStatus(`Direction Repair ready for review: ${job.repairDirections?.join(", ")}. Untargeted directions remain locked until acceptance.`);
+    } else {
+      recordCodexImportFailure(job, new Error(`Direction Repair failed Quality Gate v2: ${evaluation.error ?? "no usable repair artifact"}`));
+      setStatus(`Direction Repair failed: ${evaluation.error ?? job.id}`);
+    }
+    return "terminal";
+  }
+
+  async function pollCodexAnimationTournament(tournamentId: string, jobs: CodexJobQueueItem[]) {
+    if (pollingAnimationTournamentIdsRef.current.has(tournamentId)) return "pending";
+    pollingAnimationTournamentIdsRef.current.add(tournamentId);
+    try {
+      return await pollCodexAnimationTournamentUnlocked(tournamentId, jobs);
+    } finally {
+      pollingAnimationTournamentIdsRef.current.delete(tournamentId);
+    }
+  }
+
+  async function pollCodexAnimationTournamentUnlocked(tournamentId: string, jobs: CodexJobQueueItem[]) {
+    const manifest = await loadCodexAnimationTournament(tournamentId).catch(() => legacyAnimationTournamentManifest(tournamentId, jobs));
+    const isLegacyTournament = manifest.idempotencyKey.startsWith("legacy:");
+    if (!isLegacyTournament) updateAnimationTournamentMonitor(manifest);
+    const expectedCount = manifest.maximumCandidateCount;
+    const profile = manifest.generationProfile;
+    const knownJobIds = new Set(jobs.map((job) => job.id));
+    const trackedJobs = isLegacyTournament
+      ? jobs
+      : [
+          ...jobs,
+          ...manifest.candidates
+            .filter((candidate) => candidate.jobId && !candidate.repairDirections?.length && !knownJobIds.has(candidate.jobId))
+            .map((candidate) => tournamentQueueItemFromManifest(manifest, candidate.index, {
+              id: candidate.jobId!,
+              path: `server-tournament:${manifest.tournamentId}:${candidate.jobId}`,
+              outboxPath: undefined,
+              createdAt: candidate.createdAt ?? manifest.createdAt
+            }))
+        ];
+    const statuses = await loadAnimationTournamentStatuses(trackedJobs);
+    const terminalStatuses = terminalAnimationTournamentStatuses(statuses);
+    if (terminalStatuses.length === 0) return "pending";
+
+    const evaluations = sortTournamentEvaluationsByCandidate(await Promise.all(
+      terminalStatuses.map(async ({ job, status }) => evaluateDirectionSplitTournamentCandidate(job, status))
+    ));
+    const transientEvaluations = evaluations.filter((evaluation) =>
+      !evaluation.ready && isTransientAnimationTournamentEvaluationError(evaluation.error)
+    );
+    if (!isLegacyTournament) {
+      await Promise.all(
+        evaluations
+          .filter((evaluation) => !transientEvaluations.includes(evaluation))
+          .map((evaluation) => recordCodexAnimationTournamentEvaluation(tournamentId, evaluation))
+      );
+    }
+    const terminalJobIds = new Set(terminalStatuses.map(({ job }) => job.id));
+    setCodexJobs((current) => current.map((job) =>
+      terminalJobIds.has(job.id) && job.state === "running"
+        ? { ...job, state: "evaluating" }
+        : job
+    ));
+    if (transientEvaluations.length > 0) return "pending";
+
+    if (manifest.pilotMode && !manifest.pilotWinnerId) {
+      const refreshedPilot = await loadCodexAnimationTournament(tournamentId);
+      updateAnimationTournamentMonitor(refreshedPilot);
+      if (refreshedPilot.state === "pilot-review" || (refreshedPilot.state === "failed" && refreshedPilot.pilotState === "failed")) {
+        statuses.forEach(({ job, status }) => {
+          clearCodexFailureNotice(job.id);
+          removeCodexJob(job.id, status?.state ?? (refreshedPilot.state === "failed" ? "failed" : "completed"), { notify: false });
+        });
+        setStatus(refreshedPilot.state === "pilot-review"
+          ? `Motion Pilot A/B/C is ready for human review: ${refreshedPilot.pilotDirection}. Choose a winner to expand or use Balanced fallback.`
+          : `Motion Pilot candidates failed. Balanced fallback is available: ${refreshedPilot.fallbackReason ?? tournamentId}.`);
+        return "pilot-review";
+      }
+    }
+
+    const readyEvaluations = evaluations.filter((evaluation) => evaluation.ready);
+    const activeCandidateCount = statuses.filter(
+      ({ job, status }) => job.state === "queued" || shouldWaitForCodexRunner(status ?? undefined)
+    ).length;
+    const activeCandidate = activeCandidateCount > 0;
+
+    if (profile === "fast") {
+      if (activeCandidate) return "pending";
+      const winner = sortTournamentEvaluationsByScore(readyEvaluations)[0];
+      return winner
+        ? finalizeCodexAnimationTournamentWinner(tournamentId, winner, statuses, [winner], expectedCount)
+        : failCodexAnimationTournament(tournamentId, statuses, evaluations, expectedCount);
+    }
+
+    if (profile === "balanced") {
+      const initialEvaluations = evaluations.filter((evaluation) => (evaluation.job.tournamentCandidateIndex ?? 0) < manifest.initialCandidateCount);
+      const initialActive = statuses.some(({ job, status }) =>
+        (job.tournamentCandidateIndex ?? 0) < manifest.initialCandidateCount &&
+        (job.state === "queued" || shouldWaitForCodexRunner(status ?? undefined))
+      );
+      if (initialEvaluations.length < manifest.initialCandidateCount || initialActive) return "pending";
+      const decision = shouldStartBalancedAdditionalCandidate(initialEvaluations);
+      const adaptiveCandidate = manifest.candidates[manifest.initialCandidateCount];
+      if (
+        decision.startAdditionalCandidate &&
+        adaptiveCandidate &&
+        !adaptiveCandidate.jobId &&
+        isAnimationTournamentAllowedForSession(sessionAllowedAnimationTournamentIdsRef.current, tournamentId)
+      ) {
+        await startPersistedTournamentCandidate(manifest, adaptiveCandidate.index, decision.reason);
+        setStatus(`Balanced tournament added candidate C: ${decision.reason}.`);
+        return "pending";
+      }
+      if (adaptiveCandidate?.jobId) {
+        const adaptiveStatus = statuses.find(({ job }) => job.id === adaptiveCandidate.jobId);
+        if (!adaptiveStatus || shouldWaitForCodexRunner(adaptiveStatus.status ?? undefined)) return "pending";
+      }
+    }
+
+    if (profile === "best" && manifest.selectionPolicy === "smart-race") {
+      const rankedReadyEvaluations = rankAnimationTournamentEvaluations(
+        readyEvaluations.map((evaluation) => ({
+          ...evaluation,
+          candidateIndex: evaluation.job.tournamentCandidateIndex ?? 0
+        }))
+      );
+      const decision = decideBestSmartRace({
+        terminalEvaluations: evaluations.map((evaluation) => ({
+          ...evaluation,
+          candidateIndex: evaluation.job.tournamentCandidateIndex ?? 0
+        })),
+        remainingCandidateActive: activeCandidate,
+        activeCandidateCount,
+        expectedCandidateCount: expectedCount
+      });
+      if (decision.action === "wait") return "pending";
+      const winner = decision.action === "first-qualified" || decision.action === "early-accept"
+        ? rankedReadyEvaluations.find((evaluation) => evaluation.candidateIndex === decision.winnerCandidateIndex)
+        : rankedReadyEvaluations[0];
+      if (!winner) {
+        return failCodexAnimationTournament(tournamentId, statuses, evaluations, expectedCount);
+      }
+      const runnerUp = rankedReadyEvaluations.find(
+        (evaluation) => evaluation.candidateIndex !== winner.candidateIndex
+      );
+      return finalizeCodexAnimationTournamentWinner(
+        tournamentId,
+        winner,
+        statuses,
+        rankedReadyEvaluations,
+        expectedCount,
+        {
+          mode: decision.action,
+          reason: decision.reason,
+          comparedJobIds: evaluations.map((evaluation) => evaluation.job.id),
+          scoreGap: runnerUp ? winner.score - runnerUp.score : undefined
+        }
+      );
+    }
+
+    const startedCandidateCount = manifest.candidates.filter((candidate) => candidate.jobId).length;
+    if (tournamentNeedsAllStartedCandidates(profile, startedCandidateCount, terminalStatuses.length) || activeCandidate) return "pending";
+
+    const comparedEvaluations = sortTournamentEvaluationsByScore(readyEvaluations);
+    const winner = comparedEvaluations[0];
+    if (!winner) {
+      return failCodexAnimationTournament(tournamentId, statuses, evaluations, expectedCount);
+    }
+
+    return finalizeCodexAnimationTournamentWinner(tournamentId, winner, statuses, comparedEvaluations, expectedCount);
+  }
+
+  function legacyAnimationTournamentManifest(tournamentId: string, jobs: CodexJobQueueItem[]): AnimationTournamentManifestClient {
+    const now = new Date().toISOString();
+    const expectedCount = jobs[0]?.tournamentCandidateCount ?? Math.max(1, jobs.length);
+    const directions = jobs[0]?.directions ?? ANIMATION_DIRECTIONS;
+    return {
+      schema: "image-cockpit.animation-tournament.v1",
+      schemaVersion: 1,
+      tournamentId,
+      idempotencyKey: `legacy:${tournamentId}`,
+      sourceFingerprint: jobs[0]?.sourceFingerprint ?? "legacy",
+      generationProfile: jobs[0]?.generationProfile ?? "best",
+      requestedDirections: directions,
+      maximumCandidateCount: expectedCount,
+      initialCandidateCount: expectedCount,
+      candidates: Array.from({ length: expectedCount }, (_, index) => {
+        const job = jobs.find((item) => (item.tournamentCandidateIndex ?? 0) === index);
+        return {
+          index,
+          state: job ? "running" as const : "queued" as const,
+          idempotencyKey: `legacy:${tournamentId}:${index}`,
+          jobId: job?.id,
+          createdAt: job?.createdAt,
+          updatedAt: now
+        };
+      }),
+      directionStates: Object.fromEntries(directions.map((direction) => [direction, { state: "running", updatedAt: now }])),
+      qualityReportRefs: [],
+      acceptedDirectionHashes: {},
+      retryCount: 0,
+      state: "running",
+      createdAt: jobs[0]?.createdAt ?? now,
+      updatedAt: now
+    };
+  }
+
+  async function loadCodexAnimationTournament(tournamentId: string) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(tournamentId)}`);
+    if (!response.ok) throw new Error(await response.text());
+    return ((await response.json()) as { tournament: AnimationTournamentManifestClient }).tournament;
+  }
+
+  function updateAnimationTournamentMonitor(manifest: AnimationTournamentManifestClient) {
+    setAnimationTournamentMonitors((current) => [
+      { manifest, restoredAt: new Date().toISOString() },
+      ...current.filter((entry) => entry.manifest.tournamentId !== manifest.tournamentId)
+    ].slice(0, 12));
+  }
+
+  function openVfxCompositeStage(trigger?: HTMLElement) {
+    if (vfxCompositeCharacters.length === 0 || vfxCompositeEffects.length === 0) {
+      setStatus(language === "ja" ? "Composite Stageにはcharacter animationとGold/Silver effectが各1件以上必要です。" : "Composite Stage needs at least one character animation and one Gold/Silver effect.");
+      return;
+    }
+    vfxCompositeReturnFocusRef.current = trigger ?? document.activeElement as HTMLElement | null;
+    setShowVfxCompositeStage(true);
+  }
+
+  function closeVfxCompositeStage() {
+    setShowVfxCompositeStage(false);
+    window.requestAnimationFrame(() => vfxCompositeReturnFocusRef.current?.focus());
+  }
+
+  function closeEffectPicker() {
+    setShowEffectPicker(false);
+    window.requestAnimationFrame(() => effectPickerReturnFocusRef.current?.focus());
+  }
+
+  function closeEffectAdvancedSettings() {
+    setShowEffectAdvancedSettings(false);
+    window.requestAnimationFrame(() => effectAdvancedReturnFocusRef.current?.focus());
+  }
+
+  function openVfxSourceResult(id: string) {
+    setSelectedId(id);
+    closeVfxCompositeStage();
+  }
+
+  function closeAnimationReviewCockpit() {
+    setAnimationReviewManifest(null);
+    setAnimationReviewCandidates([]);
+    setAnimationReviewLoading(false);
+    window.requestAnimationFrame(() => animationReviewReturnFocusRef.current?.focus());
+  }
+
+  function animationTournamentCandidateDirectionsForManifest(
+    manifest: AnimationTournamentManifestClient,
+    candidate?: AnimationTournamentManifestClient["candidates"][number]
+  ) {
+    if (candidate?.repairDirections?.length) return resolveAnimationTournamentCandidateDirections(manifest.requestedDirections, candidate.repairDirections);
+    if (manifest.pilotMode && manifest.pilotDirection && (candidate?.index ?? 0) < manifest.initialCandidateCount) return [manifest.pilotDirection];
+    return normalizeAnimationDirections(manifest.requestedDirections);
+  }
+
+  async function openAnimationReviewCockpit(manifest: AnimationTournamentManifestClient, trigger?: HTMLElement) {
+    animationReviewReturnFocusRef.current = trigger ?? document.activeElement as HTMLElement | null;
+    const context = manifest.clientContext ?? {};
+    const contextMotionRecipe = typeof context.motionRecipe === "object" && context.motionRecipe
+      ? context.motionRecipe as unknown as MotionRecipeReference
+      : undefined;
+    const framesPerDirection = MOTION_FRAME_COUNTS.includes(Number(context.framesPerDirection ?? contextMotionRecipe?.frameCount) as MotionFrameCount)
+      ? Number(context.framesPerDirection ?? contextMotionRecipe?.frameCount) as MotionFrameCount
+      : ANIMATION_FRAME_COUNT;
+    const sourceImageId = typeof context.sourceImageId === "string" ? context.sourceImageId : "";
+    const reviewCandidates = manifest.candidates
+      .filter((candidate): candidate is typeof candidate & { jobId: string } => Boolean(candidate.jobId));
+    setAnimationReviewManifest(manifest);
+    setAnimationReviewFrameCount(framesPerDirection);
+    setAnimationReviewSourceDataUrl(historyRef.current.find((item) => item.id === sourceImageId)?.dataUrl);
+    setAnimationReviewCandidates(reviewCandidates.map((candidate) => ({
+      jobId: candidate.jobId,
+      label: `Candidate ${String.fromCharCode(65 + candidate.index)}`,
+      state: candidate.state,
+      score: candidate.score,
+      warningCount: candidate.warningCount,
+      reason: candidate.reason,
+      sheets: {},
+      repairDirections: candidate.repairDirections
+    })));
+    setAnimationReviewLoading(true);
+    try {
+      const loaded = await Promise.all(reviewCandidates.map(async (candidate): Promise<AnimationReviewCandidateView> => {
+        const job = tournamentQueueItemFromManifest(manifest, candidate.index, {
+          id: candidate.jobId,
+          path: `server-tournament:${manifest.tournamentId}:${candidate.jobId}`,
+          createdAt: candidate.createdAt ?? manifest.createdAt
+        });
+        const evaluation = await evaluateDirectionSplitTournamentCandidate(job, {
+          jobId: candidate.jobId,
+          state: "completed",
+          message: "Animation Review Cockpit artifact read",
+          finishedAt: new Date().toISOString()
+        });
+        const candidateDirections = animationTournamentCandidateDirectionsForManifest(manifest, candidate);
+        return {
+          jobId: candidate.jobId,
+          label: `Candidate ${String.fromCharCode(65 + candidate.index)}`,
+          state: candidate.state,
+          score: candidate.score ?? evaluation.score,
+          warningCount: candidate.warningCount ?? evaluation.warningCount,
+          reason: candidate.reason,
+          error: evaluation.ready ? undefined : evaluation.error,
+          sheets: Object.fromEntries(candidateDirections.map((direction, index) => [direction, evaluation.importedResults[index]?.dataUrl])),
+          quality: evaluation.animationQuality,
+          repairDirections: candidate.repairDirections
+        };
+      }));
+      setAnimationReviewCandidates(loaded);
+      setStatus(`Animation Review loaded: ${loaded.filter((candidate) => !candidate.error).length}/${loaded.length} candidates ready.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Animation Review could not load candidate artifacts.");
+    } finally {
+      setAnimationReviewLoading(false);
+    }
+  }
+
+  async function saveAnimationHumanReview(review: AnimationHumanReview) {
+    if (!animationReviewManifest) throw new Error("Animation Review tournament is not open.");
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(animationReviewManifest.tournamentId)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const manifest = ((await response.json()) as { tournament: AnimationTournamentManifestClient }).tournament;
+    updateAnimationTournamentMonitor(manifest);
+    setAnimationReviewManifest(manifest);
+    setStatus(`Human review saved: ${manifest.tournamentId}`);
+  }
+
+  async function adoptAnimationReviewWinner(jobId: string) {
+    if (!animationReviewManifest) throw new Error("Animation Review tournament is not open.");
+    if (animationReviewManifest.pilotMode && animationReviewManifest.state === "pilot-review") {
+      const activeCount = effectiveCodexRunnerCount(
+        codexJobs,
+        startingQueuedJobIdsRef.current,
+        serverActiveCodexRunnerCount
+      );
+      if (activeCount >= MAX_ACTIVE_CODEX_JOBS) {
+        throw new Error(`Runner slots are full (${activeCount}/${MAX_ACTIVE_CODEX_JOBS}). The Pilot expansion will stay in review until a slot is free.`);
+      }
+      const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(animationReviewManifest.tournamentId)}/pilot/expand`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = (await response.json()) as { job: CodexJobResponse; tournament: AnimationTournamentManifestClient };
+      updateAnimationTournamentMonitor(payload.tournament);
+      setAnimationReviewManifest(payload.tournament);
+      const expansion = payload.tournament.candidates.find((candidate) => candidate.jobId === payload.job.id);
+      if (!expansion) throw new Error("Motion Pilot expansion candidate was not registered.");
+      const queueItem = tournamentQueueItemFromManifest(payload.tournament, expansion.index, payload.job);
+      if (shouldWaitForCodexRunner(payload.job.runner)) {
+        setCodexJobs((current) => current.some((job) => job.id === queueItem.id) ? current : [...current, queueItem]);
+      }
+      setStatus(`Motion Pilot winner adopted: ${jobId}. Expanding ${payload.tournament.expansionDirectionIds?.join(", ")}.`);
+      closeAnimationReviewCockpit();
+      return;
+    }
+    const payload = await publishCodexTournamentWinner(animationReviewManifest.tournamentId, jobId);
+    updateAnimationTournamentMonitor(payload.tournament);
+    await refreshAcceptedTournamentArtifact(payload.tournament);
+    setStatus(`Manual tournament winner adopted: ${jobId}`);
+  }
+
+  async function fallbackMotionPilotFromUi(manifest: AnimationTournamentManifestClient, reason = "human review requested Balanced fallback") {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(manifest.tournamentId)}/pilot/fallback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = (await response.json()) as { tournament: AnimationTournamentManifestClient; fallbackTournament: AnimationTournamentManifestClient };
+    updateAnimationTournamentMonitor(payload.tournament);
+    updateAnimationTournamentMonitor(payload.fallbackTournament);
+    setStatus(`Motion Pilot frozen for this trial: ${reason}. Balanced fallback ${payload.fallbackTournament.tournamentId} registered.`);
+  }
+
+  async function repairAnimationReviewDirection(direction: string) {
+    if (!animationReviewManifest) throw new Error("Animation Review tournament is not open.");
+    setDirectionRepairSelections((current) => ({ ...current, [animationReviewManifest.tournamentId]: [direction] }));
+    await startDirectionRepairFromUi(animationReviewManifest, [direction]);
+  }
+
+  function tournamentQueueItemFromManifest(
+    manifest: AnimationTournamentManifestClient,
+    candidateIndex: number,
+    job: Pick<CodexJobResponse, "id" | "path" | "outboxPath" | "createdAt">
+  ): CodexJobQueueItem {
+    const context = manifest.clientContext ?? {};
+    const candidate = manifest.candidates[candidateIndex];
+    const baseLabel = typeof context.label === "string" ? context.label : "Animation tournament";
+    const candidateDirections = animationTournamentCandidateDirectionsForManifest(manifest, candidate);
+    const isRepairCandidate = Boolean(candidate?.repairDirections?.length);
+    const contextMotionRecipe = typeof context.motionRecipe === "object" && context.motionRecipe
+      ? context.motionRecipe as unknown as MotionRecipeReference
+      : undefined;
+    const framesPerDirection = MOTION_FRAME_COUNTS.includes(Number(context.framesPerDirection ?? contextMotionRecipe?.frameCount) as MotionFrameCount)
+      ? Number(context.framesPerDirection ?? contextMotionRecipe?.frameCount) as MotionFrameCount
+      : ANIMATION_FRAME_COUNT;
+    return {
+      id: job.id,
+      path: job.path,
+      outboxPath: job.outboxPath,
+      state: candidate?.state === "quality-evaluated" ? "evaluating" : "running",
+      label: isRepairCandidate
+        ? `${baseLabel} (repair: ${candidateDirections.join(", ")})`
+        : `${baseLabel} (${tournamentCandidateLabel(candidateIndex, manifest.maximumCandidateCount)})`,
+      createdAt: job.createdAt,
+      workflowMode: context.workflowMode === "sprite-generate" ? "sprite-generate" : "sprite-generate",
+      actionName: typeof context.actionName === "string" ? context.actionName : manifest.motionRecipeId,
+      grid: isRepairCandidate || (manifest.pilotMode && !manifest.pilotWinnerId && !candidate?.repairDirections?.length)
+        ? animationSheetGridForDirections(candidateDirections, framesPerDirection)
+        : context.grid && typeof context.grid === "object" ? context.grid as GridSettings : animationSheetGridForDirections(candidateDirections, framesPerDirection),
+      cell: context.cell && typeof context.cell === "object" ? context.cell as SpriteAction["cell"] : STANDARD_ANIMATION_CELL,
+      chromaKey: context.chromaKey === "magenta" ? "magenta" : "green",
+      spriteVariant: "standard",
+      directions: candidateDirections,
+      sourceImageId: typeof context.sourceImageId === "string" ? context.sourceImageId : undefined,
+      sourceImageName: typeof context.sourceImageName === "string" ? context.sourceImageName : undefined,
+      tournamentId: manifest.tournamentId,
+      tournamentCandidateIndex: candidateIndex,
+      tournamentCandidateCount: manifest.maximumCandidateCount,
+      generationProfile: manifest.generationProfile,
+      sourceFingerprint: manifest.sourceFingerprint,
+      repairDirections: candidate?.repairDirections,
+      framesPerDirection,
+      motionRecipe: contextMotionRecipe
+        ? contextMotionRecipe
+        : manifest.motionRecipeId
+          ? {
+              id: manifest.motionRecipeId,
+              version: manifest.motionRecipeVersion ?? 1,
+              compilerVersion: manifest.motionRecipeCompilerVersion ?? MOTION_RECIPE_COMPILER_VERSION,
+              qualityProfile: motionRecipeForPreset(getAnimationPresetById(manifest.presetId ?? manifest.motionRecipeId)).qualityProfile.actionProfile
+            }
+          : undefined
+    };
+  }
+
+  async function recordCodexAnimationTournamentEvaluation(
+    tournamentId: string,
+    evaluation: DirectionSplitTournamentCandidateEvaluation
+  ) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(tournamentId)}/evaluation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId: evaluation.job.id,
+        ready: evaluation.ready,
+        score: evaluation.score,
+        warningCount: evaluation.ready ? evaluation.warningCount : undefined,
+        identityScore: evaluation.animationQuality?.identityScore,
+        shadowWouldBlock: evaluation.animationQuality?.shadowDecision.wouldBlock,
+        qualityReportRef: evaluation.animationQuality ? `${evaluation.job.id}-manifest.json#animationQuality` : undefined,
+        reason: evaluation.error
+      })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    updateAnimationTournamentMonitor(((await response.json()) as { tournament: AnimationTournamentManifestClient }).tournament);
+  }
+
+  function trackAnimationTournamentJobs(
+    manifest: AnimationTournamentManifestClient,
+    jobs: CodexJobResponse[]
+  ) {
+    const activeItems: CodexJobQueueItem[] = [];
+    jobs.forEach((job) => {
+      const candidateIndex = manifest.candidates.findIndex((candidate) => candidate.jobId === job.id);
+      if (candidateIndex < 0) return;
+      const queueItem = tournamentQueueItemFromManifest(manifest, candidateIndex, job);
+      if (shouldWaitForCodexRunner(job.runner)) {
+        activeItems.push(queueItem);
+      } else if (job.runner) {
+        recordTerminalCodexRunnerJob(queueItem, job.runner);
+      }
+    });
+    if (activeItems.length > 0) {
+      setCodexJobs((current) => [
+        ...current,
+        ...activeItems.filter((item) => !current.some((job) => job.id === item.id))
+      ]);
+    }
+  }
+
+  async function startPersistedTournamentInitialCandidates(
+    manifest: AnimationTournamentManifestClient
+  ) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(manifest.tournamentId)}/initial-candidates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    if (!response.ok) throw new Error(await animationTournamentApiError(response, language));
+    const payload = (await response.json()) as {
+      jobs: CodexJobResponse[];
+      tournament: AnimationTournamentManifestClient;
+    };
+    updateAnimationTournamentMonitor(payload.tournament);
+    trackAnimationTournamentJobs(payload.tournament, payload.jobs);
+    return payload;
+  }
+
+  async function startPersistedTournamentInitialCandidatesFromUi(
+    manifest: AnimationTournamentManifestClient
+  ) {
+    if (startingPersistedTournamentCandidatesRef.current.has(manifest.tournamentId)) return;
+    const initialCandidates = manifest.candidates.slice(0, manifest.initialCandidateCount);
+    if (initialCandidates.some((candidate) => Boolean(candidate.jobId))) {
+      setStatus(
+        language === "ja"
+          ? "初期候補が一部だけ開始済みのため、個別には再開できません。新しいトーナメントとしてやり直してください。"
+          : "The initial candidate wave is partial and cannot resume one candidate at a time. Start a new tournament instead."
+      );
+      return;
+    }
+
+    const activeRunnerCount = effectiveCodexRunnerCount(
+      codexJobs,
+      startingQueuedJobIdsRef.current,
+      serverActiveCodexRunnerCount
+    );
+    const reservedRunnerCount = reservedAnimationInitialCandidateSlots(startingPersistedTournamentCandidatesRef.current);
+    const admission = planAnimationInitialCandidateAdmission({
+      initialCandidateCount: manifest.initialCandidateCount,
+      activeRunnerCount,
+      reservedRunnerCount,
+      maxActiveRunnerCount: MAX_ACTIVE_CODEX_JOBS
+    });
+    if (!admission.allowed) {
+      setStatus(animationInitialAdmissionMessage(language, admission.occupiedSlots));
+      return;
+    }
+
+    startingPersistedTournamentCandidatesRef.current.set(manifest.tournamentId, admission.requiredSlots);
+    try {
+      const payload = await startPersistedTournamentInitialCandidates(manifest);
+      setStatus(
+        language === "ja"
+          ? `初期候補 ${payload.jobs.length} 本を同時に開始しました。`
+          : `Started all ${payload.jobs.length} initial candidates together.`
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not start the initial animation candidate wave.");
+    } finally {
+      startingPersistedTournamentCandidatesRef.current.delete(manifest.tournamentId);
+    }
+  }
+
+  async function startPersistedTournamentCandidate(
+    manifest: AnimationTournamentManifestClient,
+    candidateIndex: number,
+    reason: string
+  ) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(manifest.tournamentId)}/candidates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidateIndex, reason })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = (await response.json()) as {
+      job: CodexJobResponse;
+      tournament: AnimationTournamentManifestClient;
+    };
+    updateAnimationTournamentMonitor(payload.tournament);
+    const queueItem = tournamentQueueItemFromManifest(payload.tournament, candidateIndex, payload.job);
+    if (shouldWaitForCodexRunner(payload.job.runner)) {
+      setCodexJobs((current) => current.some((job) => job.id === queueItem.id) ? current : [...current, queueItem]);
+    } else if (payload.job.runner) {
+      recordTerminalCodexRunnerJob(queueItem, payload.job.runner);
+    }
+    return queueItem;
+  }
+
+  async function cancelTournamentFromUi(tournamentId: string) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(tournamentId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const manifest = ((await response.json()) as { tournament: AnimationTournamentManifestClient }).tournament;
+    updateAnimationTournamentMonitor(manifest);
+    setCodexJobs((current) => current.filter((job) => job.tournamentId !== tournamentId));
+    setStatus(`Animation tournament cancelled: ${tournamentId}`);
+  }
+
+  function toggleDirectionRepairSelection(tournamentId: string, direction: string) {
+    setDirectionRepairSelections((current) => {
+      const selected = new Set(current[tournamentId] ?? []);
+      if (selected.has(direction)) selected.delete(direction);
+      else selected.add(direction);
+      return { ...current, [tournamentId]: Array.from(selected) };
+    });
+  }
+
+  async function startDirectionRepairFromUi(manifest: AnimationTournamentManifestClient, requestedDirections?: string[]) {
+    const directions = requestedDirections ?? directionRepairSelections[manifest.tournamentId] ?? [];
+    if (directions.length === 0) {
+      setStatus("Select one or more directions to Repair.");
+      return;
+    }
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(manifest.tournamentId)}/repairs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directions })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = (await response.json()) as {
+      job: CodexJobResponse;
+      tournament: AnimationTournamentManifestClient;
+    };
+    updateAnimationTournamentMonitor(payload.tournament);
+    const candidate = payload.tournament.candidates.find((item) => item.jobId === payload.job.id);
+    if (!candidate) throw new Error("Direction Repair candidate was not persisted.");
+    const queueItem = tournamentQueueItemFromManifest(payload.tournament, candidate.index, payload.job);
+    setCodexJobs((current) => current.some((job) => job.id === queueItem.id) ? current : [...current, queueItem]);
+    setStatus(`Direction Repair started: ${directions.join(", ")} (${payload.job.id}).`);
+  }
+
+  async function acceptDirectionRepairFromUi(manifest: AnimationTournamentManifestClient, repairJobId: string) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(manifest.tournamentId)}/repairs/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: repairJobId })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = (await response.json()) as {
+      tournament: AnimationTournamentManifestClient;
+      repairedDirections: string[];
+      unchangedDirections: string[];
+      beforeHashes: Record<string, string>;
+      afterHashes: Record<string, string>;
+    };
+    updateAnimationTournamentMonitor(payload.tournament);
+    setDirectionRepairSelections((current) => ({ ...current, [manifest.tournamentId]: [] }));
+    await refreshAcceptedTournamentArtifact(payload.tournament);
+    setStatus(`Direction Repair accepted: ${payload.repairedDirections.join(", ")}. ${payload.unchangedDirections.length} untargeted direction hashes unchanged.`);
+  }
+
+  async function refreshAcceptedTournamentArtifact(manifest: AnimationTournamentManifestClient) {
+    const winnerJobId = manifest.winnerCandidateId;
+    if (!winnerJobId) throw new Error("Accepted tournament winner is missing.");
+    const winner = manifest.candidates.find((candidate) => candidate.jobId === winnerJobId);
+    if (!winner) throw new Error("Accepted tournament winner candidate is missing.");
+    const job = tournamentQueueItemFromManifest(manifest, winner.index, {
+      id: winnerJobId,
+      path: `server-tournament:${manifest.tournamentId}:${winnerJobId}`,
+      createdAt: winner.createdAt ?? manifest.createdAt
+    });
+    const acceptedJob: CodexJobQueueItem = {
+      ...job,
+      directions: normalizeAnimationDirections(manifest.requestedDirections),
+      grid: animationSheetGridForDirections(manifest.requestedDirections, job.framesPerDirection ?? ANIMATION_FRAME_COUNT),
+      repairDirections: undefined
+    };
+    const previousHistory = historyRef.current;
+    const retainedHistory = previousHistory.filter((item) => !(item.outboxImportKey?.includes(winnerJobId) && item.name.includes("direction-split-animation-sheet")));
+    historyRef.current = retainedHistory;
+    setHistory(retainedHistory);
+    try {
+      const imported = await importLatestOutboxResult({
+        job: acceptedJob,
+        limit: 200,
+        background: true,
+        quietEmpty: true,
+        failOnIncompleteDirectionSplit: true,
+        throwOnError: true
+      });
+      if (!imported) throw new Error("Accepted repaired artifact could not be refreshed from the published outbox final.");
+    } catch (error) {
+      historyRef.current = previousHistory;
+      setHistory(previousHistory);
+      throw error;
+    }
+  }
+
+  async function revalidateAcceptedPilotFromUi(manifest: AnimationTournamentManifestClient) {
+    try {
+      await refreshAcceptedTournamentArtifact(manifest);
+      setStatus(`Motion Pilot final revalidated across ${manifest.requestedDirections.length} published directions: ${manifest.tournamentId}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Motion Pilot final revalidation failed.");
+    }
+  }
+
+  function toggleBatchMatrixSource(sourceId: string) {
+    setBatchMatrixSourceIds((current) => current.includes(sourceId)
+      ? current.filter((id) => id !== sourceId)
+      : [...current, sourceId].slice(-4));
+  }
+
+  function toggleBatchMatrixPreset(presetId: string) {
+    setBatchMatrixPresetIds((current) => current.includes(presetId)
+      ? current.filter((id) => id !== presetId)
+      : [...current, presetId].slice(-4));
+  }
+
+  async function runAnimationBatchMatrix() {
+    const sources = batchMatrixSourceIds
+      .map((id) => batchMatrixSources.find((source) => source.id === id))
+      .filter((source): source is HistoryItem => Boolean(source));
+    const presets = batchMatrixPresetIds.map(getAnimationPresetById);
+    if (sources.length < 2 || presets.length < 2) {
+      setStatus("Batch Matrix requires at least 2 sources and 2 motions.");
+      return;
+    }
+    const cellCount = sources.length * presets.length;
+    const profile = animationGenerationProfileDefinition(animationGenerationProfile);
+    const candidatePlan = cellCount * profile.initialCandidates;
+    if (!window.confirm(`Queue ${cellCount} animation cells (${candidatePlan} initial candidates, max ${cellCount * profile.maximumCandidates}) using ${profile.label}? Accepted artifacts will not be overwritten.`)) return;
+
+    setIsBatchMatrixStarting(true);
+    try {
+      let queuedCandidates = 0;
+      const batchMatrixRunId = `batch-matrix_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      for (const source of sources) {
+        for (const preset of presets) {
+          const draft = await buildCodexJobDraft({ animationSource: source, animationPreset: preset, generationProfile: animationGenerationProfile });
+          if (!draft) continue;
+          const tournamentDrafts = buildCodexAnimationTournamentDrafts(draft);
+          const tournamentId = tournamentDrafts[0]?.tournamentId ?? "";
+          const definition = animationGenerationProfileDefinition(draft.generationProfile ?? "best");
+          const { tournament: manifest } = await registerCodexAnimationTournament(
+            tournamentId,
+            draft,
+            definition.initialCandidates,
+            definition.maximumCandidates,
+            {
+              batchMatrixRunId,
+              batchMatrixCellKey: `${source.id}:${preset.id}`
+            }
+          );
+          allowAnimationTournamentForSession(sessionAllowedAnimationTournamentIdsRef.current, manifest);
+          updateAnimationTournamentMonitor(manifest);
+          queuedCandidates += definition.initialCandidates;
+        }
+      }
+      setStatus(`Batch Matrix queued: ${sources.length} sources × ${presets.length} motions, ${queuedCandidates} initial candidates. Concurrency is capped at ${MAX_ACTIVE_CODEX_JOBS}.`);
+    } finally {
+      setIsBatchMatrixStarting(false);
+    }
+  }
+
+  async function loadAnimationTournamentStatuses(jobs: CodexJobQueueItem[]): Promise<AnimationTournamentStatusEntry[]> {
+    return Promise.all(
+      jobs.map(async (job) => ({
+        job,
+        status: await loadCodexRunnerStatus(job.id)
+      }))
+    );
+  }
+
+  function terminalAnimationTournamentStatuses(statuses: AnimationTournamentStatusEntry[]) {
+    return statuses.filter(
+      (entry): entry is AnimationTournamentTerminalStatusEntry => Boolean(entry.status) && !shouldWaitForCodexRunner(entry.status ?? undefined)
+    );
+  }
+
+  function isCleanAnimationTournamentEvaluation(evaluation: DirectionSplitTournamentCandidateEvaluation) {
+    return evaluation.ready && evaluation.warningCount === 0;
+  }
+
+  function sortTournamentEvaluationsByScore(evaluations: DirectionSplitTournamentCandidateEvaluation[]) {
+    return evaluations
+      .slice()
+      .sort((left, right) => right.score - left.score);
+  }
+
+  function sortTournamentEvaluationsByCandidate(evaluations: DirectionSplitTournamentCandidateEvaluation[]) {
+    return evaluations
+      .slice()
+      .sort((left, right) => (left.job.tournamentCandidateIndex ?? 0) - (right.job.tournamentCandidateIndex ?? 0));
+  }
+
+  async function finalizeCodexAnimationTournamentWinner(
+    tournamentId: string,
+    winner: DirectionSplitTournamentCandidateEvaluation,
+    statuses: AnimationTournamentStatusEntry[],
+    comparedEvaluations: DirectionSplitTournamentCandidateEvaluation[],
+    expectedCount: number,
+    decision?: AnimationTournamentWinnerDecision
+  ) {
+    let publishedWinner = await publishCodexTournamentWinner(tournamentId, winner.job.id, decision);
+    if ((publishedWinner.cancellationResults ?? []).some((result) => !result.ok)) {
+      publishedWinner = await publishCodexTournamentWinner(tournamentId, winner.job.id, decision);
+      const unconfirmedCancellations = (publishedWinner.cancellationResults ?? []).filter((result) => !result.ok);
+      if (unconfirmedCancellations.length > 0) {
+        throw new Error(
+          `Winner is accepted, but loser runner cancellation is still unconfirmed: ${unconfirmedCancellations.map((result) => result.jobId).join(", ")}`
+        );
+      }
+    }
+    await importDirectionSplitAnimationResults(
+      winner.importedResults,
+      winner.manifest,
+      winner.job,
+      winner.manifestResult?.name
+    );
+    const serverCancellationResults = publishedWinner.cancellationResults ?? [];
+    const serverStoppedJobIds = new Set(
+      serverCancellationResults.filter((result) => result.ok).map((result) => result.jobId)
+    );
+    const fallbackCancellationResults = await Promise.all(
+      statuses
+        .filter(({ job }) => job.id !== winner.job.id && !serverStoppedJobIds.has(job.id))
+        .filter(({ status }) => shouldWaitForCodexRunner(status ?? undefined))
+        .map(({ job }) => cancelCodexJob(job.id).catch(() => null))
+    );
+    const cancellationResultsByJob = new Map(
+      serverCancellationResults.map((result) => [result.jobId, result] as const)
+    );
+    fallbackCancellationResults.forEach((result) => {
+      if (result) cancellationResultsByJob.set(result.jobId, result);
+    });
+    const cancellationResults = [...cancellationResultsByJob.values()];
+    statuses.forEach(({ job, status }) => {
+      clearCodexFailureNotice(job.id);
+      const cancelled = cancellationResults.some((result) => result?.jobId === job.id && result.ok);
+      removeCodexJob(job.id, cancelled ? "failed" : status?.state ?? "completed", { notify: false });
+    });
+    notifyCodexJobFinished(winner.job, "completed");
+    const candidateIndex = winner.job.tournamentCandidateIndex ?? 0;
+    setStatus(
+      `${copy.statusAnimationGenerated}: tournament winner ${tournamentCandidateLabel(candidateIndex, expectedCount)} (${winner.job.id}), score ${Math.round(winner.score)}, warnings ${winner.warningCount}. Compared ${comparedEvaluations.length} usable candidate${comparedEvaluations.length === 1 ? "" : "s"} and cancelled ${cancellationResults.filter((result) => result?.ok).length} remaining runner${cancellationResults.filter((result) => result?.ok).length === 1 ? "" : "s"}. direction-split manifest ok.`
+    );
+    return "imported";
+  }
+
+  function failCodexAnimationTournament(
+    tournamentId: string,
+    statuses: AnimationTournamentStatusEntry[],
+    evaluations: DirectionSplitTournamentCandidateEvaluation[],
+    expectedCount: number
+  ) {
+    const primary = evaluations[0];
+    if (primary) {
+      const sharedDiagnosticKind = evaluations.every((evaluation) => evaluation.status.diagnostic?.kind && evaluation.status.diagnostic.kind === primary.status.diagnostic?.kind)
+        ? primary.status.diagnostic?.kind
+        : "";
+      const reasons = sharedDiagnosticKind
+        ? (() => {
+            const failure = codexFailureDisplay(sharedDiagnosticKind, copy, primary.status.diagnostic);
+            return `all ${evaluations.length}/${expectedCount} candidates: ${failure.title}: ${failure.message}`;
+          })()
+        : evaluations
+            .map((evaluation) => {
+              const candidateIndex = evaluation.job.tournamentCandidateIndex ?? 0;
+              const candidateCount = evaluation.job.tournamentCandidateCount ?? expectedCount;
+              return `${tournamentCandidateLabel(candidateIndex, candidateCount)}: ${evaluation.error ?? "no usable final result"}`;
+            })
+            .join("; ");
+      const hasQualityGateFailure = /quality gate|chroma key|direction split qa failed|transparency damage|quarantined/i.test(reasons);
+      recordCodexImportFailure(
+        primary.job,
+        new Error(
+          hasQualityGateFailure
+            ? `Animation quality gate failed: no history or final download item was added. All animation tournament candidates failed. ${reasons}.`
+            : `Needs review candidate: all animation tournament candidates failed. ${reasons}. Raw direction files are still available in hidden candidate work folders.`
+        )
+      );
+      notifyCodexJobFinished(primary.job, "failed");
+    }
+    statuses.forEach(({ job, status }) => removeCodexJob(job.id, status?.state ?? "failed", { notify: false }));
+    setStatus(`Animation tournament failed: ${tournamentId}`);
+    return "terminal";
+  }
+
+  useEffect(() => {
+    const retryableNotices = codexFailureNotices.filter(
+      (notice) => notice.diagnostic.kind === "import_failed" && notice.retryJob
+    );
+    if (retryableNotices.length === 0) return;
+    let cancelled = false;
+
+    const retryRecoveredOutboxImports = async () => {
+      for (const notice of retryableNotices) {
+        if (cancelled || !notice.retryJob || retryingFailureJobIdsRef.current.has(notice.jobId)) continue;
+        let outboxFingerprint = "";
+        try {
+          outboxFingerprint = await loadOutboxFingerprintForJob(notice.retryJob);
+        } catch {
+          continue;
+        }
+        if (cancelled) continue;
+        if (!notice.lastOutboxFingerprint) {
+          updateCodexFailureNoticeOutboxFingerprint(notice.jobId, outboxFingerprint);
+          continue;
+        }
+        if (notice.lastOutboxFingerprint === outboxFingerprint) continue;
+
+        retryingFailureJobIdsRef.current.add(notice.jobId);
+        try {
+          updateCodexFailureNoticeOutboxFingerprint(notice.jobId, outboxFingerprint, new Date().toISOString());
+          await importLatestOutboxResult({
+            background: true,
+            newerThan: notice.retryJob.createdAt,
+            quietEmpty: true,
+            job: notice.retryJob,
+            throwOnError: false,
+            failOnIncompleteDirectionSplit: false
+          });
+        } finally {
+          retryingFailureJobIdsRef.current.delete(notice.jobId);
+        }
+      }
+    };
+
+    void retryRecoveredOutboxImports();
+    const intervalId = window.setInterval(() => void retryRecoveredOutboxImports(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [codexFailureNotices, language]);
+
+  useEffect(() => {
+    const reservedTournamentStarts = reservedAnimationInitialCandidateSlots(startingPersistedTournamentCandidatesRef.current);
+    if (
+      effectiveCodexRunnerCount(codexJobs, startingQueuedJobIdsRef.current, serverActiveCodexRunnerCount) +
+      reservedTournamentStarts >=
+      MAX_ACTIVE_CODEX_JOBS
+    ) return;
+
+    const queuedJobsToStart: CodexJobQueueItem[] = [];
+    const plannedStartingIds = new Set(startingQueuedJobIdsRef.current);
+    for (const job of codexJobs
+      .filter((job) => job.state === "queued" && job.request)
+    ) {
+      if (!job.request) continue;
+      if (!canStartCodexJobDraft(
+        job.request,
+        codexJobs,
+        plannedStartingIds,
+        reservedTournamentStarts,
+        serverActiveCodexRunnerCount
+      )) continue;
+      queuedJobsToStart.push(job);
+      plannedStartingIds.add(job.id);
+      if (
+        effectiveCodexRunnerCount(codexJobs, plannedStartingIds, serverActiveCodexRunnerCount) +
+        reservedTournamentStarts >=
+        MAX_ACTIVE_CODEX_JOBS
+      ) break;
+    }
+
+    queuedJobsToStart.forEach((job) => {
+      if (!job.request || startingQueuedJobIdsRef.current.has(job.id)) return;
+      startingQueuedJobIdsRef.current.add(job.id);
+      void submitCodexJobDraft(job.request, job.id).finally(() => {
+        startingQueuedJobIdsRef.current.delete(job.id);
+      });
+    });
+  }, [codexJobs, serverActiveCodexRunnerCount]);
+
+  async function seedSampleWorkspace() {
+    const image = await loadImage(SAMPLE_URL);
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: "forest-mage-sheet.png",
+      dataUrl: SAMPLE_URL,
+      provider: "local-file",
+      prompt: "Original sample sprite sheet for local workflow testing",
+      seed: "sample",
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: true,
+      source: "sample"
+    };
+    setHistory([item]);
+    setSelectedId(item.id);
+    const sampleFrames = await splitImageIntoFrames(
+      SAMPLE_URL,
+      "forest_mage",
+      { columns: 8, rows: 4, gutter: 0 },
+      item.id,
+      { width: MIN_ANIMATION_CELL_SIZE, height: MIN_ANIMATION_CELL_SIZE }
+    );
+    setFrames(sampleFrames);
+    setSelectedFrameId("");
+    setActions((current) =>
+      current.map((action, actionIndex) => {
+        const rowFrames = sampleFrames.slice(actionIndex * 8, actionIndex * 8 + 8).map((frame) => frame.id);
+        return { ...action, frameIds: rowFrames };
+      })
+    );
+  }
+
+  const drawWorkspaceCanvas = useCallback(async () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    drawCheckerboard(context, CANVAS_WIDTH, CANVAS_HEIGHT, 18);
+
+    if (!selected) {
+      drawEmptyCanvas(context, copy.canvasEmpty);
+      return;
+    }
+
+    const displayingFrame = Boolean(selectedFrameForPreview?.sourceId && selectedFrameForPreview.sourceId === selected.id);
+    const image = await loadImage(displayingFrame && selectedFrameForPreview ? selectedFrameForPreview.dataUrl : selected.dataUrl);
+    const displayRect = imageDisplayRectForCanvas({ width: image.width, height: image.height });
+    context.drawImage(image, displayRect.x, displayRect.y, displayRect.width, displayRect.height);
+
+    if (showGrid && !displayingFrame && workflowMode !== "image-edit") {
+      drawGridOverlay(context, displayRect.x, displayRect.y, displayRect.width, displayRect.height, grid.columns, grid.rows);
+    }
+    if (showCenter && workflowMode !== "image-edit") {
+      drawCenterOverlay(context, displayRect.x, displayRect.y, displayRect.width, displayRect.height);
+    }
+    if (workflowMode === "image-edit") {
+      const annotations = [...(annotationsByItem[selected.id] ?? []), ...(draftAnnotation ? [draftAnnotation] : [])];
+      annotations.forEach((annotation) => drawAnnotation(context, annotation));
+    }
+  }, [annotationsByItem, copy.canvasEmpty, draftAnnotation, grid.columns, grid.rows, selected, selectedFrameForPreview, showCenter, showGrid, workflowMode]);
+
+  async function handleFiles(files: FileList | File[]) {
+    const entries = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    if (entries.length === 0) return;
+    const imported: HistoryItem[] = [];
+    for (const file of entries) {
+      const dataUrl = await readFileAsDataUrl(file);
+      const image = await loadImage(dataUrl);
+      imported.push({
+        id: createId("hist"),
+        name: file.name,
+        dataUrl,
+        provider: "local-file",
+        prompt,
+        seed,
+        size: `${image.width}x${image.height}`,
+        createdAt: new Date().toISOString(),
+        adopted: false,
+        source: "import"
+      });
+    }
+    setHistory((current) => [...imported, ...current]);
+    setSelectedId(imported[0].id);
+    setSelectedFrameId("");
+    if (workflowMode === "sprite-generate") setAnimationSourceId(imported[0].id);
+    setStatus(formatImagesImportedStatus(imported.length, language));
+  }
+
+  async function handleGenerate() {
+    if (handleGenerateInFlightRef.current) return;
+    handleGenerateInFlightRef.current = true;
+
+    let animationAdmissionReservationKey = "";
+    try {
+      if (cockpitHealth.state === "broken" && providerId !== "local-file") {
+        setStatus(`${cockpitHealth.message} Run diagnostics or repair Cockpit before starting API-backed work.`);
+        return;
+      }
+      if (providerId === "local-file") {
+        setStatus(`${providerLabel(providerId, language)} ${copy.statusUsesImport}`);
+        fileInputRef.current?.click();
+        return;
+      }
+      if (providerId === "local-inbox") {
+        await importLatestOutboxResult();
+        return;
+      }
+      if (providerId === "local-generator") {
+        await generateLocally();
+        return;
+      }
+
+      if (providerId === "codex-handoff" && workflowMode === "sprite-generate") {
+        const profileDefinition = animationGenerationProfileDefinition(animationGenerationProfile);
+        const activeRunnerCount = effectiveCodexRunnerCount(
+          codexJobs,
+          startingQueuedJobIdsRef.current,
+          serverActiveCodexRunnerCount
+        );
+        const reservedRunnerCount = reservedAnimationInitialCandidateSlots(startingPersistedTournamentCandidatesRef.current);
+        const admission = planAnimationInitialCandidateAdmission({
+          initialCandidateCount: profileDefinition.initialCandidates,
+          activeRunnerCount,
+          reservedRunnerCount,
+          maxActiveRunnerCount: MAX_ACTIVE_CODEX_JOBS
+        });
+        if (!admission.allowed) {
+          setStatus(animationInitialAdmissionMessage(language, admission.occupiedSlots));
+          return;
+        }
+        animationAdmissionReservationKey = createId("animation-admission");
+        startingPersistedTournamentCandidatesRef.current.set(animationAdmissionReservationKey, admission.requiredSlots);
+      }
+
+      setIsBusy(true);
+      try {
+        const draft = await buildCodexJobDraft();
+        if (!draft) return;
+
+        if (isStandardDirectionSplitDraft(draft)) {
+          await submitOrQueueCodexAnimationTournament(draft);
+          return;
+        }
+
+        if (!canStartCodexJobDraft(
+          draft,
+          codexJobs,
+          startingQueuedJobIdsRef.current,
+          0,
+          serverActiveCodexRunnerCount
+        )) {
+          enqueueCodexJobDraft(draft);
+          return;
+        }
+
+        await submitCodexJobDraft(draft);
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : copy.statusCodexJobError);
+      } finally {
+        setIsBusy(false);
+      }
+    } finally {
+      if (animationAdmissionReservationKey) {
+        startingPersistedTournamentCandidatesRef.current.delete(animationAdmissionReservationKey);
+      }
+      handleGenerateInFlightRef.current = false;
+    }
+  }
+
+  async function buildCodexJobDraft(options?: {
+    animationSource?: HistoryItem;
+    animationPreset?: AnimationPresetExample;
+    generationProfile?: AnimationGenerationProfile;
+  }): Promise<CodexJobDraft | null> {
+    const includeSelectedImage = workflowUsesSelectedImage(workflowMode);
+    const includeSpriteContext = workflowUsesSpriteContext(workflowMode);
+    const isImageEditJob = workflowMode === "image-edit";
+    const isAnimationJob = workflowMode === "sprite-generate";
+    const isEffectJob = workflowMode === "effect-animation";
+    const currentEffectContext = isEffectJob ? effectJobContext : undefined;
+    const animationJobGenerationMode: AnimationGenerationMode = "standard";
+    const isHatchPetAnimationJob = false;
+    const isDirectionalHatchPetAnimationJob = false;
+    const sourceImageForJob = isAnimationJob ? options?.animationSource ?? animationSource : isEffectJob ? undefined : selected;
+    const animationPresetForJob = options?.animationPreset ?? selectedAnimationPreset;
+    const motionRecipeForJob = motionRecipeForPreset(animationPresetForJob);
+    const usesSelectedVariantControls = !options?.animationPreset;
+    const topologyForJob = usesSelectedVariantControls ? animationBodyTopology : motionRecipeForJob.defaultTopology;
+    const frameCountForJob = usesSelectedVariantControls ? animationFrameCount : motionRecipeForJob.frameCount as MotionFrameCount;
+    const motionVariantForJob = usesSelectedVariantControls ? animationMotionVariant : normalizeMotionVariant();
+    const baseAnimationAction = isDirectionalHatchPetAnimationJob
+      ? directionalHatchPetSpriteAction()
+      : isHatchPetAnimationJob
+      ? hatchPetSpriteAction()
+      : normalizeAnimationAction(defaultActions.find((action) => action.name === animationPresetForJob.actionName) ?? activeAction);
+    const standardAnimationDirections = selectedAnimationDirections;
+    const directionImageGrid = directionSplitAnimationGrid(frameCountForJob);
+    const spriteGrid = isAnimationJob
+      ? isDirectionalHatchPetAnimationJob
+        ? DIRECTIONAL_HATCH_PET_GRID
+        : isHatchPetAnimationJob
+          ? HATCH_PET_GRID
+          : animationSheetGridForDirections(standardAnimationDirections, frameCountForJob)
+      : grid;
+    const spriteCell = isAnimationJob ? (isHatchPetLikeMode(animationJobGenerationMode) ? HATCH_PET_CELL : baseAnimationAction.cell) : activeAction.cell;
+    const spriteFrameCount = spriteGrid.columns * spriteGrid.rows;
+    const compiledAnimationRecipe = isAnimationJob
+      ? compileMotionRecipe({
+          recipe: motionRecipeForJob,
+          directions: standardAnimationDirections,
+          topology: topologyForJob,
+          frameCount: frameCountForJob,
+          variant: motionVariantForJob
+        })
+      : null;
+    const animationAction = compiledAnimationRecipe
+      ? { ...baseAnimationAction, fps: compiledAnimationRecipe.qaContract.fps }
+      : baseAnimationAction;
+    const animationMotionPrompt = compiledAnimationRecipe?.prompt ?? "";
+    const animationPresetNotes = compiledAnimationRecipe
+      ? [
+          compiledAnimationRecipe.notes,
+          `Compiler section order: ${compiledAnimationRecipe.diagnostics.sectionOrder.join(" > ")}.`,
+          `Applied modifiers: ${compiledAnimationRecipe.diagnostics.appliedModifiers.join(", ") || "none"}.`,
+          `Removed modifiers: ${compiledAnimationRecipe.diagnostics.removedModifiers.join(", ") || "none"}.`,
+          "No free-form user motion prompt was supplied; use the versioned Motion Recipe contract only."
+        ].join("\n")
+      : "";
+
+    if (isImageEditJob && selectedIsAnimationResult) {
+      setStatus(copy.statusAnimationFinalNotEditable);
+      return null;
+    }
+
+    if (isImageEditJob && selectedIsEffectResult) {
+      setStatus("Effect animation results are export assets; choose a source image or start a new generation.");
+      return null;
+    }
+
+    if (isAnimationJob && sourceImageForJob && isAnimationResultHistoryItem(sourceImageForJob)) {
+      setStatus(animationResultNotSourceMessage(sourceImageForJob, language));
+      return null;
+    }
+
+    if (isAnimationJob && !isAnimationSource(sourceImageForJob)) {
+      setStatus(copy.statusAnimationSourceRequired);
+      fileInputRef.current?.click();
+      return null;
+    }
+
+    if (isAnimationJob && sourceImageForJob && !options?.animationSource) {
+      setAnimationSourceId(sourceImageForJob.id);
+    }
+
+    const chromaDecision = isAnimationJob && sourceImageForJob
+      ? await chooseAnimationChromaKey(sourceImageForJob.dataUrl)
+      : { key: animationChromaKeys[animationChromaKey], reason: "" };
+
+    if (isAnimationJob) {
+      setAnimationChromaKey(chromaDecision.key.name);
+    }
+
+    const sourceFingerprint = isAnimationJob && sourceImageForJob
+      ? (sourceImageForJob.id === animationSource?.id ? animationSourceFingerprint : "") || await fingerprintImageSource(sourceImageForJob.dataUrl)
+      : "";
+
+    const imageEditAnnotations = isImageEditJob && sourceImageForJob
+      ? selectedAnnotations.map((annotation) => annotationWithSourceImageCoordinates(annotation, sourceImageForJob))
+      : [];
+
+    const codexPrompt = isEffectJob && currentEffectContext
+      ? buildEffectAnimationPrompt(currentEffectContext)
+      : isAnimationJob
+      ? isDirectionalHatchPetAnimationJob
+        ? buildDirectionalHatchPetCodexPrompt({
+            sourceName: sourceImageForJob?.name ?? "",
+            motionPrompt: animationMotionPrompt,
+            chromaKey: chromaDecision.key
+          })
+        : isHatchPetAnimationJob
+        ? buildHatchPetCodexPrompt({
+            sourceName: sourceImageForJob?.name ?? "",
+            motionPrompt: animationMotionPrompt,
+            chromaKey: chromaDecision.key
+          })
+        : buildAnimationCodexPrompt({
+            sourceName: sourceImageForJob?.name ?? "",
+            motionPrompt: animationMotionPrompt,
+            actionName: animationAction.name,
+            chromaKey: chromaDecision.key,
+            cell: spriteCell,
+            directions: standardAnimationDirections,
+            frameCount: frameCountForJob,
+            directionImageGrid,
+            bodyTopology: topologyForJob
+          })
+      : isImageEditJob
+        ? buildImageEditCodexPrompt({
+            prompt,
+            sourceName: sourceImageForJob?.name ?? "",
+            annotations: imageEditAnnotations
+          })
+        : prompt;
+    const codexJobNotes = isEffectJob && currentEffectContext
+      ? buildEffectAnimationNotes(currentEffectContext, jobNotes)
+      : isAnimationJob
+      ? isDirectionalHatchPetAnimationJob
+        ? buildDirectionalHatchPetCodexNotes({
+            userNotes: animationPresetNotes,
+            chromaKey: chromaDecision.key,
+            chromaReason: chromaDecision.reason
+          })
+        : isHatchPetAnimationJob
+        ? buildHatchPetCodexNotes({
+            userNotes: animationPresetNotes,
+            chromaKey: chromaDecision.key,
+            chromaReason: chromaDecision.reason
+          })
+        : buildAnimationCodexNotes({
+            userNotes: animationPresetNotes,
+            chromaKey: chromaDecision.key,
+            chromaReason: chromaDecision.reason,
+            grid: spriteGrid,
+            cell: spriteCell,
+            directions: standardAnimationDirections,
+            frameCount: frameCountForJob,
+            directionImageGrid,
+            bodyTopology: topologyForJob
+          })
+      : isImageEditJob
+        ? buildImageEditCodexNotes({
+            userNotes: jobNotes,
+            annotations: imageEditAnnotations
+          })
+        : jobNotes;
+
+    return {
+      workflowMode,
+      prompt: codexPrompt,
+      negativePrompt: isEffectJob && currentEffectContext
+        ? currentEffectContext.negativePrompt
+        : compiledAnimationRecipe?.negativePrompt ?? negativePrompt,
+      jobNotes: codexJobNotes,
+      seed,
+      size: isDirectionalHatchPetAnimationJob
+        ? `${HATCH_PET_CELL.width * HATCH_PET_GRID.columns}x${HATCH_PET_CELL.height * HATCH_PET_GRID.rows} x ${DIRECTIONAL_HATCH_PET_RESULT_COUNT}`
+        : isAnimationJob
+          ? `${spriteCell.width * directionImageGrid.columns}x${spriteCell.height * directionImageGrid.rows} x ${standardAnimationDirections.length}`
+          : isEffectJob && currentEffectContext
+            ? `${currentEffectContext.sheetSize.width}x${currentEffectContext.sheetSize.height}`
+          : size,
+      count,
+      quality,
+      selectedImageName: includeSelectedImage ? sourceImageForJob?.name ?? "" : "",
+      selectedImageSize: includeSelectedImage ? sourceImageForJob?.size ?? "" : "",
+      selectedImageSource: includeSelectedImage ? sourceImageForJob?.source ?? "" : "",
+      selectedImageDataUrl: includeSelectedImage ? sourceImageForJob?.dataUrl ?? "" : "",
+      annotations: imageEditAnnotations,
+      grid: isEffectJob && currentEffectContext ? { columns: currentEffectContext.layout.columns, rows: currentEffectContext.layout.rows, gutter: 0 } : includeSpriteContext ? spriteGrid : null,
+      action: isEffectJob && currentEffectContext ? currentEffectContext.name : includeSpriteContext ? animationAction.name : "",
+      frames: isEffectJob && currentEffectContext ? currentEffectContext.frameCount : includeSpriteContext ? spriteFrameCount : 0,
+      framesPerDirection: isAnimationJob && animationJobGenerationMode === "standard" ? frameCountForJob : undefined,
+      cell: isEffectJob && currentEffectContext ? currentEffectContext.frameSize : includeSpriteContext ? spriteCell : null,
+      chromaKey: isAnimationJob ? chromaDecision.key.name : "",
+      spriteVariant: isAnimationJob ? animationJobGenerationMode : undefined,
+      directions: isAnimationJob
+        ? isDirectionalHatchPetAnimationJob
+          ? ANIMATION_DIRECTIONS
+          : isHatchPetAnimationJob
+            ? HATCH_PET_STATE_ROWS.map((row) => row.id)
+            : standardAnimationDirections
+        : [],
+      label: codexJobLabel(
+        workflowMode,
+        isEffectJob && currentEffectContext ? currentEffectContext.name : isAnimationJob ? animationMotionPrompt : prompt,
+        isEffectJob && currentEffectContext ? currentEffectContext.typeLabel : isAnimationJob ? animationAction.name : undefined
+      ),
+      resultWorkflowMode: workflowMode ?? undefined,
+      resultActionName: isEffectJob && currentEffectContext ? currentEffectContext.name : isAnimationJob ? animationAction.name : undefined,
+      resultGrid: isEffectJob && currentEffectContext ? { columns: currentEffectContext.layout.columns, rows: currentEffectContext.layout.rows, gutter: 0 } : isAnimationJob ? spriteGrid : undefined,
+      resultCell: isEffectJob && currentEffectContext ? currentEffectContext.frameSize : isAnimationJob ? spriteCell : undefined,
+      resultChromaKey: isAnimationJob ? chromaDecision.key.name : undefined,
+      resultSpriteVariant: isAnimationJob ? animationJobGenerationMode : undefined,
+      resultDirections: isAnimationJob && animationJobGenerationMode === "standard" ? standardAnimationDirections : undefined,
+      resultSourceImageId: isImageEditJob || isAnimationJob ? sourceImageForJob?.id : undefined,
+      resultSourceImageName: isImageEditJob || isAnimationJob ? sourceImageForJob?.name : undefined,
+      generationProfile: isAnimationJob ? options?.generationProfile ?? animationGenerationProfile : undefined,
+      sourceFingerprint: isAnimationJob ? sourceFingerprint : undefined,
+      presetId: isAnimationJob ? animationPresetForJob.id : undefined,
+      motionRecipe: compiledAnimationRecipe?.metadata,
+      effectContext: currentEffectContext
+    };
+  }
+
+  function buildCodexAnimationTournamentDrafts(draft: CodexJobDraft) {
+    const tournamentId = createId("anim-tournament");
+    const profile = draft.generationProfile ?? "best";
+    const profileDefinition = animationGenerationProfileDefinition(profile);
+    return Array.from({ length: profileDefinition.maximumCandidates }, (_, index) => ({
+      ...draft,
+      label: `${draft.label} (${tournamentCandidateLabel(index, profileDefinition.maximumCandidates)})`,
+      jobNotes: [
+        draft.jobNotes,
+        `Animation tournament ${tournamentId}, ${tournamentCandidateLabel(index, profileDefinition.maximumCandidates)}, profile ${profile}.`,
+        profile === "fast"
+          ? "Generate one efficient candidate. Image Cockpit will not start an automatic fallback candidate."
+          : profile === "balanced"
+            ? "Generate independently. Candidate C starts only if the first two candidates are failed, warned, low identity, low scoring, or too close to call."
+            : "Generate independently. The first completed candidate wins only if it passes the strict solo gate; otherwise Smart Race compares two, then all three if needed."
+      ].filter(Boolean).join("\n"),
+      tournamentId,
+      tournamentCandidateIndex: index,
+      tournamentCandidateCount: profileDefinition.maximumCandidates,
+      generationProfile: profile,
+      idempotencyKey: `${tournamentId}:candidate:${index}`
+    }));
+  }
+
+  async function submitOrQueueCodexAnimationTournament(draft: CodexJobDraft) {
+    const tournamentDrafts = buildCodexAnimationTournamentDrafts(draft);
+    const tournamentId = tournamentDrafts[0]?.tournamentId ?? "";
+    const profile = draft.generationProfile ?? "best";
+    const profileDefinition = animationGenerationProfileDefinition(profile);
+    const effectiveMotionPilot = motionPilotEnabled && canUseMotionPilot(profile, draft.resultDirections ?? draft.directions);
+    const registration = await registerCodexAnimationTournament(
+      tournamentId,
+      draft,
+      profileDefinition.initialCandidates,
+      profileDefinition.maximumCandidates,
+      {},
+      effectiveMotionPilot,
+      true
+    );
+    const manifest = registration.tournament;
+    allowAnimationTournamentForSession(sessionAllowedAnimationTournamentIdsRef.current, manifest);
+    updateAnimationTournamentMonitor(manifest);
+    trackAnimationTournamentJobs(manifest, registration.jobs);
+    setStatus(
+      effectiveMotionPilot
+        ? `Experimental Motion Pilot started ${profileDefinition.initialCandidates} ${manifest.pilotDirection ?? "side"}-only candidates together. Human review is required before expansion.`
+        : profile === "balanced"
+        ? `Animation tournament started 2 initial candidates together; candidate C remains adaptive.`
+        : profile === "best"
+          ? `Animation tournament started A/B/C together (${profile}) with First Qualified Wins and Smart Race fallback.`
+        : `Animation tournament started ${profileDefinition.initialCandidates}/${tournamentDrafts.length} candidates together (${profile}).`
+    );
+  }
+
+  async function registerCodexAnimationTournament(
+    tournamentId: string,
+    draft: CodexJobDraft,
+    initialCandidateCount: number,
+    maximumCandidateCount: number,
+    clientContextExtensions: Record<string, unknown> = {},
+    pilotMode = false,
+    startInitialCandidates = false
+  ) {
+    const response = await fetch("/api/codex/tournaments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tournamentId,
+        idempotencyKey: `${tournamentId}:${draft.sourceFingerprint ?? "source"}:${draft.resultActionName ?? draft.action}`,
+        sourceFingerprint: draft.sourceFingerprint,
+        motionRecipeId: draft.motionRecipe?.id ?? draft.presetId ?? draft.resultActionName ?? draft.action,
+        motionRecipeVersion: draft.motionRecipe?.version,
+        motionRecipeCompilerVersion: draft.motionRecipe?.compilerVersion,
+        presetId: draft.presetId ?? selectedAnimationPresetId,
+        generationProfile: draft.generationProfile ?? "best",
+        selectionPolicy: !pilotMode && (draft.generationProfile ?? "best") === "best" ? "smart-race" : "exhaustive",
+        requestedDirections: draft.resultDirections ?? draft.directions,
+        maximumCandidateCount,
+        initialCandidateCount,
+        pilotMode,
+        startInitialCandidates,
+        pilotDirection: pilotMode ? (draft.resultDirections ?? draft.directions).includes("side") ? "side" : (draft.resultDirections ?? draft.directions)[0] : undefined,
+        jobTemplate: codexJobRequestFromDraft(draft),
+        clientContext: {
+          label: draft.label,
+          workflowMode: draft.resultWorkflowMode,
+          actionName: draft.resultActionName,
+          grid: draft.resultGrid,
+          cell: draft.resultCell,
+          chromaKey: draft.resultChromaKey,
+          spriteVariant: draft.resultSpriteVariant,
+          directions: draft.resultDirections,
+          sourceImageId: draft.resultSourceImageId,
+          sourceImageName: draft.resultSourceImageName,
+          framesPerDirection: draft.framesPerDirection,
+          motionRecipe: draft.motionRecipe,
+          ...clientContextExtensions
+        }
+      })
+    });
+    if (!response.ok) throw new Error(await animationTournamentApiError(response, language));
+    const payload = (await response.json()) as {
+      tournament: AnimationTournamentManifestClient;
+      jobs?: CodexJobResponse[];
+    };
+    return { tournament: payload.tournament, jobs: payload.jobs ?? [] };
+  }
+
+  function codexJobRequestFromDraft(draft: CodexJobDraft) {
+    return {
+      workflowMode: draft.workflowMode,
+      prompt: draft.prompt,
+      negativePrompt: draft.negativePrompt,
+      jobNotes: draft.jobNotes,
+      seed: draft.seed,
+      size: draft.size,
+      count: draft.count,
+      quality: draft.quality,
+      selectedImageName: draft.selectedImageName,
+      selectedImageSize: draft.selectedImageSize,
+      selectedImageSource: draft.selectedImageSource,
+      selectedImageDataUrl: draft.selectedImageDataUrl,
+      annotations: draft.annotations,
+      grid: draft.grid,
+      action: draft.action,
+      frames: draft.frames,
+      framesPerDirection: draft.framesPerDirection,
+      cell: draft.cell,
+      chromaKey: draft.chromaKey,
+      spriteVariant: draft.spriteVariant,
+      directions: draft.directions,
+      generationProfile: draft.generationProfile,
+      sourceFingerprint: draft.sourceFingerprint,
+      motionRecipeId: draft.motionRecipe?.id,
+      motionRecipeVersion: draft.motionRecipe?.version,
+      motionRecipeCompilerVersion: draft.motionRecipe?.compilerVersion,
+      motionRecipeQualityProfile: draft.motionRecipe?.qualityProfile,
+      motionRecipe: draft.motionRecipe,
+      presetId: draft.presetId,
+      effectContext: draft.effectContext
+    };
+  }
+
+  function enqueueCodexJobDraft(draft: CodexJobDraft) {
+    const queuedAt = new Date().toISOString();
+    const labels = codexJobQueueLabels(language);
+    setCodexJobs((current) => [
+      ...current,
+      {
+        id: createId("queued"),
+        state: "queued",
+        label: draft.label,
+        createdAt: queuedAt,
+        queuedAt,
+        request: draft,
+        workflowMode: draft.resultWorkflowMode,
+        actionName: draft.resultActionName,
+        grid: draft.resultGrid,
+        cell: draft.resultCell,
+        chromaKey: draft.resultChromaKey,
+        spriteVariant: draft.resultSpriteVariant,
+        directions: draft.resultDirections,
+        sourceImageId: draft.resultSourceImageId,
+        sourceImageName: draft.resultSourceImageName,
+        tournamentId: draft.tournamentId,
+        tournamentCandidateIndex: draft.tournamentCandidateIndex,
+        tournamentCandidateCount: draft.tournamentCandidateCount,
+        generationProfile: draft.generationProfile,
+        sourceFingerprint: draft.sourceFingerprint,
+        repairDirections: draft.repairDirections,
+        framesPerDirection: draft.framesPerDirection,
+        motionRecipe: draft.motionRecipe,
+        effectContext: draft.effectContext
+      }
+    ]);
+    setStatus(`${labels.queuedStatus}: ${draft.label}`);
+  }
+
+  async function submitCodexJobDraft(draft: CodexJobDraft, queuedJobId?: string): Promise<CodexRunnerStatus | null> {
+    setIsBusy(true);
+    try {
+      const isTournamentCandidate = Boolean(draft.tournamentId) && typeof draft.tournamentCandidateIndex === "number";
+      const response = await fetch(isTournamentCandidate
+        ? `/api/codex/tournaments/${encodeURIComponent(draft.tournamentId ?? "")}/candidates`
+        : "/api/codex/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isTournamentCandidate ? {
+          candidateIndex: draft.tournamentCandidateIndex
+        } : {
+          workflowMode: draft.workflowMode,
+          prompt: draft.prompt,
+          negativePrompt: draft.negativePrompt,
+          jobNotes: draft.jobNotes,
+          seed: draft.seed,
+          size: draft.size,
+          count: draft.count,
+          quality: draft.quality,
+          selectedImageName: draft.selectedImageName,
+          selectedImageSize: draft.selectedImageSize,
+          selectedImageSource: draft.selectedImageSource,
+          selectedImageDataUrl: draft.selectedImageDataUrl,
+          annotations: draft.annotations,
+          grid: draft.grid,
+          action: draft.action,
+          frames: draft.frames,
+          framesPerDirection: draft.framesPerDirection,
+          cell: draft.cell,
+          chromaKey: draft.chromaKey,
+          spriteVariant: draft.spriteVariant,
+          directions: draft.directions,
+          tournamentId: draft.tournamentId,
+          tournamentCandidateIndex: draft.tournamentCandidateIndex,
+          tournamentCandidateCount: draft.tournamentCandidateCount,
+          motionRecipeId: draft.motionRecipe?.id,
+          motionRecipeVersion: draft.motionRecipe?.version,
+          motionRecipeCompilerVersion: draft.motionRecipe?.compilerVersion,
+          motionRecipeQualityProfile: draft.motionRecipe?.qualityProfile,
+          motionRecipe: draft.motionRecipe,
+          presetId: draft.presetId,
+          effectContext: draft.effectContext
+        })
+      });
+      if (!response.ok) throw new Error(await response.text());
+
+      const responseData = (await response.json()) as CodexJobResponse | { job: CodexJobResponse; tournament?: AnimationTournamentManifestClient };
+      const data = "job" in responseData ? responseData.job : responseData;
+      if ("tournament" in responseData && responseData.tournament) updateAnimationTournamentMonitor(responseData.tournament);
+      if (draft.resultWorkflowMode === "image-edit") {
+        const before = history.find((item) => item.id === draft.resultSourceImageId) ?? selected;
+        if (before) setImageEditComparison({ before, jobId: data.id });
+      }
+      const submittedJob: CodexJobQueueItem = {
+        id: data.id,
+        path: data.path,
+        outboxPath: data.outboxPath,
+        state: "running",
+        label: draft.label,
+        createdAt: data.createdAt,
+        workflowMode: draft.resultWorkflowMode,
+        actionName: draft.resultActionName,
+        grid: draft.resultGrid,
+        cell: draft.resultCell,
+        chromaKey: draft.resultChromaKey,
+        spriteVariant: draft.resultSpriteVariant,
+        directions: draft.resultDirections,
+        sourceImageId: draft.resultSourceImageId,
+        sourceImageName: draft.resultSourceImageName,
+        tournamentId: draft.tournamentId,
+        tournamentCandidateIndex: draft.tournamentCandidateIndex,
+        tournamentCandidateCount: draft.tournamentCandidateCount,
+        generationProfile: draft.generationProfile,
+        sourceFingerprint: draft.sourceFingerprint,
+        repairDirections: draft.repairDirections,
+        framesPerDirection: draft.framesPerDirection,
+        motionRecipe: draft.motionRecipe,
+        effectContext: draft.effectContext
+      };
+      if (shouldWaitForCodexRunner(data.runner)) {
+        setCodexJobs((current) => {
+          const withoutQueued = queuedJobId ? current.filter((job) => job.id !== queuedJobId) : current;
+          return [...withoutQueued, submittedJob];
+        });
+      } else if (queuedJobId) {
+        removeCodexJob(queuedJobId);
+      }
+      if (data.runner && !shouldWaitForCodexRunner(data.runner)) {
+        recordTerminalCodexRunnerJob(submittedJob, data.runner);
+      }
+
+      setStatus(`${copy.statusCodexJobWritten}: ${data.path}. ${runnerStatusMessage(data.runner, copy)}.`);
+      return data.runner ?? null;
+    } catch (error) {
+      if (queuedJobId) removeCodexJob(queuedJobId);
+      setStatus(error instanceof Error ? error.message : copy.statusCodexJobError);
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function removeCodexJob(jobId: string, finalState?: CodexJobLogItem["state"], options: { notify?: boolean } = {}) {
+    const removedJob = codexJobs.find((job) => job.id === jobId);
+    setCodexJobs((current) => current.filter((job) => job.id !== jobId));
+    if (!removedJob || !finalState) return;
+    if (options.notify !== false) notifyCodexJobFinished(removedJob, finalState);
+
+    setCodexJobLogs((logs) =>
+      mergeCodexJobLogs(logs, [
+        createCodexJobLogItem(removedJob, logs.find((item) => item.jobId === jobId), finalState)
+      ])
+    );
+    void loadCodexJobLog(jobId)
+      .then((log) => {
+        setCodexJobLogs((logs) => mergeCodexJobLogs(logs, [createCodexJobLogItem(removedJob, log, finalState)]));
+      })
+      .catch((error) => {
+        setCodexJobLogs((logs) =>
+          mergeCodexJobLogs(logs, [
+            createCodexJobLogItem(
+              removedJob,
+              logs.find((item) => item.jobId === jobId),
+              finalState,
+              error instanceof Error ? error.message : "Could not read Codex log"
+            )
+          ])
+        );
+      });
+  }
+
+  function recordTerminalCodexRunnerJob(job: CodexJobQueueItem, runnerStatus: CodexRunnerStatus) {
+    setCodexJobLogs((logs) =>
+      mergeCodexJobLogs(logs, [
+        createCodexJobLogItem(job, {
+          text: runnerStatus.message,
+          exists: Boolean(runnerStatus.logPath),
+          modifiedAt: runnerStatus.finishedAt ?? runnerStatus.startedAt ?? new Date().toISOString(),
+          readAt: new Date().toISOString()
+        }, runnerStatus.state)
+      ])
+    );
+    if (runnerStatus.diagnostic) recordCodexFailure(job, runnerStatus);
+    if (runnerStatus.logPath) {
+      void loadCodexJobLog(job.id)
+        .then((log) => {
+          setCodexJobLogs((logs) => mergeCodexJobLogs(logs, [createCodexJobLogItem(job, log, runnerStatus.state)]));
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  function notifyCodexJobFinished(job: Pick<CodexJobQueueItem, "label">, finalState: CodexJobLogItem["state"]) {
+    if (!jobNotificationsEnabled || finalState === "running" || finalState === "queued") return;
+    const isSuccess = finalState === "completed";
+    const title = isSuccess ? copy.jobNotificationDone : copy.jobNotificationFailed;
+    const body = job.label;
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(title, { body });
+        return;
+      } catch {
+        // Fall back to the title pulse below.
+      }
+    }
+    flashDocumentTitle(title);
+  }
+
+  function flashDocumentTitle(title: string) {
+    if (documentTitleResetTimerRef.current) {
+      window.clearTimeout(documentTitleResetTimerRef.current);
+    }
+    const originalTitle = originalDocumentTitleRef.current || document.title;
+    document.title = `${title} - ${originalTitle}`;
+    documentTitleResetTimerRef.current = window.setTimeout(() => {
+      document.title = originalTitle;
+      documentTitleResetTimerRef.current = null;
+    }, 9000);
+  }
+
+  function recordCodexFailure(job: CodexJobQueueItem, runnerStatus: CodexRunnerStatus) {
+    if (!runnerStatus.diagnostic) return;
+    const notice: CodexFailureNotice = {
+      id: `${runnerStatus.jobId}-failure`,
+      jobId: runnerStatus.jobId,
+      label: job.label,
+      createdAt: runnerStatus.finishedAt ?? new Date().toISOString(),
+      workflowMode: job.workflowMode,
+      diagnostic: runnerStatus.diagnostic
+    };
+    setCodexFailureNotices((current) =>
+      current.some((item) => item.jobId === notice.jobId)
+        ? current.map((item) => (item.jobId === notice.jobId ? notice : item))
+        : [notice, ...current].slice(0, 12)
+    );
+  }
+
+  function createCodexFailureRetryJob(job: CodexJobQueueItem): CodexJobQueueItem {
+    return {
+      ...job,
+      state: "running",
+      queuedAt: undefined
+    };
+  }
+
+  function clearCodexFailureNotice(jobId: string) {
+    setCodexFailureNotices((current) => current.filter((notice) => notice.jobId !== jobId));
+  }
+
+  function updateCodexFailureNoticeOutboxFingerprint(jobId: string, fingerprint: string, attemptedAt?: string) {
+    setCodexFailureNotices((current) =>
+      current.map((notice) =>
+        notice.jobId === jobId
+          ? {
+              ...notice,
+              lastOutboxFingerprint: fingerprint,
+              lastImportAttemptAt: attemptedAt ?? notice.lastImportAttemptAt
+            }
+          : notice
+      )
+    );
+  }
+
+  async function loadOutboxFingerprintForJob(job: CodexJobQueueItem) {
+    const response = await fetch("/api/codex/results?limit=200");
+    if (!response.ok) throw new Error(await response.text());
+    const data = (await response.json()) as { results: CodexOutboxResult[] };
+    return fingerprintOutboxResults(data.results, job.id, job.createdAt);
+  }
+
+  async function markCodexArtifactQualityGate(
+    jobId: string,
+    classification: Exclude<CodexResultQualityClassification, "usable-final" | "running">,
+    reason: string,
+    code: string
+  ) {
+    try {
+      const response = await fetch(`/api/codex/artifacts/${encodeURIComponent(jobId)}/quality-gate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ classification, reason, code })
+      });
+      if (!response.ok) console.warn(`Could not persist Codex quality gate for ${jobId}: ${await response.text()}`);
+    } catch (error) {
+      console.warn(`Could not persist Codex quality gate for ${jobId}`, error);
+    }
+  }
+
+  async function persistCodexAnimationQuality(jobId: string, animationQuality: AnimationQualityReportV2) {
+    try {
+      const response = await fetch(`/api/codex/artifacts/${encodeURIComponent(jobId)}/animation-quality`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: animationQuality })
+      });
+      if (!response.ok) console.warn(`Could not persist Codex animation quality report for ${jobId}: ${await response.text()}`);
+    } catch (error) {
+      console.warn(`Could not persist Codex animation quality report for ${jobId}`, error);
+    }
+  }
+
+  function recordCodexImportFailure(job: CodexJobQueueItem, error: unknown) {
+    if (error instanceof DirectionSplitQualityError) {
+      void persistCodexAnimationQuality(job.id, error.animationQuality);
+    }
+    const reason = summarizeCodexImportFailureReason(error);
+    const isReviewCandidate = isStandardDirectionSplitJob(job) && /bronze candidate|needs review|raw direction candidate/i.test(reason);
+    const isQualityGateFailure = isStandardDirectionSplitJob(job) && /quality gate|chroma key|transparency damage|direction split qa failed|quarantined/i.test(reason);
+    if (isReviewCandidate || isQualityGateFailure) {
+      void markCodexArtifactQualityGate(
+        job.id,
+        isReviewCandidate ? "quarantined-candidate" : "quality-failed",
+        reason,
+        isReviewCandidate ? "client-quarantined-candidate" : "client-quality-gate-failed"
+      );
+    }
+    const title = isReviewCandidate
+      ? (language === "ja" ? "確認が必要な候補" : "Needs review candidate")
+      : isQualityGateFailure
+      ? (language === "ja" ? "素材品質チェックで弾かれました" : "Material quality gate failed")
+      : isStandardDirectionSplitJob(job)
+      ? copy.codexFailureDirectionSplitImportFailedTitle
+      : copy.codexFailureImportFailedTitle;
+    const suggestion = isReviewCandidate
+      ? (language === "ja"
+          ? "raw候補を確認、ダウンロード、再取り込み、または再生成してください。"
+          : "Review or download the raw candidate, retry import, or regenerate the job.")
+      : isQualityGateFailure
+      ? (language === "ja"
+          ? "候補はfinalとして保存せず、diagnosticsを確認して再生成してください。"
+          : "The candidate was not saved as a final result. Review diagnostics and regenerate the job.")
+      : copy.codexFailureImportFailedSuggestion;
+    const diagnostic: CodexJobDiagnostic = {
+      kind: "import_failed",
+      title,
+      userMessage: `${copy.codexFailureImportFailedMessage} ${copy.codexFailureImportFailedReason}: ${reason}`,
+      suggestion
+    };
+    const notice: CodexFailureNotice = {
+      id: `${job.id}-import-failed`,
+      jobId: job.id,
+      label: job.label,
+      createdAt: new Date().toISOString(),
+      workflowMode: job.workflowMode,
+      retryJob: createCodexFailureRetryJob(job),
+      diagnostic
+    };
+    setCodexFailureNotices((current) =>
+      current.some((item) => item.jobId === notice.jobId)
+        ? current.map((item) => (item.jobId === notice.jobId ? notice : item))
+        : [notice, ...current].slice(0, 12)
+    );
+    return diagnostic;
+  }
+
+  async function retryCodexFailureImport(notice: CodexFailureNotice) {
+    if (!notice.retryJob || retryingFailureJobIdsRef.current.has(notice.jobId)) return;
+    retryingFailureJobIdsRef.current.add(notice.jobId);
+    try {
+      const imported = await importLatestOutboxResult({
+        background: false,
+        newerThan: notice.retryJob.createdAt,
+        quietEmpty: false,
+        job: notice.retryJob,
+        throwOnError: true,
+        failOnIncompleteDirectionSplit: false
+      });
+      if (!imported) {
+        setStatus(`${copy.statusCodexJobPending}: ${notice.jobId}`);
+      }
+    } catch (error) {
+      recordCodexImportFailure(notice.retryJob, error);
+      setStatus(error instanceof Error ? error.message : copy.statusInboxError);
+    } finally {
+      retryingFailureJobIdsRef.current.delete(notice.jobId);
+    }
+  }
+
+  function addLocalInboxHistoryItem(item: HistoryItem) {
+    const result = prependHistoryItemWithDedupe(historyRef.current, item);
+    if (result.added) {
+      historyRef.current = result.history;
+      setHistory((current) => {
+        const next = prependHistoryItemWithDedupe(current, item);
+        historyRef.current = next.history;
+        return next.history;
+      });
+    }
+    setSelectedId(result.item.id);
+    setSelectedFrameId("");
+    return result;
+  }
+
+  function dedupeCurrentHistory() {
+    const deduped = dedupeLocalInboxHistory(historyRef.current);
+    const remappedFrames = remapFrameSourceIds(frames, deduped.idReplacements);
+    if (deduped.removedCount === 0 && remappedFrames.changedCount === 0) return deduped;
+
+    historyRef.current = deduped.history;
+    setHistory(deduped.history);
+    if (remappedFrames.changedCount > 0) setFrames(remappedFrames.frames);
+    setSelectedId((current) => deduped.idReplacements[current] ?? current);
+    setAnimationSourceId((current) => deduped.idReplacements[current] ?? current);
+    setImageEditComparison((current) => {
+      if (!current) return current;
+      const beforeId = deduped.idReplacements[current.before.id];
+      const afterId = current.after ? deduped.idReplacements[current.after.id] : undefined;
+      if (!beforeId && !afterId) return current;
+      return {
+        ...current,
+        before: beforeId ? deduped.history.find((item) => item.id === beforeId) ?? current.before : current.before,
+        after: current.after && afterId ? deduped.history.find((item) => item.id === afterId) ?? current.after : current.after
+      };
+    });
+    return deduped;
+  }
+
+  async function dedupeLocalInboxHistoryNow() {
+    setIsDedupingHistory(true);
+    try {
+      const result = dedupeCurrentHistory();
+      setStatus(
+        result.removedCount > 0
+          ? `Duplicate Local Inbox history cleaned: ${result.removedCount} duplicate result${result.removedCount === 1 ? "" : "s"} removed.`
+          : "Duplicate Local Inbox history check complete: nothing to clean."
+      );
+    } finally {
+      setIsDedupingHistory(false);
+    }
+  }
+
+  async function dedupePersistedHistoryNow() {
+    setIsDedupingHistory(true);
+    setStorageClearState({ scope: "history" });
+    try {
+      const result = await dedupePersistedLocalInboxHistory();
+      if (storageScreen.mode === "normal") {
+        historyRef.current = result.history;
+        setHistory(result.history);
+        setFrames(result.frames);
+      }
+      const message =
+        result.removedCount > 0
+          ? `Duplicate Local Inbox history cleaned: ${result.removedCount} duplicate result${result.removedCount === 1 ? "" : "s"} removed.`
+          : "Duplicate Local Inbox history check complete: nothing to clean.";
+      setStorageClearState({ message });
+      setStorageScreen((current) => ({
+        ...current,
+        summaries: readLocalStateSummaries(),
+        message
+      }));
+      setStatus(message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not dedupe Local Inbox history.";
+      setStorageClearState({ error: message });
+      setStatus(message);
+    } finally {
+      setIsDedupingHistory(false);
+    }
+  }
+
+  async function loadOutboxResults(limit = 200) {
+    const response = await fetch(`/api/codex/results?limit=${limit}`);
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as { outboxPath: string; results: CodexOutboxResult[] };
+  }
+
+  function isRecoverableOutboxImageResult(result: CodexOutboxResult) {
+    return isGenericStaticImageResult(result);
+  }
+
+  function isOutboxResultAlreadyImported(result: CodexOutboxResult) {
+    const singleKey = buildOutboxImportKey("single", result.name);
+    return historyRef.current.some(
+      (item) =>
+        item.provider === "local-inbox" &&
+        (item.outboxImportKey === singleKey ||
+          item.outboxImportKey?.endsWith(`:${result.name}`) ||
+          item.name === result.name)
+    );
+  }
+
+  function directionSplitArtifactImportKey(artifact: ReadyDirectionSplitArtifact) {
+    return buildOutboxImportKey("direction-split", {
+      jobId: artifact.jobId,
+      filenames: artifact.directionResults.map((result) => result.name),
+      manifestName: artifact.manifestResult.name
+    });
+  }
+
+  function findImportedDirectionSplitArtifact(artifact: ReadyDirectionSplitArtifact) {
+    const importKey = directionSplitArtifactImportKey(artifact);
+    const finalName = `${artifact.jobId}-direction-split-animation-sheet.png`;
+    return historyRef.current.find(
+      (item) =>
+        item.provider === "local-inbox" &&
+        (item.outboxImportKey === importKey || item.name === finalName)
+    );
+  }
+
+  function isDirectionSplitArtifactAlreadyImported(artifact: ReadyDirectionSplitArtifact) {
+    return Boolean(findImportedDirectionSplitArtifact(artifact));
+  }
+
+  function countUnimportedOutboxResults(results: CodexOutboxResult[]) {
+    const directionSplitCount = findReadyDirectionSplitArtifacts(results).filter(
+      (artifact) => !isDirectionSplitArtifactAlreadyImported(artifact)
+    ).length;
+    const imageCount = results
+      .filter(isRecoverableOutboxImageResult)
+      .filter((result) => !isOutboxResultAlreadyImported(result))
+      .length;
+    return directionSplitCount + imageCount;
+  }
+
+  async function recoverUnimportedOutboxResults() {
+    setIsRecoveringOutboxResults(true);
+    try {
+      const listData = await loadOutboxResults(200);
+      const directionSplitCandidates = findReadyDirectionSplitArtifacts(listData.results)
+        .filter((artifact) => !isDirectionSplitArtifactAlreadyImported(artifact))
+        .slice(0, 50);
+      const candidates = listData.results
+        .filter(isRecoverableOutboxImageResult)
+        .filter((result) => !isOutboxResultAlreadyImported(result))
+        .slice(0, Math.max(0, 50 - directionSplitCandidates.length));
+      let recoveredCount = 0;
+      let recoveredDirectionSplitCount = 0;
+      let failedDirectionSplitCount = 0;
+      for (const candidate of directionSplitCandidates) {
+        try {
+          const imported = await importReadyDirectionSplitArtifact(candidate);
+          if (imported.added) {
+            recoveredCount += 1;
+            recoveredDirectionSplitCount += 1;
+          }
+        } catch {
+          failedDirectionSplitCount += 1;
+        }
+      }
+      for (const candidate of candidates) {
+        const imported = await fetchOutboxResult(candidate.name);
+        const image = await loadImage(imported.dataUrl);
+        const item: HistoryItem = {
+          id: createId("hist"),
+          name: imported.name,
+          dataUrl: imported.dataUrl,
+          provider: "local-inbox",
+          prompt,
+          seed,
+          size: `${image.width}x${image.height}`,
+          createdAt: new Date().toISOString(),
+          adopted: false,
+          source: "inbox",
+          outboxImportKey: buildOutboxImportKey("single", imported.name)
+        };
+        const inserted = addLocalInboxHistoryItem(item);
+        if (inserted.added) recoveredCount += 1;
+      }
+      const recoverableCount =
+        directionSplitCandidates.length +
+        listData.results.filter(isRecoverableOutboxImageResult).filter((result) => !isOutboxResultAlreadyImported(result)).length;
+      const skippedCount = Math.max(0, recoverableCount - recoveredCount);
+      const failedDirectionSplitSuffix =
+        failedDirectionSplitCount > 0
+          ? ` ${failedDirectionSplitCount} direction-split artifact${failedDirectionSplitCount === 1 ? "" : "s"} failed QA.`
+          : "";
+      setStatus(
+        recoveredCount > 0
+          ? `Recovered ${recoveredCount} outbox result${recoveredCount === 1 ? "" : "s"}. ${skippedCount} already imported or not recoverable.${recoveredDirectionSplitCount > 0 ? " direction-split manifest ok." : ""}${failedDirectionSplitSuffix}`
+          : `Recover Results complete: no new formal outbox images were found.${failedDirectionSplitSuffix}`
+      );
+      await runCockpitHealthCheck({ quiet: true });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : copy.statusInboxError);
+    } finally {
+      setIsRecoveringOutboxResults(false);
+    }
+  }
+
+  async function runCockpitHealthCheck(options: { quiet?: boolean } = {}) {
+    if (!options.quiet) {
+      setCockpitHealth((current) => ({
+        ...current,
+        state: current.state === "repairing" ? "repairing" : "checking",
+        message: "Checking Cockpit health."
+      }));
+    }
+
+    const checkedAt = new Date().toISOString();
+    const mismatches: string[] = [];
+    let apiHealth: ImageCockpitApiHealth | undefined;
+    let supervisorHealth: ImageCockpitDevSupervisorHealth | undefined;
+    let unimportedResults = 0;
+
+    try {
+      apiHealth = await fetchJsonWithTimeout<ImageCockpitApiHealth>("/api/health");
+      if (apiHealth.app !== "image-cockpit" || apiHealth.role !== "api") {
+        mismatches.push("API route mismatch: /api/health did not return Image Cockpit API metadata.");
+        apiHealth = undefined;
+      }
+    } catch {
+      mismatches.push("API route mismatch or unavailable: /api/health is not responding as Image Cockpit.");
+    }
+
+    if (apiHealth) {
+      try {
+        const providersResponse = await fetchJsonWithTimeout<{ providers?: ProviderStatus[] }>("/api/providers");
+        const providerIds = new Set((providersResponse.providers ?? []).map((provider) => provider.id));
+        if (!providerIds.has("codex-handoff") || !providerIds.has("local-inbox")) {
+          mismatches.push("API provider schema mismatch.");
+        }
+      } catch {
+        mismatches.push("API providers endpoint is not readable.");
+      }
+
+      try {
+        const listData = await loadOutboxResults(200);
+        unimportedResults = countUnimportedOutboxResults(listData.results);
+      } catch {
+        mismatches.push("Outbox results endpoint is not readable.");
+      }
+    }
+
+    supervisorHealth = await loadDevSupervisorHealth().catch(() => undefined);
+    if (supervisorHealth) {
+      mismatches.push(...supervisorHealth.mismatches);
+      if (apiHealth && supervisorHealth.api.port !== apiHealth.port) {
+        mismatches.push(`API port mismatch: UI reached ${apiHealth.port}, supervisor expects ${supervisorHealth.api.port}.`);
+      }
+    }
+
+    const repairAvailable = Boolean(supervisorHealth);
+    const { state, message } = summarizeCockpitHealthStatus(Boolean(apiHealth), mismatches, unimportedResults);
+
+    setCockpitHealth({
+      state,
+      checkedAt,
+      message,
+      api: apiHealth,
+      supervisor: supervisorHealth,
+      mismatches,
+      unimportedResults,
+      repairAvailable
+    });
+  }
+
+  async function repairCockpit() {
+    const confirmed = window.confirm(
+      "Cockpitを修復します。Vite/API/supervisorの整合性だけを確認し、repo、outbox画像、status、logsは削除しません。running Codex jobは停止しません。"
+    );
+    if (!confirmed) return;
+
+    setIsCockpitRepairing(true);
+    setCockpitHealth((current) => ({ ...current, state: "repairing", message: "Repairing Cockpit." }));
+    try {
+      await postDevSupervisorRepair();
+      await runCockpitHealthCheck({ quiet: true });
+      await recoverUnimportedOutboxResults();
+      setStatus("Cockpit repair complete. API health was rechecked and outbox recovery ran.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Cockpit repair failed.";
+      setStatus(message);
+      setCockpitHealth((current) => ({
+        ...current,
+        state: "broken",
+        message
+      }));
+    } finally {
+      setIsCockpitRepairing(false);
+    }
+  }
+
+  async function generateLocally() {
+    setIsBusy(true);
+    try {
+      if (workflowMode === "sprite-generate") {
+        await generateAnimationFromSelectedPixelArt();
+        return;
+      }
+
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workflowMode,
+          prompt,
+          negativePrompt,
+          jobNotes,
+          seed,
+          size,
+          count,
+          grid,
+          action: activeAction.name,
+          frames: grid.columns * grid.rows,
+          cell: activeAction.cell
+        })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const data = (await response.json()) as LocalGenerationResponse;
+      const imported: HistoryItem[] = [];
+      for (const result of data.results) {
+        const image = await loadImage(result.dataUrl);
+        imported.push({
+          id: createId("hist"),
+          name: result.name,
+          dataUrl: result.dataUrl,
+          provider: "local-generator",
+          prompt,
+          seed,
+          size: `${image.width}x${image.height}`,
+          createdAt: data.createdAt,
+          adopted: false,
+          source: "generate"
+        });
+      }
+      if (imported.length === 0) throw new Error("Local generator returned no images.");
+
+      setHistory((current) => [...imported, ...current]);
+      setSelectedId(imported[0].id);
+      setSelectedFrameId("");
+
+      setStatus(`${copy.statusLocalGenerated}: ${imported.map((item) => item.name).join(", ")}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : copy.statusLocalGenerateError);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function generateAnimationFromSelectedPixelArt() {
+    const source = animationSource;
+    if (!isAnimationSource(source)) {
+      setStatus(copy.statusAnimationSourceRequired);
+      fileInputRef.current?.click();
+      return;
+    }
+
+    const animationAction = normalizeAnimationAction(activeAction);
+    const animationGrid = { columns: animationFrameCount, rows: 1, gutter: 0 };
+    const localAnimationDirections = selectedAnimationDirections;
+    const sheetDataUrl = await renderAnimationSheet(source.dataUrl, animationAction.cell, animationAction.name, animationFrameCount);
+    const sheetName = `${source.name.replace(/\.[^.]+$/, "")}_${animationAction.name}_animation_sheet.png`;
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: sheetName,
+      dataUrl: sheetDataUrl,
+      provider: "local-generator",
+      prompt,
+      seed,
+      size: `${animationAction.cell.width * animationFrameCount}x${animationAction.cell.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "generate",
+      derivedFromId: source.id,
+      derivedFromName: source.name,
+      animationDirections: [localAnimationDirections[0] ?? "front"],
+      motionRecipe: selectedMotionRecipeCompilation.metadata
+    };
+    const newFrames = await splitImageIntoFrames(sheetDataUrl, sheetName.replace(/\.[^.]+$/, ""), animationGrid, item.id, animationAction.cell, {
+      normalizeOpaqueBounds: true
+    });
+
+    setGrid(animationGrid);
+    setHistory((current) => [item, ...current]);
+    setSelectedId(item.id);
+    setFrames((current) => [...current, ...newFrames]);
+    setActions((current) =>
+      current.map((action) =>
+        action.name === animationAction.name ? { ...animationAction, frameIds: newFrames.map((frame) => frame.id) } : action
+      )
+    );
+    setSelectedFrameId("");
+    setStatus(`${copy.statusAnimationGenerated}: ${sheetName}. ${formatFramesAddedStatus(newFrames.length, animationAction.name, language)}`);
+  }
+
+  async function importAnimationSheetResult(imported: CodexOutboxImportResponse, pendingJob: CodexJobQueueItem) {
+    const actionName = pendingJob.actionName ?? activeAction.name;
+    const spriteVariant = pendingJob.spriteVariant ?? "standard";
+    const spriteGrid = pendingJob.grid ?? ANIMATION_SHEET_GRID;
+    const spriteCell = pendingJob.cell ?? normalizeAnimationAction(activeAction).cell;
+    const chromaKey = animationChromaKeys[pendingJob.chromaKey ?? animationChromaKey];
+    const transparentSheetDataUrl = spriteVariant === "hatch-pet"
+      ? imported.dataUrl
+      : await createTransparentSpriteSheetDataUrl(imported.dataUrl, chromaKey);
+    const image = await loadImage(transparentSheetDataUrl);
+    if (spriteVariant === "standard" && isSingleDirectionIntermediateSheet(image.width, image.height, spriteCell)) {
+      throw new Error(`Animation quality gate failed: ${imported.name} is a single-direction intermediate sheet (${image.width}x${image.height}), not a final direction-split animation result.`);
+    }
+    const baseName = imported.name.replace(/\.[^.]+$/, "");
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: spriteVariant === "hatch-pet" ? imported.name : `${baseName}_transparent.png`,
+      dataUrl: transparentSheetDataUrl,
+      provider: "local-inbox",
+      prompt,
+      seed,
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "generate",
+      derivedFromId: pendingJob.sourceImageId,
+      derivedFromName: pendingJob.sourceImageName,
+      outboxImportKey: buildOutboxImportKey("animation-sheet", { jobId: pendingJob.id, filenames: [imported.name] })
+    };
+    const duplicate = prependHistoryItemWithDedupe(historyRef.current, item);
+    if (!duplicate.added) {
+      setSelectedId(duplicate.item.id);
+      setSelectedFrameId("");
+      setStatus(`${copy.statusInboxImported}: ${item.name} (already imported)`);
+      return;
+    }
+    const newFrames = await splitImageIntoFrames(transparentSheetDataUrl, baseName, spriteGrid, item.id, spriteCell, {
+      normalizeOpaqueBounds: spriteVariant === "standard",
+      residueChromaKey: chromaKey.name
+    });
+    if (newFrames.length === 0) throw new Error("Returned sprite sheet could not be split into frames.");
+
+    setAnimationGenerationMode(spriteVariant);
+    if (spriteVariant !== "hatch-pet") setAnimationChromaKey(chromaKey.name);
+    setGrid(spriteGrid);
+    addLocalInboxHistoryItem(item);
+    setFrames((current) => [...current, ...newFrames]);
+    setActiveActionName(actionName);
+    setActions((current) =>
+      current.map((action) =>
+        action.name === actionName
+          ? { ...normalizeAnimationAction(action), cell: spriteCell, frameIds: newFrames.map((frame) => frame.id) }
+          : action
+      )
+    );
+    setSelectedFrameId("");
+    setStatus(`${copy.statusAnimationGenerated}: ${item.name}. ${formatFramesAddedStatus(newFrames.length, actionName, language)}`);
+  }
+
+  async function importDirectionalHatchPetResults(importedResults: CodexOutboxImportResponse[], pendingJob: CodexJobQueueItem) {
+    const actionName = pendingJob.actionName ?? directionalHatchPetSpriteAction().name;
+    const chromaKey = animationChromaKeys[pendingJob.chromaKey ?? animationChromaKey];
+    const transparentAtlases = await Promise.all(
+      importedResults.map((result) => createTransparentSpriteSheetDataUrl(result.dataUrl, chromaKey))
+    );
+    const combinedDataUrl = await composeDirectionalHatchPetSheet(transparentAtlases);
+    const image = await loadImage(combinedDataUrl);
+    const itemName = `${pendingJob.id}-directional-hatch-pet-atlas.png`;
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: itemName,
+      dataUrl: combinedDataUrl,
+      provider: "local-inbox",
+      prompt,
+      seed,
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "generate",
+      derivedFromId: pendingJob.sourceImageId,
+      derivedFromName: pendingJob.sourceImageName,
+      outboxImportKey: buildOutboxImportKey("animation-sheet", {
+        jobId: pendingJob.id,
+        filenames: importedResults.map((result) => result.name)
+      })
+    };
+    const duplicate = prependHistoryItemWithDedupe(historyRef.current, item);
+    if (!duplicate.added) {
+      setSelectedId(duplicate.item.id);
+      setSelectedFrameId("");
+      setStatus(`${copy.statusInboxImported}: ${item.name} (already imported)`);
+      return;
+    }
+    const newFrames = await splitImageIntoFrames(combinedDataUrl, itemName.replace(/\.[^.]+$/, ""), DIRECTIONAL_HATCH_PET_GRID, item.id, HATCH_PET_CELL);
+    if (newFrames.length === 0) throw new Error("Returned directional hatch-pet atlases could not be split into frames.");
+
+    setAnimationGenerationMode("directional-hatch-pet");
+    setAnimationChromaKey(chromaKey.name);
+    setGrid(DIRECTIONAL_HATCH_PET_GRID);
+    addLocalInboxHistoryItem(item);
+    setFrames((current) => [...current, ...newFrames]);
+    setActiveActionName(actionName);
+    setActions((current) =>
+      current.some((action) => action.name === actionName)
+        ? current.map((action) =>
+            action.name === actionName
+              ? { ...action, cell: HATCH_PET_CELL, frameIds: newFrames.map((frame) => frame.id) }
+              : action
+          )
+        : [...current, { ...directionalHatchPetSpriteAction(), frameIds: newFrames.map((frame) => frame.id) }]
+    );
+    setSelectedFrameId("");
+    setStatus(`${copy.statusAnimationGenerated}: ${item.name}. ${formatFramesAddedStatus(newFrames.length, actionName, language)}`);
+  }
+
+  function manifestChromaKeyName(manifest: DirectionSplitAnimationManifest | null, fallback: AnimationChromaKeyName) {
+    const raw = typeof manifest?.chromaKey === "string" ? manifest.chromaKey : manifest?.chromaKey?.name;
+    return raw === "green" || raw === "magenta" ? raw : fallback;
+  }
+
+  function manifestActionName(manifest: DirectionSplitAnimationManifest | null) {
+    const action = manifest?.action;
+    return action && actions.some((item) => item.name === action) ? action : activeAction.name;
+  }
+
+  function directionSplitImportContextFromArtifact(
+    artifact: ReadyDirectionSplitArtifact,
+    manifest: DirectionSplitAnimationManifest | null
+  ): DirectionSplitImportContext {
+    return {
+      id: artifact.jobId,
+      actionName: manifestActionName(manifest),
+      cell: manifest?.cell ?? STANDARD_ANIMATION_CELL,
+      chromaKey: manifestChromaKeyName(manifest, animationChromaKey),
+      directions: manifest?.directions ? normalizeAnimationDirections(manifest.directions) : undefined
+    };
+  }
+
+  function directionSplitRecoveryJobFromArtifact(
+    artifact: ReadyDirectionSplitArtifact,
+    manifest: DirectionSplitAnimationManifest | null
+  ): CodexJobQueueItem {
+    const context = directionSplitImportContextFromArtifact(artifact, manifest);
+    return {
+      id: context.id,
+      state: "running",
+      label: "Direction split recovery",
+      createdAt: artifact.modifiedAt,
+      workflowMode: "sprite-generate",
+      spriteVariant: "standard",
+      actionName: context.actionName,
+      cell: context.cell,
+      chromaKey: context.chromaKey,
+      sourceImageId: context.sourceImageId,
+      sourceImageName: context.sourceImageName
+    };
+  }
+
+  async function importReadyDirectionSplitArtifact(artifact: ReadyDirectionSplitArtifact) {
+    let manifest: DirectionSplitAnimationManifest | null = null;
+    try {
+      manifest = parseDirectionSplitAnimationManifest(await fetchOutboxResult(artifact.manifestResult.name));
+      const selection = selectDirectionSplitAnimationResults(artifact.jobResults, artifact.jobId, manifest);
+      if (!selection.ready || selection.directionResults.length !== selection.directions.length) {
+        const missing = selection.missingDirections.join(", ") || "direction images";
+        throw new Error(`Direction split import failed for ${artifact.jobId}: missing ${missing}. Outbox files are still available.`);
+      }
+      const importedResults = await Promise.all(selection.directionResults.map((result) => fetchOutboxResult(result.name)));
+      return await importDirectionSplitAnimationResults(
+        importedResults,
+        manifest,
+        directionSplitImportContextFromArtifact(artifact, manifest),
+        artifact.manifestResult.name
+      );
+    } catch (error) {
+      recordCodexImportFailure(directionSplitRecoveryJobFromArtifact(artifact, manifest), error);
+      throw error;
+    }
+  }
+
+  async function loadCodexJobOutboxResults(jobId: string, limit?: number) {
+    const response = await fetch(`/api/codex/jobs/${encodeURIComponent(jobId)}/results${limit ? `?limit=${limit}` : ""}`);
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as { outboxPath: string; results: CodexOutboxResult[] };
+  }
+
+  async function fetchCodexJobOutboxResult(jobId: string, name: string) {
+    const response = await fetch(`/api/codex/jobs/${encodeURIComponent(jobId)}/results/${encodeURIComponent(name)}`);
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as CodexOutboxImportResponse;
+  }
+
+  async function publishCodexTournamentWinner(
+    tournamentId: string,
+    jobId: string,
+    decision?: AnimationTournamentWinnerDecision,
+    updateMonitor = true
+  ) {
+    const response = await fetch(`/api/codex/tournaments/${encodeURIComponent(tournamentId)}/winner`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, decision })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = (await response.json()) as {
+      ok: boolean;
+      tournamentId: string;
+      jobId: string;
+      outboxPath: string;
+      results: CodexOutboxResult[];
+      tournament: AnimationTournamentManifestClient;
+      cancellationResults?: Array<{ jobId: string; ok: boolean; message?: string }>;
+    };
+    if (updateMonitor) updateAnimationTournamentMonitor(payload.tournament);
+    return payload;
+  }
+
+  async function cancelCodexJob(jobId: string) {
+    const response = await fetch(`/api/codex/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST"
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as { ok: boolean; jobId: string; status?: CodexRunnerStatus; message?: string };
+  }
+
+  async function evaluateDirectionSplitTournamentCandidate(
+    job: CodexJobQueueItem,
+    status: CodexRunnerStatus | null
+  ): Promise<DirectionSplitTournamentCandidateEvaluation> {
+    const terminalStatus: CodexRunnerStatus = status ?? {
+      jobId: job.id,
+      state: "unknown",
+      message: "Runner status could not be loaded."
+    };
+    const emptyEvaluation: DirectionSplitTournamentCandidateEvaluation = {
+      job,
+      status: terminalStatus,
+      ready: false,
+      score: Number.NEGATIVE_INFINITY,
+      warningCount: Number.MAX_SAFE_INTEGER,
+      manifest: null,
+      directionResults: [],
+      importedResults: []
+    };
+    if (terminalStatus.state !== "completed") {
+      return {
+        ...emptyEvaluation,
+        error: runnerStatusMessage(terminalStatus, copy)
+      };
+    }
+    if (terminalStatus.diagnostic) {
+      return {
+        ...emptyEvaluation,
+        error: runnerStatusMessage(terminalStatus, copy)
+      };
+    }
+
+    try {
+      const listData = await loadCodexJobOutboxResults(job.id);
+      const results = listData.results;
+      const jobResults = results.filter((result) => !shouldIgnoreOutboxResultName(result.name) && isOutboxResultForJob(result.name, job.id));
+      const manifestResult = jobResults.find((result) => isDirectionSplitAnimationManifestName(result.name, job.id));
+      const manifest = manifestResult ? parseDirectionSplitAnimationManifest(await fetchCodexJobOutboxResult(job.id, manifestResult.name)) : null;
+      const selection = selectDirectionSplitAnimationResults(jobResults, job.id, manifest, job.directions);
+      if (!selection.ready || !selection.manifestResult || selection.directionResults.length !== selection.directions.length) {
+        if (shouldWaitForAnimationTournamentArtifacts(selection)) {
+          const detail = selection.artifactStatus?.reason;
+          const suffix = detail && !/waiting for stable verified artifacts/i.test(detail) ? `: ${detail}` : "";
+          return {
+            ...emptyEvaluation,
+            manifest,
+            manifestResult: selection.manifestResult,
+            directionResults: selection.directionResults,
+            error: `waiting for stable verified artifacts${suffix}`
+          };
+        }
+        const reason =
+          selection.artifactStatus?.reason ??
+          (selection.missingDirections.length > 0
+            ? `missing ${selection.missingDirections.join(", ")}`
+            : "candidate did not produce a verified direction-split final result");
+        return { ...emptyEvaluation, manifest, manifestResult: selection.manifestResult, directionResults: selection.directionResults, error: reason };
+      }
+
+      const importedResults = await Promise.all(selection.directionResults.map((result) => fetchCodexJobOutboxResult(job.id, result.name)));
+      const actionName = job.actionName ?? manifestActionName(manifest);
+      const chromaKey = animationChromaKeys[job.chromaKey ?? manifestChromaKeyName(manifest, animationChromaKey)];
+      const sourceDataUrl = historyRef.current.find((item) => item.id === job.sourceImageId)?.dataUrl;
+      const candidateFrameCount = resolveMotionFrameCount(job.framesPerDirection ?? manifest?.framesPerDirection ?? job.motionRecipe?.frameCount);
+      const composed = await composeDirectionSplitAnimationSheet(
+        importedResults,
+        chromaKey,
+        job.cell ?? manifest?.cell ?? STANDARD_ANIMATION_CELL,
+        actionName,
+        selection.directions,
+        sourceDataUrl,
+        job.motionRecipe,
+        candidateFrameCount
+      );
+      await persistCodexAnimationQuality(job.id, composed.animationQuality);
+      const artifactWarnings = selection.artifactStatus?.warnings?.length ?? 0;
+      const warningCount = composed.warnings.length + artifactWarnings;
+      const artifactQuality = selection.artifactStatus?.quality;
+      const qualityScore = artifactQuality === "gold" ? 3000 : artifactQuality === "silver" ? 2400 : 1800;
+      const verifiedScore = selection.artifactStatus?.verified ? 300 : 0;
+      const stableScore = selection.artifactStatus?.stable ? 100 : 0;
+      const score = qualityScore + verifiedScore + stableScore - warningCount * 25;
+      return {
+        job,
+        status: terminalStatus,
+        ready: true,
+        score,
+        warningCount,
+        manifest,
+        manifestResult: selection.manifestResult,
+        directionResults: selection.directionResults,
+        importedResults,
+        animationQuality: composed.animationQuality
+      };
+    } catch (error) {
+      if (error instanceof DirectionSplitQualityError) {
+        await persistCodexAnimationQuality(job.id, error.animationQuality);
+      }
+      return {
+        ...emptyEvaluation,
+        error: error instanceof Error ? error.message : "Candidate evaluation failed."
+      };
+    }
+  }
+
+  async function importDirectionSplitAnimationResults(
+    importedResults: CodexOutboxImportResponse[],
+    manifest: DirectionSplitAnimationManifest | null,
+    importContext: DirectionSplitImportContext,
+    manifestName = ""
+  ) {
+    const actionName = importContext.actionName ?? manifestActionName(manifest);
+    const spriteCell = importContext.cell ?? manifest?.cell ?? STANDARD_ANIMATION_CELL;
+    const chromaKey = animationChromaKeys[importContext.chromaKey ?? manifestChromaKeyName(manifest, animationChromaKey)];
+    const sheetDirections = normalizeAnimationDirections(importContext.directions ?? manifest?.directions);
+    const importedMotionRecipe = importContext.motionRecipe ?? manifest?.motionRecipe;
+    const importedFrameCount = resolveMotionFrameCount(importContext.framesPerDirection ?? manifest?.framesPerDirection ?? importedMotionRecipe?.frameCount);
+    const sheetGrid = animationSheetGridForDirections(sheetDirections, importedFrameCount);
+    const sourceDataUrl = historyRef.current.find((historyItem) => historyItem.id === importContext.sourceImageId)?.dataUrl;
+    const composed = await composeDirectionSplitAnimationSheet(
+      importedResults,
+      chromaKey,
+      spriteCell,
+      actionName,
+      sheetDirections,
+      sourceDataUrl,
+      importedMotionRecipe,
+      importedFrameCount
+    );
+    await persistCodexAnimationQuality(importContext.id, composed.animationQuality);
+    const image = await loadImage(composed.dataUrl);
+    const itemName = `${importContext.id}-direction-split-animation-sheet.png`;
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: itemName,
+      dataUrl: composed.dataUrl,
+      provider: "local-inbox",
+      prompt,
+      seed,
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "generate",
+      derivedFromId: importContext.sourceImageId,
+      derivedFromName: importContext.sourceImageName,
+      animationDirections: sheetDirections,
+      animationQuality: composed.animationQuality,
+      motionRecipe: importedMotionRecipe,
+      animationGenerationProfile: importContext.generationProfile,
+      animationSourceFingerprint: importContext.sourceFingerprint,
+      outboxImportKey: buildOutboxImportKey("direction-split", {
+        jobId: importContext.id,
+        filenames: importedResults.map((result) => result.name),
+        manifestName
+      })
+    };
+    const duplicate = prependHistoryItemWithDedupe(historyRef.current, item);
+    if (!duplicate.added) {
+      setSelectedId(duplicate.item.id);
+      setSelectedFrameId("");
+      setStatus(`${copy.statusInboxImported}: ${item.name} (already imported)`);
+      return { added: false, item: duplicate.item, frameCount: 0 };
+    }
+    const newFrames = await splitImageIntoFrames(composed.dataUrl, itemName.replace(/\.[^.]+$/, ""), sheetGrid, item.id, spriteCell);
+    if (newFrames.length === 0) throw new Error("Returned direction split animation could not be split into frames.");
+
+    setAnimationGenerationMode("standard");
+    restoreAnimationDirectionSelection(sheetDirections, importedFrameCount, sheetGrid);
+    setAnimationChromaKey(chromaKey.name);
+    setGrid(sheetGrid);
+    addLocalInboxHistoryItem(item);
+    setFrames((current) => [...current, ...newFrames]);
+    setActiveActionName(actionName);
+    setActions((current) =>
+      current.map((action) =>
+        action.name === actionName
+          ? {
+              ...normalizeAnimationAction(action),
+              fps: importedMotionRecipe
+                ? compileMotionRecipe({
+                    recipe: resolveMotionRecipe({ recipeId: importedMotionRecipe.id, recipeVersion: importedMotionRecipe.version, actionName }).recipe,
+                    directions: sheetDirections,
+                    topology: importedMotionRecipe.bodyTopology,
+                    frameCount: importedFrameCount,
+                    variant: importedMotionRecipe.modifiers
+                  }).qaContract.fps
+                : action.fps,
+              cell: spriteCell,
+              frameIds: newFrames.map((frame) => frame.id)
+            }
+          : action
+      )
+    );
+    setSelectedFrameId("");
+    if (importContext.sourceImageId) {
+      setAnimationSourceId(importContext.sourceImageId);
+    }
+
+    const manifestSuffix = manifest?.schema === DIRECTION_SPLIT_ANIMATION_SCHEMA ? " direction-split manifest ok." : "";
+    const warningSuffix = composed.warnings.length > 0 ? ` QA warnings: ${composed.warnings.length}.` : "";
+    const recipeWarningSuffix = manifest?.motionRecipeWarnings?.length
+      ? ` Motion Recipe warning: ${manifest.motionRecipeWarnings.join(" ")}`
+      : "";
+    const qualitySuffix = composed.animationQuality.shadowDecision.reasons.length > 0
+      ? ` Quality v2 shadow warnings: ${composed.animationQuality.shadowDecision.reasons.length}.`
+      : " Quality v2 shadow: clear.";
+    setStatus(`${copy.statusAnimationGenerated}: ${item.name}. ${formatFramesAddedStatus(newFrames.length, actionName, language)}${manifestSuffix}${warningSuffix}${qualitySuffix}${recipeWarningSuffix}`);
+    return { added: true, item, frameCount: newFrames.length };
+  }
+
+  async function importDirectionSplitBronzeCandidate(
+    importedResults: CodexOutboxImportResponse[],
+    pendingJob: CodexJobQueueItem,
+    error: unknown
+  ) {
+    const firstCandidate = importedResults.find((result) => result.mimeType.startsWith("image/"));
+    if (!firstCandidate) throw error instanceof Error ? error : new Error("Direction split candidate could not be reviewed.");
+    const image = await loadImage(firstCandidate.dataUrl);
+    const itemName = `${pendingJob.id}-bronze-candidate-${firstCandidate.name}`;
+    const item: HistoryItem = {
+      id: createId("hist"),
+      name: itemName,
+      dataUrl: firstCandidate.dataUrl,
+      provider: "local-inbox",
+      prompt,
+      seed,
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "inbox",
+      derivedFromId: pendingJob.sourceImageId,
+      derivedFromName: pendingJob.sourceImageName,
+      outboxImportKey: buildOutboxImportKey("bronze-candidate", {
+        jobId: pendingJob.id,
+        filenames: [firstCandidate.name]
+      })
+    };
+    const result = addLocalInboxHistoryItem(item);
+    setAnimationGenerationMode("standard");
+    setStatus(
+      result.added
+        ? `${language === "ja" ? "Bronze候補" : "Bronze candidate"}: ${item.name}. ${summarizeCodexImportFailureReason(error)}`
+        : `${language === "ja" ? "取り込み済みのBronze候補" : "Bronze candidate already imported"}: ${result.item.name}. ${summarizeCodexImportFailureReason(error)}`
+    );
+  }
+
+  async function fetchOutboxResult(name: string) {
+    if (shouldIgnoreOutboxResultName(name)) throw new Error(`Ignored temporary or QA outbox result: ${name}`);
+    const importResponse = await fetch(`/api/codex/results/${encodeURIComponent(name)}`);
+    if (!importResponse.ok) throw new Error(await importResponse.text());
+    return (await importResponse.json()) as CodexOutboxImportResponse;
+  }
+
+  function selectEffectAnimationSheetResult(results: CodexOutboxResult[], jobId: string) {
+    const staticResults = results
+      .filter((result) => isStaticImageResult(result) && isUsableOutboxResult(result))
+      .filter((result) => isOutboxResultForJob(result.name, jobId));
+    const sheetCandidates = staticResults.filter((result) => !/(?:gif|preview|thumb|metadata|frame-\d+)/i.test(result.name));
+    return (sheetCandidates.length > 0 ? sheetCandidates : staticResults)
+      .slice()
+      .sort((left, right) => {
+        const leftName = left.name.toLowerCase();
+        const rightName = right.name.toLowerCase();
+        const leftScore = (leftName.includes("sheet") ? 3 : 0) + (leftName.includes("effect") ? 2 : 0) + (leftName.includes("final") ? 1 : 0);
+        const rightScore = (rightName.includes("sheet") ? 3 : 0) + (rightName.includes("effect") ? 2 : 0) + (rightName.includes("final") ? 1 : 0);
+        return rightScore - leftScore || right.size - left.size || right.modifiedAt.localeCompare(left.modifiedAt);
+      })[0];
+  }
+
+  async function importEffectAnimationResult(imported: CodexOutboxImportResponse, pendingJob: CodexJobQueueItem, jobResults: CodexOutboxResult[]) {
+    const context = pendingJob.effectContext ?? effectJobContext;
+    const normalized = await normalizeEffectSheetDataUrl(imported.dataUrl, context);
+    const itemId = createId("hist");
+    const itemName = imported.name.replace(/\.[^.]+$/, "").includes(context.name)
+      ? imported.name
+      : `${context.name}-${imported.name}`;
+    const splitFrames = await splitImageIntoFrames(
+      normalized.dataUrl,
+      itemName.replace(/\.[^.]+$/, ""),
+      { columns: context.layout.columns, rows: context.layout.rows, gutter: 0 },
+      itemId,
+      context.frameSize
+    );
+    const tempFrames = splitFrames.slice(0, context.frameCount).map((frame, index) => ({ ...frame, index }));
+    const qcResult = await evaluateEffectAnimationQc(normalized.dataUrl, tempFrames, context, normalized.warnings);
+    if (!effectQualityRankAllowsDownload(qcResult.rank)) {
+      throw new Error(`Effect QC quarantined for ${pendingJob.id}: ${qcResult.failures.join("; ") || "bronze candidate"}. No history or final download item was added.`);
+    }
+
+    const image = await loadImage(normalized.dataUrl);
+    const metadata: EffectAnimationMetadata = {
+      kind: "effect-animation",
+      name: context.name,
+      category: context.category,
+      type: context.type,
+      style: context.style,
+      colorPalette: context.colorPalette,
+      frameCount: context.frameCount,
+      frameSize: context.frameSize,
+      layout: context.layout,
+      loopMode: context.loopMode,
+      fps: context.fps,
+      anchor: context.anchor,
+      blendMode: context.blendMode,
+      background: "transparent",
+      alphaPremultiplied: false,
+      qualityRank: qcResult.rank,
+      warnings: qcResult.warnings,
+      recipe: context.recipe,
+      qualityV2: qcResult.qualityV2,
+      sourceJobId: pendingJob.id,
+      artifacts: {
+        sheet: imported.name,
+        previewGif: jobResults.find((result) => result.mimeType === "image/gif")?.name,
+        previewApng: jobResults.find((result) => result.mimeType === "image/apng" || result.name.toLowerCase().endsWith(".apng"))?.name,
+        metadata: jobResults.find((result) => result.mimeType === "application/json" || result.name.endsWith(".json"))?.name,
+        frames: tempFrames.map((frame) => `${frame.name}.png`)
+      }
+    };
+    const item: HistoryItem = {
+      id: itemId,
+      name: itemName,
+      dataUrl: normalized.dataUrl,
+      provider: "local-inbox",
+      prompt: context.customPrompt || context.promptContract.join("\n"),
+      seed,
+      size: `${image.width}x${image.height}`,
+      createdAt: new Date().toISOString(),
+      adopted: false,
+      source: "generate",
+      outboxImportKey: buildOutboxImportKey("effect-animation", {
+        jobId: pendingJob.id,
+        filenames: [imported.name]
+      }),
+      effectAnimation: metadata
+    };
+    const inserted = addLocalInboxHistoryItem(item);
+    const framesForInsertedItem = tempFrames.map((frame) => ({
+      ...frame,
+      sourceId: inserted.item.id
+    }));
+    const existingFramesForItem = frames.some((frame) => frame.sourceId === inserted.item.id);
+    if (inserted.added || !existingFramesForItem) {
+      setFrames((current) => [...current, ...framesForInsertedItem]);
+    }
+    setSelectedFrameId("");
+    setStatus(
+      `${language === "ja" ? "エフェクト取り込み完了" : "Effect imported"}: ${itemName} (${metadata.qualityRank}${metadata.warnings.length ? `, ${metadata.warnings.length} warning${metadata.warnings.length === 1 ? "" : "s"}` : ""})`
+    );
+  }
+
+  async function normalizeEffectSheetDataUrl(dataUrl: string, context: EffectAnimationJobContext) {
+    const warnings: string[] = [];
+    const image = await loadImage(dataUrl);
+    const expectedWidth = context.frameSize.width * context.layout.columns;
+    const expectedHeight = context.frameSize.height * context.layout.rows;
+    if (image.width === expectedWidth && image.height === expectedHeight) return { dataUrl, warnings };
+
+    warnings.push(`sheet normalized from ${image.width}x${image.height} to ${expectedWidth}x${expectedHeight}`);
+    const canvas = document.createElement("canvas");
+    canvas.width = expectedWidth;
+    canvas.height = expectedHeight;
+    const canvasContext = canvas.getContext("2d");
+    if (!canvasContext) throw new Error("Effect sheet normalization failed: canvas context unavailable.");
+    canvasContext.clearRect(0, 0, canvas.width, canvas.height);
+    canvasContext.drawImage(image, 0, 0, expectedWidth, expectedHeight);
+    return { dataUrl: canvas.toDataURL("image/png"), warnings };
+  }
+
+  async function evaluateEffectAnimationQc(
+    sheetDataUrl: string,
+    effectFrames: SpriteFrame[],
+    context: EffectAnimationJobContext,
+    inheritedWarnings: string[]
+  ) {
+    const warnings = [...inheritedWarnings];
+    const failures: string[] = [];
+    const sheetImage = await loadImage(sheetDataUrl);
+    const expectedWidth = context.frameSize.width * context.layout.columns;
+    const expectedHeight = context.frameSize.height * context.layout.rows;
+    if (sheetImage.width !== expectedWidth || sheetImage.height !== expectedHeight) {
+      failures.push(`sheet size ${sheetImage.width}x${sheetImage.height} does not match ${expectedWidth}x${expectedHeight}`);
+    }
+    if (effectFrames.length !== context.frameCount) {
+      failures.push(`frame count ${effectFrames.length} does not match ${context.frameCount}`);
+    }
+    if (effectFrames.some((frame) => frame.width !== context.frameSize.width || frame.height !== context.frameSize.height)) {
+      failures.push(`one or more frames do not match ${context.frameSize.width}x${context.frameSize.height}`);
+    }
+
+    const stats = await Promise.all(effectFrames.map((frame) => analyzeEffectFrame(frame.dataUrl)));
+    if (stats.length > 0 && stats.every((stat) => stat.transparentPixels === 0)) {
+      failures.push("alpha transparency is missing from all frames");
+    }
+    const edgeTouchCount = stats.filter((stat) => stat.edgeOpaquePixels > Math.max(8, stat.opaquePixels * 0.04)).length;
+    if (edgeTouchCount > 0) warnings.push(`${edgeTouchCount} frame${edgeTouchCount === 1 ? "" : "s"} touch cell bounds`);
+    const checkerboardRiskCount = stats.filter((stat) => stat.checkerboardRisk).length;
+    if (checkerboardRiskCount > 0) warnings.push(`${checkerboardRiskCount} frame${checkerboardRiskCount === 1 ? "" : "s"} may contain baked checkerboard or matte pixels`);
+    const uniqueFrameCount = new Set(effectFrames.map((frame) => frame.dataUrl)).size;
+    if (effectFrames.length > 1 && uniqueFrameCount <= 1) {
+      failures.push("all frames are static copies");
+    } else if (effectFrames.length > 3 && uniqueFrameCount <= Math.ceil(effectFrames.length / 2)) {
+      warnings.push("multiple frames appear duplicated");
+    }
+
+    const qualityV2 = buildEffectQualityReportV2(stats, {
+      loopExpected: context.loopMode !== "one-shot",
+      energyEnvelope: context.recipe?.energyEnvelope ?? (context.loopMode === "one-shot" ? "burst" : "sustain")
+    });
+    const rank: EffectQualityRank = failures.length > 0 ? "bronze" : warnings.length > 0 ? "silver" : "gold";
+    return { rank, warnings, failures, qualityV2 };
+  }
+
+  async function analyzeEffectFrame(dataUrl: string) {
+    const image = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Effect frame QC failed: canvas context unavailable.");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    let opaquePixels = 0;
+    let transparentPixels = 0;
+    let edgeOpaquePixels = 0;
+    let neutralOpaquePixels = 0;
+    let alphaTotal = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    let brightnessTotal = 0;
+    let redTotal = 0;
+    let greenTotal = 0;
+    let blueTotal = 0;
+    for (let y = 0; y < canvas.height; y += 1) {
+      for (let x = 0; x < canvas.width; x += 1) {
+        const offset = (y * canvas.width + x) * 4;
+        const alpha = data[offset + 3];
+        if (alpha <= 8) {
+          transparentPixels += 1;
+          continue;
+        }
+        opaquePixels += 1;
+        const alphaWeight = alpha / 255;
+        alphaTotal += alphaWeight;
+        weightedX += (x / Math.max(1, canvas.width - 1)) * alphaWeight;
+        weightedY += (y / Math.max(1, canvas.height - 1)) * alphaWeight;
+        if (x === 0 || y === 0 || x === canvas.width - 1 || y === canvas.height - 1) edgeOpaquePixels += 1;
+        const red = data[offset];
+        const green = data[offset + 1];
+        const blue = data[offset + 2];
+        const neutral = Math.max(red, green, blue) - Math.min(red, green, blue) < 12;
+        if (neutral && red >= 120 && red <= 245 && alpha > 220) neutralOpaquePixels += 1;
+        brightnessTotal += ((red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255) * alphaWeight;
+        redTotal += (red / 255) * alphaWeight;
+        greenTotal += (green / 255) * alphaWeight;
+        blueTotal += (blue / 255) * alphaWeight;
+      }
+    }
+    const totalPixels = Math.max(1, canvas.width * canvas.height);
+    const safeAlphaTotal = Math.max(0.0001, alphaTotal);
+    return {
+      alphaCoverage: opaquePixels / totalPixels,
+      edgeContactRatio: edgeOpaquePixels / Math.max(1, opaquePixels),
+      centroidX: weightedX / safeAlphaTotal,
+      centroidY: weightedY / safeAlphaTotal,
+      brightness: brightnessTotal / safeAlphaTotal,
+      averageRed: redTotal / safeAlphaTotal,
+      averageGreen: greenTotal / safeAlphaTotal,
+      averageBlue: blueTotal / safeAlphaTotal,
+      opaquePixels,
+      transparentPixels,
+      edgeOpaquePixels,
+      checkerboardRisk: neutralOpaquePixels > Math.max(48, opaquePixels * 0.22) && transparentPixels < opaquePixels * 0.4
+    };
+  }
+
+  function selectDirectionalHatchPetResults(results: CodexOutboxResult[], jobId: string) {
+    const staticImageResults = results.filter(isStaticImageResult);
+    const sheetCandidates = staticImageResults.filter((result) => !/(?:animated|animation|gif|preview)/i.test(result.name));
+    const sortedResults = (sheetCandidates.length >= DIRECTIONAL_HATCH_PET_RESULT_COUNT ? sheetCandidates : staticImageResults)
+      .slice()
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const byDirection = ANIMATION_DIRECTIONS.map((_, index) =>
+      sortedResults.find((result) => directionIndexFromResultName(result.name, jobId) === index)
+    );
+    if (byDirection.every(Boolean)) return byDirection.filter((result): result is CodexOutboxResult => Boolean(result));
+    return sortedResults.slice(0, DIRECTIONAL_HATCH_PET_RESULT_COUNT);
+  }
+
+  function directionIndexFromResultName(name: string, jobId: string) {
+    const normalized = name
+      .toLowerCase()
+      .replace(jobId.toLowerCase(), "")
+      .replace(/\.[^.]+$/, "")
+      .replace(/[_\s]+/g, "-");
+    const numericMatch = normalized.match(/direction-(\d{1,2})/);
+    if (numericMatch) {
+      const index = Number(numericMatch[1]) - 1;
+      if (index >= 0 && index < ANIMATION_DIRECTION_COUNT) return index;
+    }
+    const directionSlugs = ANIMATION_DIRECTIONS.map((direction) => direction.replace(/\s+/g, "-"));
+    const matchedSlug = directionSlugs
+      .slice()
+      .sort((left, right) => right.length - left.length)
+      .find((slug) => normalized.includes(slug));
+    return matchedSlug ? directionSlugs.indexOf(matchedSlug) : -1;
+  }
+
+  async function composeDirectionalHatchPetSheet(dataUrls: string[]) {
+    const atlasWidth = HATCH_PET_CELL.width * HATCH_PET_GRID.columns;
+    const atlasHeight = HATCH_PET_CELL.height * HATCH_PET_GRID.rows;
+    const canvas = document.createElement("canvas");
+    canvas.width = atlasWidth;
+    canvas.height = atlasHeight * DIRECTIONAL_HATCH_PET_RESULT_COUNT;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not compose directional hatch-pet atlas.");
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < DIRECTIONAL_HATCH_PET_RESULT_COUNT; index += 1) {
+      const image = await loadImage(dataUrls[index]);
+      context.drawImage(image, 0, index * atlasHeight, atlasWidth, atlasHeight);
+    }
+    return canvas.toDataURL("image/png");
+  }
+
+  async function importLatestOutboxResult(options: ImportLatestOptions = {}) {
+    if (!options.background) setIsBusy(true);
+    try {
+      const pendingJob = options.job;
+      const listResponse = await fetch(`/api/codex/results${options.limit ? `?limit=${options.limit}` : ""}`);
+      if (!listResponse.ok) throw new Error(await listResponse.text());
+      const listData = (await listResponse.json()) as { outboxPath: string; results: CodexOutboxResult[] };
+      const newerThanTime = options.newerThan ? Date.parse(options.newerThan) : Number.NEGATIVE_INFINITY;
+      const jobResults = listData.results.filter((result) => {
+        if (shouldIgnoreOutboxResultName(result.name)) return false;
+        if (Date.parse(result.modifiedAt) < newerThanTime) return false;
+        return pendingJob ? isOutboxResultForJob(result.name, pendingJob.id) : true;
+      });
+      if (pendingJob?.workflowMode === "sprite-generate" && (pendingJob.spriteVariant ?? "standard") === "standard") {
+        const manifestResult = jobResults.find((result) => isDirectionSplitAnimationManifestName(result.name, pendingJob.id));
+        const manifest = manifestResult ? parseDirectionSplitAnimationManifest(await fetchOutboxResult(manifestResult.name)) : null;
+        const directionSplitSelection = selectDirectionSplitAnimationResults(jobResults, pendingJob.id, manifest, pendingJob.directions);
+        if (directionSplitSelection.detected) {
+          if (directionSplitSelection.waitingForFinalManifest) {
+            setStatus(`${copy.statusCodexJobPending}: ${pendingJob.id} (waiting for final manifest)`);
+            return false;
+          }
+          if (directionSplitSelection.waitingForVerifiedArtifacts) {
+            const reason = directionSplitSelection.artifactStatus?.reason ?? "waiting for stable verified artifacts";
+            if (
+              options.failOnIncompleteDirectionSplit &&
+              directionSplitSelection.artifactStatus?.candidateCount &&
+              /^missing\b/i.test(reason)
+            ) {
+              throw new Error(`Bronze candidate for ${pendingJob.id}: ${reason}. Raw direction files are still available.`);
+            }
+            setStatus(`${copy.statusCodexJobPending}: ${pendingJob.id} (${reason})`);
+            return false;
+          }
+          if (directionSplitSelection.qualityFailed) {
+            const reason = directionSplitSelection.artifactStatus?.qualityGate?.reason ?? directionSplitSelection.artifactStatus?.reason ?? "Animation result failed the material quality gate.";
+            const qualityError = new Error(`Animation quality gate failed for ${pendingJob.id}: ${reason}. No history or final download item was added.`);
+            if (options.failOnIncompleteDirectionSplit || options.throwOnError) throw qualityError;
+            const diagnostic = recordCodexImportFailure(pendingJob, qualityError);
+            removeCodexJob(pendingJob.id, "completed");
+            setStatus(`${diagnostic.title}: ${pendingJob.id}`);
+            return false;
+          }
+          if (directionSplitSelection.bronzeCandidate) {
+            const reason = directionSplitSelection.artifactStatus?.reason ?? "raw direction candidate needs review";
+            if (options.failOnIncompleteDirectionSplit || options.throwOnError) {
+              throw new Error(`Bronze candidate quarantined for ${pendingJob.id}: ${reason}. Raw direction files are available for diagnostics, but no final history or download item was added.`);
+            }
+            const diagnostic = recordCodexImportFailure(pendingJob, new Error(`Bronze candidate quarantined for ${pendingJob.id}: ${reason}. Raw direction files are available for diagnostics, but no final history or download item was added.`));
+            removeCodexJob(pendingJob.id, "completed");
+            if (!options.quietEmpty) setStatus(`${diagnostic.title}: ${pendingJob.id}`);
+            return false;
+          }
+          if (!directionSplitSelection.ready) {
+            const missing = directionSplitSelection.missingDirections.join(", ") || "direction images";
+            if (options.failOnIncompleteDirectionSplit) {
+              throw new Error(`Direction split import failed for ${pendingJob.id}: missing ${missing}. Outbox files are still available.`);
+            }
+            if (!options.quietEmpty) {
+              setStatus(`${copy.statusInboxEmpty}: ${listData.outboxPath} (waiting for direction split: ${missing})`);
+            }
+            return false;
+          }
+          const importedResults = await Promise.all(directionSplitSelection.directionResults.map((result) => fetchOutboxResult(result.name)));
+          try {
+            await importDirectionSplitAnimationResults(importedResults, manifest, pendingJob, manifestResult?.name);
+            clearCodexFailureNotice(pendingJob.id);
+          } catch (error) {
+            const qualityError = new Error(`Animation quality gate failed for ${pendingJob.id}: ${summarizeCodexImportFailureReason(error)}. Candidate files are quarantined; no history or final download item was added.`);
+            if (options.throwOnError) throw qualityError;
+            const diagnostic = recordCodexImportFailure(pendingJob, qualityError);
+            setStatus(`${diagnostic.title}: ${pendingJob.id}`);
+            removeCodexJob(pendingJob.id, "completed");
+            return false;
+          }
+          removeCodexJob(pendingJob.id, "completed");
+          return true;
+        }
+      }
+      if (pendingJob?.workflowMode === "sprite-generate" && pendingJob.spriteVariant === "directional-hatch-pet") {
+        const directionalResults = selectDirectionalHatchPetResults(jobResults, pendingJob.id);
+        if (directionalResults.length < DIRECTIONAL_HATCH_PET_RESULT_COUNT) {
+          if (!options.quietEmpty) setStatus(`${copy.statusInboxEmpty}: ${listData.outboxPath}`);
+          return false;
+        }
+        const importedResults = await Promise.all(directionalResults.map((result) => fetchOutboxResult(result.name)));
+        await importDirectionalHatchPetResults(importedResults, pendingJob);
+        clearCodexFailureNotice(pendingJob.id);
+        removeCodexJob(pendingJob.id, "completed");
+        return true;
+      }
+
+      if (pendingJob?.workflowMode === "effect-animation") {
+        const effectResult = selectEffectAnimationSheetResult(jobResults, pendingJob.id);
+        if (!effectResult) {
+          if (!options.quietEmpty) setStatus(`${copy.statusInboxEmpty}: ${listData.outboxPath} (waiting for effect sheet)`);
+          return false;
+        }
+        const importedEffect = await fetchOutboxResult(effectResult.name);
+        try {
+          await importEffectAnimationResult(importedEffect, pendingJob, jobResults);
+          clearCodexFailureNotice(pendingJob.id);
+          removeCodexJob(pendingJob.id, "completed");
+          return true;
+        } catch (error) {
+          const qualityError = new Error(`Effect quality gate failed for ${pendingJob.id}: ${summarizeCodexImportFailureReason(error)} Candidate files are quarantined; no history or final download item was added.`);
+          if (options.throwOnError) throw qualityError;
+          const diagnostic = recordCodexImportFailure(pendingJob, qualityError);
+          setStatus(`${diagnostic.title}: ${pendingJob.id}`);
+          removeCodexJob(pendingJob.id, "completed");
+          return false;
+        }
+      }
+
+      if (!pendingJob) {
+        const directionSplitArtifact = findLatestReadyDirectionSplitArtifact(jobResults);
+        if (directionSplitArtifact) {
+          const imported = findImportedDirectionSplitArtifact(directionSplitArtifact);
+          if (imported) {
+            setSelectedId(imported.id);
+            setSelectedFrameId("");
+            setStatus(`${copy.statusInboxImported}: ${imported.name} (already imported)`);
+            return true;
+          }
+          await importReadyDirectionSplitArtifact(directionSplitArtifact);
+          return true;
+        }
+      }
+
+      const latest = jobResults.find(isGenericStaticImageResult);
+      if (!latest) {
+        if (!options.quietEmpty) setStatus(`${copy.statusInboxEmpty}: ${listData.outboxPath}`);
+        return false;
+      }
+
+      const imported = await fetchOutboxResult(latest.name);
+      if (pendingJob?.workflowMode === "sprite-generate") {
+        await importAnimationSheetResult(imported, pendingJob);
+        clearCodexFailureNotice(pendingJob.id);
+        removeCodexJob(pendingJob.id, "completed");
+        return true;
+      }
+
+      const image = await loadImage(imported.dataUrl);
+      const isImageEditImport = pendingJob?.workflowMode === "image-edit" || (!pendingJob && workflowMode === "image-edit" && imageEditComparison?.before);
+      const imageEditBefore = isImageEditImport
+        ? history.find((historyItem) => historyItem.id === pendingJob?.sourceImageId) ??
+          imageEditComparison?.before ??
+          selected
+        : undefined;
+      const imageEditSourceName = imageEditBefore?.name ?? pendingJob?.sourceImageName ?? imageEditComparison?.before?.name;
+      const item: HistoryItem = {
+        id: createId("hist"),
+        name: imported.name,
+        dataUrl: imported.dataUrl,
+        provider: "local-inbox",
+        prompt,
+        seed,
+        size: `${image.width}x${image.height}`,
+        createdAt: new Date().toISOString(),
+        adopted: false,
+        source: "inbox",
+        derivedFromId: isImageEditImport ? imageEditBefore?.id : undefined,
+        derivedFromName: isImageEditImport ? imageEditSourceName : undefined,
+        outboxImportKey: buildOutboxImportKey(isImageEditImport ? "image-edit" : "single", {
+          jobId: pendingJob?.id,
+          filenames: [imported.name]
+        })
+      };
+      const inserted = addLocalInboxHistoryItem(item);
+      if (isImageEditImport && imageEditBefore) {
+        setImageEditComparison({
+          before: imageEditBefore,
+          after: inserted.item,
+          jobId: pendingJob?.id ?? imageEditComparison?.jobId
+        });
+      }
+      if (pendingJob) {
+        clearCodexFailureNotice(pendingJob.id);
+        removeCodexJob(pendingJob.id, "completed");
+      }
+      setStatus(`${copy.statusInboxImported}: ${imported.name}${inserted.added ? "" : " (already imported)"}`);
+      return true;
+    } catch (error) {
+      if (options.throwOnError) throw error;
+      if (!options.background) setStatus(error instanceof Error ? error.message : copy.statusInboxError);
+      return false;
+    } finally {
+      if (!options.background) setIsBusy(false);
+    }
+  }
+
+  async function splitSelectedToTimeline() {
+    if (!selected) return;
+    setIsBusy(true);
+    try {
+      const newFrames = await splitImageIntoFrames(
+        selected.dataUrl,
+        selected.name.replace(/\.[^.]+$/, ""),
+        grid,
+        selected.id,
+        activeAction.cell
+      );
+      setFrames((current) => [...current, ...newFrames]);
+      setActions((current) =>
+        current.map((action) =>
+          action.name === activeAction.name
+            ? { ...action, frameIds: [...action.frameIds, ...newFrames.map((frame) => frame.id)] }
+            : action
+        )
+      );
+      setSelectedFrameId(newFrames[0]?.id ?? selectedFrameId);
+      setStatus(formatFramesAddedStatus(newFrames.length, activeAction.name, language));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function exportDirectionalAnimations(format: "gif" | "webp" | "apng") {
+    if (!selectedAnimationExportReady) return;
+    for (const { directionId, action } of selectedAnimationPreviewActions) {
+      const blob = format === "gif"
+        ? await createGifBlob(frames, action)
+        : format === "webp"
+          ? await createAnimatedWebpBlob(frames, action)
+          : await createApngBlob(frames, action);
+      downloadBlob(blob, `${selectedAnimationAction.name}_${directionId.replace(/\s+/g, "-")}.${format}`);
+    }
+  }
+
+  async function exportSelectedEffectGif() {
+    if (!selectedEffectExportReady) return;
+    const blob = await createGifBlob(frames, selectedEffectAction, { forceLoop: true });
+    downloadBlob(blob, `${selectedEffectAction.name}.gif`);
+  }
+
+  async function exportSelectedEffectApng() {
+    if (!selectedEffectExportReady) return;
+    const blob = await createApngBlob(frames, selectedEffectAction, { forceLoop: true });
+    downloadBlob(blob, `${selectedEffectAction.name}.apng`);
+  }
+
+  async function exportSelectedEffectSheet() {
+    if (!selectedEffectExportReady) return;
+    const blob = await createSpriteSheetBlob(selectedEffectFrames, selectedEffectAction, selectedEffectSheetGrid.columns);
+    downloadBlob(blob, `${selectedEffectAction.name}_sheet.png`);
+  }
+
+  async function exportSelectedEffectFramesZip() {
+    if (!selectedEffectExportReady) return;
+    await exportFramesZip(selectedEffectFrames, selectedEffectAction);
+  }
+
+  function exportSelectedEffectMetadata() {
+    if (!selectedEffectMetadata) return;
+    exportEffectMetadata(selectedEffectMetadata, selectedImageSafeBaseName({ name: selectedEffectMetadata.name }));
+  }
+
+  async function exportSelectedEffectPack() {
+    if (!selected || !selectedEffectMetadata || !selectedEffectExportReady) return;
+    const previewGif = await createGifBlob(frames, selectedEffectAction, { forceLoop: true });
+    const previewApng = await createApngBlob(frames, selectedEffectAction, { forceLoop: true });
+    await exportEffectPack({
+      metadata: selectedEffectMetadata,
+      sheet: selected.dataUrl,
+      previewGif,
+      previewApng,
+      frames: selectedEffectFrames.map((frame, index) => ({
+        name: `frame-${String(index + 1).padStart(3, "0")}`,
+        dataUrl: frame.dataUrl
+      }))
+    });
+  }
+
+  function downloadSelectedImage() {
+    if (!selected || selectedIsAnimationResult || selectedIsEffectResult || !isUsableHistoryDownloadItem(selected)) return;
+    const blob = dataUrlToBlob(selected.dataUrl);
+    const extension = blob.type.includes("webp") ? "webp" : blob.type.includes("jpeg") ? "jpg" : "png";
+    downloadBlob(blob, `${selectedImageSafeBaseName(selected)}.${extension}`);
+  }
+
+  async function addSelectedAsFrame() {
+    if (!selected) return;
+    const image = await loadImage(selected.dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = activeAction.cell.width;
+    canvas.height = activeAction.cell.height;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
+    const width = image.width * scale;
+    const height = image.height * scale;
+    context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+    const frame: SpriteFrame = {
+      id: createId("frame"),
+      name: `${selected.name}_frame`,
+      dataUrl: canvas.toDataURL("image/png"),
+      width: canvas.width,
+      height: canvas.height,
+      sourceId: selected.id,
+      index: frames.length
+    };
+    setFrames((current) => [...current, frame]);
+    setActions((current) =>
+      current.map((action) =>
+        action.name === activeAction.name ? { ...action, frameIds: [...action.frameIds, frame.id] } : action
+      )
+    );
+    setSelectedFrameId(frame.id);
+    setStatus(copy.statusSelectedAsFrame);
+  }
+
+  function moveFrame(frameId: string, direction: -1 | 1) {
+    setActions((current) =>
+      current.map((action) => {
+        if (action.name !== activeAction.name) return action;
+        const index = action.frameIds.indexOf(frameId);
+        const nextIndex = index + direction;
+        if (index < 0 || nextIndex < 0 || nextIndex >= action.frameIds.length) return action;
+        const copy = [...action.frameIds];
+        [copy[index], copy[nextIndex]] = [copy[nextIndex], copy[index]];
+        return { ...action, frameIds: copy };
+      })
+    );
+  }
+
+  function removeFrame(frameId: string) {
+    setActions((current) =>
+      current.map((action) =>
+        action.name === activeAction.name
+          ? { ...action, frameIds: action.frameIds.filter((id) => id !== frameId) }
+          : action
+      )
+    );
+    setSelectedFrameId("");
+  }
+
+  function restoreAnimationDirectionSelection(
+    directions?: readonly string[] | null,
+    frameCount?: MotionFrameCount,
+    nextGrid?: GridSettings
+  ) {
+    const selection = animationDirectionSelectionForDirections(directions);
+    if (!selection) return false;
+    setAnimationDirectionPreset(selection.presetId);
+    if (selection.presetId === "one") {
+      setAnimationSingleDirection(selection.singleDirection);
+      setMotionPilotEnabled(false);
+    }
+    if (frameCount) setAnimationFrameCount(frameCount);
+    setGrid(nextGrid ?? animationSheetGridForDirections(selection.directions, frameCount ?? animationFrameCount));
+    return true;
+  }
+
+  function selectHistoryResult(item: HistoryItem) {
+    const itemAnimationDirections = item.animationDirections;
+    const itemAnimationFrameCount = historyAnimationFrameCount(item);
+    setSelectedId(item.id);
+    setSelectedFrameId("");
+    if (isAnimationWorkflow) {
+      if (isAnimationSource(item)) {
+        setAnimationSourceId(item.id);
+      } else if (isAnimationResultHistoryItem(item)) {
+        restoreAnimationDirectionSelection(itemAnimationDirections, itemAnimationFrameCount);
+        setStatus(animationResultNotSourceMessage(item, language));
+      }
+    }
+    if (isImageEditWorkflow && item.source === "generate" && frames.some((frame) => frame.sourceId === item.id)) {
+      setStatus(isEffectAnimationHistoryItem(item)
+        ? (language === "ja"
+          ? "エフェクト結果は書き出し用の成果物です。編集する場合は元画像を選ぶか新しく生成してください。"
+          : "Effect animation results are export assets. Choose a source image or start a new generation.")
+        : copy.statusAnimationFinalNotEditable);
+    }
+  }
+
+  function selectSourceFromPreview(source: HistoryItem) {
+    setSelectedId(source.id);
+    setSelectedFrameId("");
+    if (!isAnimationSource(source)) {
+      setStatus(isAnimationResultHistoryItem(source) ? animationResultNotSourceMessage(source, language) : copy.statusAnimationSourceRequired);
+      return;
+    }
+    setAnimationSourceId(source.id);
+    setStatus(`${copy.statusSourceSelectedForAnimation}: ${source.name}`);
+  }
+
+  const handleHistoryScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      maybeLoadMoreHistoryResults(event.currentTarget);
+    },
+    [maybeLoadMoreHistoryResults]
+  );
+
+  async function applyChromaToSelectedFrame() {
+    if (!selectedFrame) return;
+    const image = await loadImage(selectedFrame.dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(image, 0, 0);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const key = hexToRgb(annotationColor);
+    const pixels = imageData.data;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const dr = pixels[i] - key.r;
+      const dg = pixels[i + 1] - key.g;
+      const db = pixels[i + 2] - key.b;
+      if (Math.sqrt(dr * dr + dg * dg + db * db) <= chromaTolerance) {
+        pixels[i + 3] = 0;
+      }
+    }
+    context.putImageData(imageData, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    setFrames((current) => current.map((frame) => (frame.id === selectedFrame.id ? { ...frame, dataUrl } : frame)));
+    setStatus(copy.statusChromaApplied);
+  }
+
+  function updateActiveAction(patch: Partial<SpriteAction>) {
+    setActions((current) =>
+      current.map((action) => (action.name === activeAction.name ? { ...action, ...patch } : action))
+    );
+  }
+
+  function updateCell(width: number, height: number) {
+    const nextWidth = Math.max(MIN_ANIMATION_CELL_SIZE, width);
+    const nextHeight = Math.max(MIN_ANIMATION_CELL_SIZE, height);
+    updateActiveAction({
+      cell: { width: nextWidth, height: nextHeight },
+      anchor: animationExportAnchor(nextWidth, nextHeight)
+    });
+  }
+
+  function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    lastPointerEventAtRef.current = Date.now();
+    beginAnnotationDrag(event);
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    lastPointerEventAtRef.current = Date.now();
+    updateAnnotationDrag(event);
+  }
+
+  function handlePointerUp() {
+    lastPointerEventAtRef.current = Date.now();
+    finishAnnotationDrag();
+  }
+
+  function handleMouseDown(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (shouldIgnoreMouseFallback()) return;
+    beginAnnotationDrag(event);
+  }
+
+  function handleMouseMove(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (shouldIgnoreMouseFallback()) return;
+    updateAnnotationDrag(event);
+  }
+
+  function handleMouseUp() {
+    if (shouldIgnoreMouseFallback()) return;
+    finishAnnotationDrag();
+  }
+
+  function shouldIgnoreMouseFallback() {
+    return Date.now() - lastPointerEventAtRef.current < 500;
+  }
+
+  function beginAnnotationDrag(event: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) {
+    if (workflowMode !== "image-edit" || !selected) return;
+    if (selectedIsAnimationResult) return;
+    if (selectedIsEffectResult) return;
+    if (event.button !== 0) return;
+    const point = canvasPoint(event);
+    const number = (annotationsByItem[selected.id]?.length ?? 0) + 1;
+    try {
+      if ("pointerId" in event) event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Synthetic smoke-test pointer events may not register an active pointer id.
+    }
+    setDraftAnnotation({
+      id: createId("anno"),
+      tool: "rect",
+      color: annotationColor,
+      width: 3,
+      number,
+      comment: "",
+      points: [point, point]
+    });
+  }
+
+  function updateAnnotationDrag(event: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) {
+    if (!draftAnnotation) return;
+    const point = canvasPoint(event);
+    setDraftAnnotation((current) => {
+      if (!current) return current;
+      return { ...current, points: [current.points[0], point] };
+    });
+  }
+
+  function finishAnnotationDrag() {
+    if (!draftAnnotation || !selected) return;
+    const [start, end = start] = draftAnnotation.points;
+    if (Math.abs(end.x - start.x) < 6 || Math.abs(end.y - start.y) < 6) {
+      setDraftAnnotation(null);
+      return;
+    }
+    setAnnotationsByItem((current) => {
+      const currentList = current[selected.id] ?? [];
+      const number = currentList.length + 1;
+      const nextAnnotation = annotationWithSourceImageCoordinates({ ...draftAnnotation, number }, selected);
+      return {
+        ...current,
+        [selected.id]: [...currentList, nextAnnotation]
+      };
+    });
+    setDraftAnnotation(null);
+    setStatus(`${copy.imageEditRegionAdded} #${draftAnnotation.number ?? 1}`.trim());
+  }
+
+  function updateAnnotationComment(annotationId: string, comment: string) {
+    if (!selected) return;
+    setAnnotationsByItem((current) => ({
+      ...current,
+      [selected.id]: (current[selected.id] ?? []).map((annotation) =>
+        annotation.id === annotationId ? { ...annotation, comment } : annotation
+      )
+    }));
+  }
+
+  function removeAnnotation(annotationId: string) {
+    if (!selected) return;
+    setAnnotationsByItem((current) => ({
+      ...current,
+      [selected.id]: renumberAnnotations((current[selected.id] ?? []).filter((annotation) => annotation.id !== annotationId))
+    }));
+  }
+
+  function clearSelectedAnnotations() {
+    if (!selected) return;
+    setAnnotationsByItem((current) => ({
+      ...current,
+      [selected.id]: []
+    }));
+  }
+
+  async function adoptSelected() {
+    if (!selected) return;
+    setHistory((current) => current.map((item) => (item.id === selected.id ? { ...item, adopted: !item.adopted } : item)));
+  }
+
+  function beginWorkflow(mode: WorkflowMode) {
+    const option = workflowOptions.find((item) => item.id === mode);
+    const nextAnimationSource =
+      selected && isAnimationSource(selected)
+        ? selected
+        : selectedAnimationSource && isAnimationSource(selectedAnimationSource)
+          ? selectedAnimationSource
+          : animationSource;
+    setWorkflowMode(mode);
+    setShowPromptExamples(false);
+    setShowAnimationPresetExamples(false);
+    setShowAnimationAdvancedSettings(false);
+    setShowAnimationActivity(false);
+    if (option) setProviderId(option.provider);
+    if (mode === "image-edit") {
+      setTool("rect");
+      setShowGrid(false);
+      setShowCenter(false);
+    }
+    if (mode === "image-generate") {
+      setTool("select");
+      setShowGrid(true);
+      setShowCenter(true);
+    }
+    if (mode === "sprite-generate" || mode === "sprite-edit") {
+      if (mode === "sprite-generate") setAnimationGenerationMode("standard");
+      setActiveActionName(mode === "sprite-generate" ? selectedAnimationPreset.actionName : "idle");
+      setShowGrid(true);
+      setShowCenter(true);
+      setGrid(
+        mode === "sprite-generate"
+          ? animationSheetGridForDirections(selectedAnimationDirections, animationFrameCount)
+          : { columns: animationFrameCount, rows: 1, gutter: 0 }
+      );
+      setActions((current) => normalizeAnimationActions(current));
+    }
+    if (mode === "sprite-generate") {
+      setAnimationSourceId(isAnimationSource(nextAnimationSource) ? nextAnimationSource.id : "");
+    }
+    if (mode === "effect-animation") {
+      setTool("select");
+      setShowGrid(true);
+      setShowCenter(true);
+      setGrid({ columns: effectSheetGrid.columns, rows: effectSheetGrid.rows, gutter: 0 });
+      setSize(`${effectSheetSize.width}x${effectSheetSize.height}`);
+      if (!prompt.trim() || prompt.includes("idle breathing loop")) {
+        setPrompt("compact readable game VFX with clear frame-to-frame motion and soft transparent alpha edges");
+      }
+      if (!negativePrompt.trim() || negativePrompt === "blur, text, watermark, cropped feet") {
+        setNegativePrompt(buildEffectNegativePrompt(""));
+      }
+    }
+    if (mode === "sprite-generate" && !isAnimationSource(nextAnimationSource)) {
+      setStatus(copy.statusAnimationSourceRequired);
+      return;
+    }
+    if (mode === "image-edit" && selectedIsEffectResult) {
+      setStatus(language === "ja"
+        ? "エフェクト結果は書き出し用の成果物です。編集する場合は元画像を選ぶか新しく生成してください。"
+        : "Effect animation results are export assets. Choose a source image or start a new generation.");
+      return;
+    }
+    setStatus(mode === "image-edit" && selectedIsAnimationResult ? copy.statusAnimationFinalNotEditable : workflowCopy[language][mode].status);
+  }
+
+  async function copyPromptExample(example: PromptExample) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(example.prompt);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = example.prompt;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setStatus(copy.promptCopied);
+    } catch {
+      setStatus(copy.promptCopyFailed);
+    }
+  }
+
+  function usePromptExample(example: PromptExample) {
+    setPrompt(example.prompt);
+    setNegativePrompt(example.negativePrompt);
+    setJobNotes(example.notes);
+    setWorkflowMode("image-generate");
+    closePromptExamples();
+    setProviderId("codex-handoff");
+    setTool("select");
+    setStatus(copy.promptExampleApplied);
+  }
+
+  function useQuickPrompt(promptText: string) {
+    setPrompt(promptText);
+    setWorkflowMode("image-generate");
+    closePromptExamples();
+    setProviderId("codex-handoff");
+    setTool("select");
+    setStatus(copy.promptExampleApplied);
+  }
+
+  function selectAnimationPreset(example: AnimationPresetExample) {
+    const defaultAction = defaultActions.find((action) => action.name === example.actionName);
+    const recipe = motionRecipeForPreset(example);
+    const recipeFrameCount = recipe.frameCount as MotionFrameCount;
+    setActions((current) => (
+      current.some((action) => action.name === example.actionName) || !defaultAction
+        ? current
+        : normalizeAnimationActions([...current, defaultAction])
+    ));
+    setSelectedAnimationPresetId(example.id);
+    setAnimationFrameCount(recipeFrameCount);
+    setAnimationBodyTopology(recipe.defaultTopology);
+    setAnimationMotionVariant({ ...DEFAULT_MOTION_VARIANT });
+    setRecentAnimationPresetIds((current) => [example.id, ...current.filter((id) => id !== example.id)].slice(0, 12));
+    setAnimationGenerationMode("standard");
+    setActiveActionName(example.actionName);
+    setGrid(animationSheetGridForDirections(selectedAnimationDirections, recipeFrameCount));
+  }
+
+  function toggleFavoriteAnimationPreset(id: string) {
+    setFavoriteAnimationPresetIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [id, ...current]);
+  }
+
+  function selectAnimationBodyTopology(topology: BodyTopologyId) {
+    setAnimationBodyTopology(topology);
+    if (topology !== "biped") {
+      setAnimationMotionVariant((current) => ({ ...current, weaponClass: "none", handedness: "inherit" }));
+    }
+  }
+
+  function selectAnimationFrameCount(frameCount: MotionFrameCount) {
+    setAnimationFrameCount(frameCount);
+    setGrid(animationSheetGridForDirections(selectedAnimationDirections, frameCount));
+  }
+
+  function updateAnimationMotionVariant(key: MotionVariantModifierKey, value: string) {
+    setAnimationMotionVariant((current) => {
+      const next = { ...current, [key]: value } as MotionVariantSelection;
+      if (key === "weaponClass" && (value === "none" || value === "unarmed")) next.handedness = "inherit";
+      return next;
+    });
+  }
+
+  function useAnimationPresetExample(example: AnimationPresetExample) {
+    selectAnimationPreset(example);
+    setWorkflowMode("sprite-generate");
+    setProviderId("codex-handoff");
+    closeAnimationPresetExamples();
+    setStatus(`${copy.animationPresetExampleApplied}: ${localizedText(example.title, language)}`);
+  }
+
+  function closeAnimationPresetExamples() {
+    setShowAnimationPresetExamples(false);
+    window.requestAnimationFrame(() => animationPresetReturnFocusRef.current?.focus());
+  }
+
+  function closePromptExamples() {
+    setShowPromptExamples(false);
+    window.requestAnimationFrame(() => promptExamplesReturnFocusRef.current?.focus());
+  }
+
+  function closeAnimationAdvancedSettings() {
+    setShowAnimationAdvancedSettings(false);
+    window.requestAnimationFrame(() => animationAdvancedReturnFocusRef.current?.focus());
+  }
+
+  function closeAnimationActivity() {
+    setShowAnimationActivity(false);
+    window.requestAnimationFrame(() => animationActivityReturnFocusRef.current?.focus());
+  }
+
+  async function handleAnimationPackFiles(files: FileList | File[]) {
+    const entries = Array.from(files).filter((file) =>
+      file.name.endsWith(".image-cockpit-animation.zip") || file.name.endsWith(".zip") || file.type.includes("zip")
+    );
+    if (entries.length === 0) {
+      setStatus(copy.animationPackImportFailed);
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      const importedItems: AnimationLibraryItem[] = [];
+      for (const file of entries) {
+        importedItems.push(await importAnimationPackBlob(file, file.name));
+      }
+      setUserAnimationLibrary((current) => {
+        const importedTitles = new Set(importedItems.map((item) => item.title));
+        return [
+          ...importedItems,
+          ...current.filter((item) => !importedTitles.has(item.title))
+        ].slice(0, MAX_USER_ANIMATION_LIBRARY_ITEMS);
+      });
+      setAnimationLibraryTab("user");
+      setStatus(`${copy.animationPackImported}: ${importedItems.map((item) => item.title).join(", ")}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `${copy.animationPackImportFailed}: ${error.message}` : copy.animationPackImportFailed);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function useAnimationLibraryItem(item: AnimationLibraryItem) {
+    setIsBusy(true);
+    try {
+      const sheetDataUrl = await resolveImageSourceDataUrl(item.sheetDataUrl);
+      const image = await loadImage(sheetDataUrl);
+      const manifest = item.manifest;
+      const historyItem: HistoryItem = {
+        id: createId("hist"),
+        name: `${safeAnimationFileBaseName(item.title, item.action)}_sheet.png`,
+        dataUrl: sheetDataUrl,
+        provider: "local-file",
+        prompt: `Animation Library: ${item.title}`,
+        seed: "library",
+        size: `${image.width}x${image.height}`,
+        createdAt: new Date().toISOString(),
+        adopted: false,
+        source: "generate",
+        derivedFromName: item.kind === "official" ? copy.officialAnimations : copy.userAnimations,
+        ...animationLibraryHistoryMetadata(item)
+      };
+      const newFrames = await splitImageIntoFrames(
+        sheetDataUrl,
+        historyItem.name.replace(/\.[^.]+$/, ""),
+        manifest.grid,
+        historyItem.id,
+        manifest.cell
+      );
+      if (newFrames.length === 0) throw new Error("Animation pack sheet could not be split into frames.");
+
+      const nextAction = actionFromAnimationManifest(manifest, newFrames.map((frame) => frame.id));
+      setHistory((current) => [historyItem, ...current]);
+      setSelectedId(historyItem.id);
+      setFrames((current) => [...current, ...newFrames]);
+      setActions((current) => upsertSpriteAction(current, nextAction));
+      setActiveActionName(nextAction.name);
+      restoreAnimationDirectionSelection(manifest.directions, resolveMotionFrameCount(manifest.framesPerDirection), manifest.grid);
+      setGrid(manifest.grid);
+      setWorkflowMode("sprite-generate");
+      setAnimationGenerationMode("standard");
+      setProviderId("codex-handoff");
+      setSelectedFrameId("");
+      setStatus(`${copy.animationPackUsed}: ${item.title}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `${copy.animationPackImportFailed}: ${error.message}` : copy.animationPackImportFailed);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function exportAnimationLibraryItem(item: AnimationLibraryItem) {
+    setIsBusy(true);
+    try {
+      const sheetDataUrl = await resolveImageSourceDataUrl(item.sheetDataUrl);
+      const tempFrames = await splitImageIntoFrames(
+        sheetDataUrl,
+        safeAnimationFileBaseName(item.title, item.action),
+        item.manifest.grid,
+        undefined,
+        item.manifest.cell
+      );
+      const directionPreviews = buildAnimationManifestPreviewActions(item.manifest, tempFrames);
+      const previewAction = directionPreviews[0]?.action ?? actionFromAnimationManifest(
+        item.manifest,
+        tempFrames.slice(0, item.manifest.framesPerDirection).map((frame) => frame.id)
+      );
+      const previewGif = await createGifBlob(tempFrames, previewAction);
+      const previewWebp = await createAnimatedWebpBlob(tempFrames, previewAction);
+      const previewApng = await createApngBlob(tempFrames, previewAction);
+      const directionPreviewBlobs = await createDirectionPreviewBlobs(tempFrames, directionPreviews);
+      await exportAnimationPack({
+        manifest: {
+          ...item.manifest,
+          kind: item.kind,
+          title: item.title,
+          files: animationPackFileSet(item.manifest.directions)
+        },
+        sheet: sheetDataUrl,
+        previewGif,
+        previewWebp,
+        previewApng,
+        directionPreviews: directionPreviewBlobs,
+        metadata: animationPackMetadata(item.manifest, {
+          libraryKind: item.kind,
+          sourceNote: item.manifest.sourceNote ?? ""
+        })
+      });
+      setStatus(`${copy.animationPackExported}: ${item.title}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `${copy.animationPackExportFailed}: ${error.message}` : copy.animationPackExportFailed);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function renameUserAnimationItem(item: AnimationLibraryItem) {
+    const title = window.prompt(copy.animationPackTitleLabel, item.title)?.trim();
+    if (!title) return;
+    setUserAnimationLibrary((current) =>
+      current.map((currentItem) =>
+        currentItem.id === item.id
+          ? {
+              ...currentItem,
+              title,
+              manifest: { ...currentItem.manifest, title },
+              updatedAt: new Date().toISOString()
+            }
+          : currentItem
+      )
+    );
+  }
+
+  function deleteUserAnimationItem(item: AnimationLibraryItem) {
+    setUserAnimationLibrary((current) => current.filter((currentItem) => currentItem.id !== item.id));
+  }
+
+  function buildSelectedAnimationPackV2(): AnimationTimelineEditorSession | null {
+    if (!selected || !selectedAnimationExportReady) return null;
+    const directions = selected.animationDirections?.length
+      ? selected.animationDirections
+      : selectedAnimationPreviewActions.map((preview) => preview.directionId);
+    const recipeDefault = createAnimationPackV2({
+      title: selected.name.replace(/\.[^.]+$/, "") || selectedAnimationAction.name,
+      actionId: activeAction.name,
+      directions,
+      framesPerDirection: selectedAnimationFramesPerDirection,
+      defaultFps: selectedAnimationAction.fps,
+      loopMode: selectedAnimationAction.playbackMode === "ping-pong-reverse"
+        ? "ping-pong"
+        : selectedAnimationAction.loop ? "loop" : "one-shot",
+      grid: selectedAnimationSheetGrid,
+      cell: selectedAnimationAction.cell,
+      motionRecipe: selected.motionRecipe,
+      sourceFingerprint: selected.animationSourceFingerprint ?? selected.derivedFromId ?? selected.id,
+      generationProfile: selected.animationGenerationProfile,
+      quality: selected.animationQuality,
+      sourceName: selectedAnimationSource?.name ?? selected.derivedFromName,
+      createdAt: selected.createdAt
+    });
+    const initialPack = selected.animationPackV2 ? validateAnimationPackV2(selected.animationPackV2) : recipeDefault;
+    const frameDataUrls = Object.fromEntries(initialPack.directions.map((direction, directionIndex) => [
+      direction,
+      selectedAnimationFrames
+        .slice(
+          directionIndex * selectedAnimationFramesPerDirection,
+          (directionIndex + 1) * selectedAnimationFramesPerDirection
+        )
+        .map((frame) => frame.dataUrl)
+    ]));
+    return { initialPack, recipeDefault, frameDataUrls };
+  }
+
+  function openAnimationTimelineEditor() {
+    const session = buildSelectedAnimationPackV2();
+    if (!session) return;
+    setDownloadModalOpen(false);
+    setShowAnimationPackExportModal(false);
+    setAnimationTimelineEditor(session);
+  }
+
+  function saveAnimationTimelinePack(pack: AnimationPackV2) {
+    if (!selected) return;
+    const valid = validateAnimationPackV2(pack);
+    setHistory((current) => current.map((item) => item.id === selected.id ? { ...item, animationPackV2: valid } : item));
+    setStatus(language === "ja" ? "タイムライン編集を保存しました（PNGは変更していません）" : "Timeline metadata saved (PNG unchanged)." );
+  }
+
+  async function exportSelectedAnimationPackV2(pack: AnimationPackV2) {
+    if (!selected) return;
+    await exportAnimationPackV2(pack, selected.dataUrl);
+    setStatus(language === "ja" ? `Animation Pack v2を書き出しました: ${pack.title}` : `Animation Pack v2 exported: ${pack.title}`);
+  }
+
+  function exportAnimationEngineMetadata(filename: string, data: Record<string, unknown>) {
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), filename.split("/").at(-1) ?? "animation.json");
+  }
+
+  async function verifyAnimationPackV2RoundTrip(pack: AnimationPackV2) {
+    if (!selected) throw new Error("No animation result is selected.");
+    const zip = await createAnimationPackV2Zip(pack, selected.dataUrl);
+    const imported = await importAnimationPackBlob(zip, `${pack.title}.zip`);
+    if (!imported.packV2 || serializeAnimationPackV2(imported.packV2) !== serializeAnimationPackV2(pack)) {
+      throw new Error("Pack v2 round-trip changed the timeline metadata.");
+    }
+    return language === "ja" ? "Pack v2往復検証: 一致" : "Pack v2 round-trip: identical";
+  }
+
+  function openSelectedAnimationPackExportModal() {
+    if (!selectedAnimationExportReady) return;
+    setDownloadModalOpen(false);
+    setAnimationPackExportDraft(createAnimationPackExportDraft({
+      title: selected?.name.replace(/\.[^.]+$/, "") || selectedAnimationAction.name,
+      tags: [activeAction.name, "character", "sprite"].join(", "),
+      sourceNote: selectedAnimationSource?.name ?? selected?.derivedFromName ?? ""
+    }));
+    setShowAnimationPackExportModal(true);
+  }
+
+  async function exportSelectedAnimationPack() {
+    if (!selected || !selectedAnimationExportReady) return;
+    setIsBusy(true);
+    try {
+      const previewAction = selectedAnimationPreviewActions[0]?.action ?? selectedAnimationAction;
+      const previewGif = await createGifBlob(frames, previewAction);
+      const previewWebp = await createAnimatedWebpBlob(frames, previewAction);
+      const previewApng = await createApngBlob(frames, previewAction);
+      const directionPreviewBlobs = await createDirectionPreviewBlobs(frames, selectedAnimationPreviewActions);
+      const manifest = buildSelectedAnimationPackManifest({
+        draft: animationPackExportDraft,
+        selected,
+        action: activeAction,
+        grid: selectedAnimationSheetGrid,
+        directions: selectedAnimationPreviewActions.map((preview) => preview.directionId)
+      });
+      await exportAnimationPack({
+        manifest,
+        sheet: selected.dataUrl,
+        previewGif,
+        previewWebp,
+        previewApng,
+        directionPreviews: directionPreviewBlobs,
+        metadata: animationPackMetadata(manifest, {
+          libraryKind: "user",
+          sourceNote: animationPackExportDraft.sourceNote.trim()
+        })
+      });
+      setShowAnimationPackExportModal(false);
+      setStatus(`${copy.animationPackExported}: ${manifest.title}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `${copy.animationPackExportFailed}: ${error.message}` : copy.animationPackExportFailed);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function openStorageSafeMode() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("safe", "1");
+    url.searchParams.delete("skipStorage");
+    url.searchParams.delete("reset");
+    window.location.assign(url.toString());
+  }
+
+  function openStorageNormalMode() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("safe");
+    url.searchParams.delete("skipStorage");
+    url.searchParams.delete("reset");
+    window.location.assign(url.toString());
+  }
+
+  function openStaticResetPage() {
+    window.location.assign("/reset-local-state.html");
+  }
+
+  function openLocalhostOrigin() {
+    const port = window.location.port ? `:${window.location.port}` : "";
+    window.location.assign(`${window.location.protocol}//localhost${port}${window.location.pathname}`);
+  }
+
+  async function clearLocalStateScope(scope: LocalStateResetScope) {
+    const scopeLabel = localStateResetScopeLabel(scope);
+    const confirmed = window.confirm(
+      `Clear ${scopeLabel}? This only removes Image Cockpit browser local state. It does not delete repository files, codex-handoff/outbox, docs/qa, or generated PNG files.`
+    );
+    if (!confirmed) return;
+
+    setStorageClearState({ scope });
+    const dbCleared = await clearImageCockpitLocalState(scope);
+    if (scope === "all" || scope === "history") {
+      setHistory([]);
+      setSelectedId("");
+      setAnimationSourceId("");
+    }
+    if (scope === "all" || scope === "frames") {
+      setFrames([]);
+      setSelectedFrameId("");
+    }
+    if (scope === "all" || scope === "animation-library") {
+      setUserAnimationLibrary([]);
+    }
+    if (scope === "all") {
+      setActions(normalizeAnimationActions(defaultActions));
+      setCodexJobs([]);
+    }
+
+    const message = dbCleared
+      ? `${scopeLabel} cleared. Open the normal URL to start with a clean local state.`
+      : `${scopeLabel} localStorage cleared. IndexedDB was unavailable or blocked; close other tabs and retry if needed.`;
+    setStorageClearState({ message });
+    setStorageScreen((current) => ({
+      ...current,
+      mode: scope === "all" ? "reset-complete" : current.mode,
+      summaries: readLocalStateSummaries(),
+      message
+    }));
+    setStatus(message);
+  }
+
+  const codexProvider = providers.find((provider) => provider.id === "codex-handoff");
+  const activeWorkflowCopy = workflowCopy[language][workflowMode];
+  const activeWorkflowFormCopy = workflowFormCopy[language][workflowMode];
+  const codexQueueCopy = codexJobQueueLabels(language);
+  const isAnimationWorkflow = workflowMode === "sprite-generate";
+  const isEffectWorkflow = workflowMode === "effect-animation";
+  const activeCodexRunnerCount = effectiveCodexRunnerCount(
+    codexJobs,
+    startingQueuedJobIdsRef.current,
+    serverActiveCodexRunnerCount
+  );
+  const reservedAnimationRunnerCount = reservedAnimationInitialCandidateSlots(startingPersistedTournamentCandidatesRef.current);
+  const animationInitialAdmission = planAnimationInitialCandidateAdmission({
+    initialCandidateCount: animationGenerationProfileDefinition(animationGenerationProfile).initialCandidates,
+    activeRunnerCount: activeCodexRunnerCount,
+    reservedRunnerCount: reservedAnimationRunnerCount,
+    maxActiveRunnerCount: MAX_ACTIVE_CODEX_JOBS
+  });
+  const animationInitialAdmissionBlocked =
+    providerId === "codex-handoff" &&
+    isAnimationWorkflow &&
+    !animationInitialAdmission.allowed;
+  const animationInitialAdmissionStatus = animationInitialAdmissionBlocked
+    ? animationInitialAdmissionMessage(language, animationInitialAdmission.occupiedSlots)
+    : "";
+  const shouldQueueCodexJob =
+    providerId === "codex-handoff" &&
+    !isAnimationWorkflow &&
+    activeCodexRunnerCount + reservedAnimationRunnerCount >= MAX_ACTIVE_CODEX_JOBS;
+  const isImageEditWorkflow = workflowMode === "image-edit";
+  const animationSourceReady = !isAnimationWorkflow || isAnimationSource(animationSource);
+  const animationPreviewSourceMismatch = Boolean(
+    isAnimationWorkflow &&
+    selectedIsAnimationResult &&
+    (!isAnimationSource(animationSource) || (
+      selected?.animationSourceFingerprint &&
+      animationSourceFingerprint &&
+      selected.animationSourceFingerprint !== animationSourceFingerprint
+    ))
+  );
+  const imageEditSourceReady = !isImageEditWorkflow || Boolean(selected && !selectedIsAnimationResult && !selectedIsEffectResult);
+  const primaryActionDisabled = isBusy || animationInitialAdmissionBlocked || !animationSourceReady || !imageEditSourceReady;
+  const previewMode = !selected ? "empty" : isPreviewingSelectedFrame ? "frame" : isImageEditWorkflow && !selectedIsAnimationResult && !selectedIsEffectResult ? "edit" : "result";
+  const previewStatus = isPreviewingSelectedFrame && selectedFrameForPreview
+    ? `${copy.frameLabel}: ${selectedFrameForPreview.index}`
+    : `${copy.previewLabel}: ${selected?.name ?? "-"}`;
+  const previewSize = isPreviewingSelectedFrame && selectedFrameForPreview
+    ? `${selectedFrameForPreview.width}x${selectedFrameForPreview.height}`
+    : selected?.size ?? "-";
+  const selectedAnimationSourceName = selectedAnimationSource?.name ?? (selectedAnimationExportReady ? selected?.derivedFromName : undefined);
+  const selectedImageEditSourceName = selectedImageEditSource?.name ?? (!selectedAnimationExportReady ? selected?.derivedFromName : undefined);
+  const showFrameGridControls = SHOW_LOW_PRIORITY_CONTROLS || workflowMode === "sprite-edit";
+  const showSpriteTuningControls = SHOW_LOW_PRIORITY_CONTROLS || workflowMode === "sprite-edit";
+  const showAnnotationToolbar = isImageEditWorkflow && !selectedIsAnimationResult && !selectedIsEffectResult;
+  const showSpriteActionsPanel = SHOW_SPRITE_ACTIONS_PANEL;
+  const motionPilotAvailable = canUseMotionPilot(animationGenerationProfile, selectedAnimationDirections);
+  const selectedAnimationSheetSize = {
+    width: STANDARD_ANIMATION_CELL.width * animationFrameCount,
+    height: STANDARD_ANIMATION_CELL.height * selectedAnimationDirections.length
+  };
+  const animationGenerateBody = copy.animationStepGenerateBody;
+  const animationLockedSizeNote = `${copy.animationStandardLockedSize} ${selectedAnimationDirections.length} x ${animationFrameCount} / ${selectedAnimationSheetSize.width} x ${selectedAnimationSheetSize.height} px.`;
+  const selectedAnimationDownloadBody = selectedAnimationVariant === "directional-hatch-pet"
+    ? copy.directionalHatchPetDownloadBody
+    : selectedAnimationVariant === "hatch-pet"
+      ? copy.hatchPetDownloadBody
+      : copy.animationStepDownloadBody;
+  const resultDownloadIsAnimation = selectedAnimationExportReady;
+  const resultDownloadIsEffect = selectedEffectExportReady;
+  const selectedFinalDownloadAllowed = Boolean(selected && isUsableHistoryDownloadItem(selected));
+  const selectedImageDownloadReady = Boolean(selected && !resultDownloadIsAnimation && !resultDownloadIsEffect && selectedFinalDownloadAllowed);
+  const resultDownloadReady = resultDownloadIsEffect
+    ? selectedEffectExportReady && selectedFinalDownloadAllowed
+    : resultDownloadIsAnimation
+      ? selectedAnimationExportReady
+      : selectedImageDownloadReady;
+  const resultDownloadBody = resultDownloadIsEffect
+    ? (language === "ja" ? "sheet PNG、frame ZIP、GIF preview、metadata JSONをエフェクト用に書き出します。" : "Export sheet PNG, frame ZIP, GIF preview, and metadata JSON for the effect.")
+    : resultDownloadIsAnimation ? selectedAnimationDownloadBody : copy.imageDownloadBody;
+  const resultDownloadStatus = !selected
+    ? copy.imageDownloadLocked
+    : !selectedFinalDownloadAllowed
+      ? (language === "ja" ? "品質チェックで隔離された候補はfinalとしてダウンロードできません。" : "Quality-gated candidates cannot be downloaded as final results.")
+    : resultDownloadIsEffect
+      ? (language === "ja" ? "エフェクト書き出し準備完了" : "Effect exports ready")
+    : resultDownloadIsAnimation
+      ? copy.animationReady
+      : copy.imageDownloadReady;
+  const recoverResultsLabel = language === "ja" ? "結果を再取り込み" : "Recover Results";
+  const dedupeHistoryLabel = language === "ja" ? "重複整理" : "Dedupe History";
+  const selectedEditSourceIsFinalArtifact = selectedIsAnimationResult || selectedIsEffectResult;
+  const selectedEditSourceFinalTitle = selectedIsEffectResult
+    ? (language === "ja" ? "エフェクト出力" : "Effect output")
+    : copy.animationFinalNotEditableTitle;
+  const selectedEditSourceFinalBody = selectedIsEffectResult
+    ? (language === "ja"
+      ? "エフェクト結果は書き出し用の最終成果物です。編集する場合は画像生成または画像編集で作った画像を選択してください。"
+      : "Effect animation results are export assets. Select a generated or edited image before using numbered edit regions.")
+    : copy.animationFinalNotEditableBody;
+
+  function openDownloadModal() {
+    if (!resultDownloadReady) return;
+    setDownloadModalOpen(true);
+  }
+
+  if (storageScreen.mode !== "normal") {
+    return (
+      <>
+        <LocalStateRecoveryScreen
+          mode={storageScreen.mode}
+          preflight={storageScreen.preflight}
+          summaries={storageScreen.summaries}
+          message={storageScreen.message}
+          error={storageScreen.error}
+          runnerLabel={runnerPreflightLabel(runnerPreflight, copy)}
+          runnerState={runnerPreflight?.state ?? "unavailable"}
+          clearingScope={storageClearState.scope}
+          clearMessage={storageClearState.message}
+          clearError={storageClearState.error}
+          onOpenSafeMode={openStorageSafeMode}
+          onOpenNormalMode={openStorageNormalMode}
+          onOpenLocalhostOrigin={openLocalhostOrigin}
+          onForceLoad={() => setForceLargeStateLoad(true)}
+          onClear={clearLocalStateScope}
+          onDedupeHistory={dedupePersistedHistoryNow}
+        />
+        {settingsOpen && (
+          <SettingsModal
+            activeTab={settingsTab}
+            language={language}
+            report={environmentReport}
+            cockpitHealth={cockpitHealth}
+            runnerPreflight={runnerPreflight}
+            storageScreen={storageScreen}
+            storageClearState={storageClearState}
+            copyStatus={settingsCopyStatus}
+            recovering={isRecoveringOutboxResults}
+            repairing={isCockpitRepairing}
+            deduping={isDedupingHistory}
+            onTabChange={setSettingsTab}
+            onClose={closeSettings}
+            onOpenSafeMode={openStorageSafeMode}
+            onOpenNormalMode={openStorageNormalMode}
+            onOpenResetPage={openStaticResetPage}
+            onClear={clearLocalStateScope}
+            onDedupeHistory={() => void dedupePersistedHistoryNow()}
+            onDiagnose={() => void runCockpitHealthCheck()}
+            onRecover={() => void recoverUnimportedOutboxResults()}
+            onRepair={() => void repairCockpit()}
+            onCopyMarkdown={() => void copyEnvironmentReport("markdown")}
+            onCopyJson={() => void copyEnvironmentReport("json")}
+          />
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="brand">
+          <Grid3X3 size={18} aria-hidden="true" />
+          <strong>Image Cockpit for Codex Workflows</strong>
+          <span>{activeWorkflowCopy.label}</span>
+          <small>v0.2.1</small>
+        </div>
+        <div className="project-strip">
+          <LanguageSelect language={language} label={copy.language} onChange={setLanguage} />
+          <button className="icon-button settings-trigger" title={copy.settings} aria-label={copy.settings} onClick={() => openSettings("general")}>
+            <Settings size={18} aria-hidden="true" />
+          </button>
+          {SHOW_LOW_PRIORITY_CONTROLS && (
+            <>
+              <span>{copy.project}</span>
+              <button className="icon-button" title={copy.openWorkspace}>
+                <FolderOpen size={18} aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <main className={`cockpit ${SHOW_LOW_PRIORITY_CONTROLS ? "" : "simple-cockpit"} ${showSpriteActionsPanel ? "" : "without-sprite-actions"}`}>
+        <aside className="panel source-panel">
+          <PanelTitle index="1" title={copy.workflowPanelTitle} />
+          <WorkflowTabs language={language} activeMode={workflowMode} onSelect={beginWorkflow} />
+          <div className="workflow-summary">
+            <small>{copy.currentWorkflow}</small>
+            <strong>{activeWorkflowCopy.label}</strong>
+            <span>{activeWorkflowCopy.detail}</span>
+            <em>{copy.selectedProvider}: {providerLabel(providerId, language)}</em>
+            {providerId === "codex-handoff" && (
+              <em className={`runner-pill runner-${runnerPreflight?.state ?? "checking"}`}>
+                <Plug size={13} aria-hidden="true" />
+                {runnerPreflightLabel(runnerPreflight, copy)}
+              </em>
+            )}
+          </div>
+          <CockpitHealthPanel
+            report={cockpitHealth}
+            language={language}
+            repairing={isCockpitRepairing}
+            recovering={isRecoveringOutboxResults}
+            onRefresh={() => void runCockpitHealthCheck()}
+            onRecover={() => void recoverUnimportedOutboxResults()}
+            onRepair={() => void repairCockpit()}
+          />
+          {selected?.provider === "local-generator" && (
+            <div className="notice local-generator-notice">
+              <AlertTriangle size={15} aria-hidden="true" />
+              <span>{language === "ja" ? "この結果はローカル簡易生成です。Codex imagegenの成功結果ではありません。" : "This result is local procedural generation, not a Codex imagegen success result."}</span>
+            </div>
+          )}
+          {isAnimationWorkflow ? (
+            <div className={`animation-steps${motionPilotEnabled ? " motion-pilot-active" : ""}`}>
+              <details className={`animation-step collapsible-animation-step ${animationSourceReady ? "complete" : ""}`} open={!animationSourceReady}>
+                <summary className="step-heading">
+                  <strong>{copy.animationStepSourceTitle}</strong>
+                  <span>{copy.animationStepSourceBody}</span>
+                </summary>
+                <button className="secondary-button full" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={16} aria-hidden="true" />
+                  {copy.uploadPixelArt}
+                </button>
+                <div className="source-preview">
+                  {animationSourceReady && animationSource ? (
+                    <>
+                      <img src={animationSource.dataUrl} alt="" />
+                      <span>
+                        <small>{copy.selectedSource}</small>
+                        <strong>{animationSource.name}</strong>
+                        <em>{animationSource.size} / {animationSource.source}</em>
+                      </span>
+                    </>
+                  ) : (
+                    <span>{copy.noAnimationSource}</span>
+                  )}
+                </div>
+              </details>
+
+              <details className="animation-step collapsible-animation-step" open>
+                <summary className="step-heading">
+                  <strong>{copy.animationStepMotionTitle}</strong>
+                  <span>{language === "ja" ? "プリセットと方向だけ選べば生成できます。" : "Choose a preset and direction count, then generate."}</span>
+                </summary>
+                <div className="selected-animation-card animation-selected-summary">
+                  <small className="step-kicker">
+                    {copy.motionPreset} · {selectedMotionRecipe.experimental ? "Experimental" : "Verified"}
+                  </small>
+                  <strong>{localizedText(selectedAnimationPreset.title, language)}</strong>
+                  <span>{localizedText(selectedAnimationPreset.summary, language)}</span>
+                  <div className="animation-selected-meta" aria-label={language === "ja" ? "現在の詳細設定" : "Current advanced settings"}>
+                    <em>{localizedText(selectedAnimationPreset.category, language)}</em>
+                    <em>{animationFrameCount}f{isExperimentalMotionFrameCount(animationFrameCount) ? " · Experimental" : ""}</em>
+                    <em>{animationGenerationProfileDefinition(animationGenerationProfile).label}</em>
+                  </div>
+                </div>
+                <button className="prompt-example-trigger animation-preset-example-trigger" onClick={(event) => { animationPresetReturnFocusRef.current = event.currentTarget; setShowAnimationPresetExamples(true); }}>
+                  <Film size={15} aria-hidden="true" />
+                  {copy.chooseAnimation}
+                </button>
+                <div className="direction-preset-control">
+                  <small className="step-kicker">{copy.animationDirectionCount}</small>
+                  <div className="segmented-control direction-preset-buttons" aria-label={copy.animationDirectionCount}>
+                    {ANIMATION_DIRECTION_PRESET_IDS.map((presetId) => (
+                      <button
+                        key={presetId}
+                        type="button"
+                        className={animationDirectionPreset === presetId ? "active" : ""}
+                        aria-pressed={animationDirectionPreset === presetId}
+                        aria-label={presetId === "one"
+                          ? (language === "ja" ? "1方向（方向を選択）" : "1 direction (choose direction)")
+                          : animationDirectionPresetLabel(presetId, copy)}
+                        title={animationDirectionsForPreset(presetId, animationSingleDirection).join(" / ")}
+                        onClick={() => {
+                          const nextDirections = animationDirectionsForPreset(presetId, animationSingleDirection);
+                          setAnimationDirectionPreset(presetId);
+                          setGrid(animationSheetGridForDirections(nextDirections, animationFrameCount));
+                          if (presetId === "one") setMotionPilotEnabled(false);
+                        }}
+                      >
+                        {animationDirectionPresetLabel(presetId, copy)}
+                      </button>
+                    ))}
+                  </div>
+                  {animationDirectionPreset === "one" && (
+                    <div className="single-direction-control">
+                      <small className="step-kicker">{copy.animationSingleDirection}</small>
+                      <div
+                        className="segmented-control single-direction-buttons"
+                        role="group"
+                        aria-label={copy.animationSingleDirection}
+                      >
+                        {ANIMATION_DIRECTIONS.map((direction) => {
+                          const label = animationDirectionLabel(direction, language);
+                          return (
+                            <button
+                              key={direction}
+                              type="button"
+                              data-animation-direction={animationDirectionSlug(direction)}
+                              className={animationSingleDirection === direction ? "active" : ""}
+                              aria-pressed={animationSingleDirection === direction}
+                              aria-label={`${copy.animationSingleDirection}: ${label}`}
+                              title={direction}
+                              onClick={() => {
+                                setAnimationSingleDirection(direction);
+                                setGrid(animationSheetGridForDirections([direction], animationFrameCount));
+                                setMotionPilotEnabled(false);
+                              }}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <small className="direction-preset-note">
+                        {copy.animationSingleDirectionHint} {language === "ja" ? `選択中：${animationDirectionLabel(animationSingleDirection, language)}` : `Selected: ${animationDirectionLabel(animationSingleDirection, language)}`}
+                      </small>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button full animation-advanced-settings-trigger"
+                  onClick={(event) => {
+                    animationAdvancedReturnFocusRef.current = event.currentTarget;
+                    setShowAnimationAdvancedSettings(true);
+                  }}
+                >
+                  <Settings size={16} aria-hidden="true" />
+                  {language === "ja" ? "詳細設定を開く" : "Open advanced settings"}
+                </button>
+              </details>
+
+              {showAnimationAdvancedSettings && (
+                <AnimationUtilityModal
+                  id="animation-advanced-settings"
+                  title={language === "ja" ? "アニメーション詳細設定" : "Animation advanced settings"}
+                  description={language === "ja" ? "必要なときだけ体型・フレーム・動きの強さ・生成方式を調整します。" : "Adjust topology, frames, motion modifiers, and generation strategy only when needed."}
+                  onClose={closeAnimationAdvancedSettings}
+                >
+                  <section className="animation-utility-section animation-advanced-summary">
+                    <div className="step-heading">
+                      <strong>{localizedText(selectedAnimationPreset.title, language)}</strong>
+                      <span>{localizedText(selectedAnimationPreset.summary, language)}</span>
+                    </div>
+                    <dl className="motion-recipe-facts">
+                      <div><dt>{language === "ja" ? "ループ" : "Loop"}</dt><dd>{selectedMotionRecipe.loopMode}</dd></div>
+                      <div><dt>FPS / Frames</dt><dd>{selectedMotionRecipeCompilation.qaContract.fps} / {animationFrameCount}</dd></div>
+                      <div><dt>{language === "ja" ? "体型 / QA" : "Topology / QA"}</dt><dd>{animationBodyTopology} / {selectedBodyTopologyProfile.contactQaDimension}</dd></div>
+                      <div><dt>{language === "ja" ? "Recipe状態" : "Recipe status"}</dt><dd>{selectedMotionRecipe.experimental ? "Experimental" : "Verified"}</dd></div>
+                    </dl>
+                    <div className="motion-variant-controls">
+                      <label>
+                        <span>Body topology</span>
+                        <select value={animationBodyTopology} onChange={(event) => selectAnimationBodyTopology(event.target.value as BodyTopologyId)}>
+                          {selectedMotionRecipe.supportedTopologies.map((topology) => {
+                            const profile = getBodyTopologyProfile(topology);
+                            return <option key={topology} value={topology}>{localizedText(profile.displayName, language)}</option>;
+                          })}
+                        </select>
+                      </label>
+                      <div className="motion-frame-budget">
+                        <span>Frame budget</span>
+                        <div className="segmented-control motion-frame-buttons">
+                          {MOTION_FRAME_COUNTS.map((frameCount) => {
+                            const experimental = isExperimentalMotionFrameCount(frameCount);
+                            return (
+                              <button
+                                type="button"
+                                key={frameCount}
+                                data-frame-count={frameCount}
+                                data-experimental={experimental ? "true" : "false"}
+                                className={`${animationFrameCount === frameCount ? "active" : ""} ${experimental ? "experimental" : ""}`.trim()}
+                                aria-label={language === "ja"
+                                  ? `${frameCount}フレーム${experimental ? "、実験" : ""}`
+                                  : `${frameCount} frames${experimental ? ", Experimental" : ""}`}
+                                aria-pressed={animationFrameCount === frameCount}
+                                title={experimental ? (language === "ja" ? `${frameCount}f 実験枠` : `${frameCount}f Experimental`) : `${frameCount}f`}
+                                disabled={!selectedMotionRecipe.allowedFrameCounts.includes(frameCount)}
+                                onClick={() => selectAnimationFrameCount(frameCount)}
+                              >
+                                <span>{frameCount}f</span>
+                                {experimental && <small>{language === "ja" ? "実験" : "Experimental"}</small>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <small className={`motion-frame-experimental-note ${isExperimentalMotionFrameCount(animationFrameCount) ? "active" : ""}`.trim()} role="note">
+                          {language === "ja"
+                            ? "16f / 20f は実験枠です。生成時間と出力サイズが増え、一部engineのtexture上限を超える場合があります。"
+                            : "16f / 20f are experimental. They take longer, create larger outputs, and may exceed some engine texture limits."}
+                        </small>
+                      </div>
+                      <div className="motion-modifier-grid">
+                        {selectedMotionRecipe.allowedModifiers
+                          .filter((key) => key !== "handedness" || !["none", "unarmed"].includes(animationMotionVariant.weaponClass))
+                          .filter((key) => key !== "weaponClass" && key !== "handedness" || animationBodyTopology === "biped")
+                          .map((key) => (
+                            <label key={key}>
+                              <span>{language === "ja" ? MOTION_VARIANT_LABELS[key].ja : MOTION_VARIANT_LABELS[key].en}</span>
+                              <select value={animationMotionVariant[key]} onChange={(event) => updateAnimationMotionVariant(key, event.target.value)}>
+                                {MOTION_VARIANT_OPTIONS[key].map((value) => <option key={value} value={value}>{value}</option>)}
+                              </select>
+                            </label>
+                          ))}
+                      </div>
+                    </div>
+                    <div className="motion-variant-preview">
+                      <small>{language === "ja" ? "変更プレビュー" : "Variant preview"}</small>
+                      <strong>{selectedMotionRecipeCompilation.diagnostics.variantSummary}</strong>
+                      <span>{selectedMotionRecipeCompilation.diagnostics.promptDiff.join(" · ")}</span>
+                    </div>
+                    <div className="motion-recipe-phases">
+                      <small>{language === "ja" ? "フレームフェーズ" : "Frame phases"}</small>
+                      <span>{selectedMotionRecipeCompilation.qaContract.expectedPhases.join(" → ")}</span>
+                    </div>
+                    <details className="motion-recipe-diagnostics">
+                      <summary>Advanced diagnostics</summary>
+                      <code>{selectedMotionRecipe.id} v{selectedMotionRecipe.version} / compiler {selectedMotionRecipeCompilation.metadata.compilerVersion}</code>
+                      <span>sections: {selectedMotionRecipeCompilation.diagnostics.sectionOrder.join(" → ")}</span>
+                      <span>QA: {selectedMotionRecipeCompilation.qaContract.actionProfile} / {selectedMotionRecipeCompilation.qaContract.contactQaDimension} / motion {selectedMotionRecipeCompilation.qaContract.motionRange.join("–")}</span>
+                      <span>modifiers +{selectedMotionRecipeCompilation.diagnostics.appliedModifiers.length} / −{selectedMotionRecipeCompilation.diagnostics.removedModifiers.length} / dedupe {selectedMotionRecipeCompilation.diagnostics.deduplicatedSegmentCount}</span>
+                    </details>
+                  </section>
+
+                  <section className="animation-utility-section generation-profile-control">
+                    <div className="step-heading">
+                      <strong>{language === "ja" ? "生成方式" : "Generation profile"}</strong>
+                      <span>{animationGenerationProfileDefinition(animationGenerationProfile).description}</span>
+                    </div>
+                    <div className="segmented-control generation-profile-buttons" aria-label="Animation generation profile">
+                      {(Object.keys(ANIMATION_GENERATION_PROFILES) as AnimationGenerationProfile[]).map((profile) => {
+                        const definition = animationGenerationProfileDefinition(profile);
+                        return (
+                          <button
+                            key={profile}
+                            type="button"
+                            className={animationGenerationProfile === profile ? "active" : ""}
+                            aria-pressed={animationGenerationProfile === profile}
+                            title={definition.description}
+                            onClick={() => {
+                              setAnimationGenerationProfile(profile);
+                              if (profile !== "best") setMotionPilotEnabled(false);
+                            }}
+                          >
+                            {definition.label}
+                            <small>{definition.initialCandidates}{definition.maximumCandidates > definition.initialCandidates ? "+1" : ""} candidate{definition.maximumCandidates === 1 ? "" : "s"}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <label className="motion-pilot-toggle">
+                      <input
+                        type="checkbox"
+                        checked={motionPilotEnabled && motionPilotAvailable}
+                        disabled={!motionPilotAvailable}
+                        onChange={(event) => setMotionPilotEnabled(event.target.checked)}
+                      />
+                      <span>
+                        <strong>Motion Pilot Tournament</strong>
+                        <small>
+                          {motionPilotAvailabilityText(animationGenerationProfile, selectedAnimationDirections)}
+                        </small>
+                      </span>
+                    </label>
+                    {motionPilotEnabled && motionPilotAvailable && (
+                      <div className="motion-pilot-experiment-note" role="note">
+                        <strong>Human review gate</strong>
+                        <span>Generate A/B/C in side only, choose a pilot winner, then expand the remaining {Math.max(0, selectedAnimationDirections.length - 1)} directions. Fallback stays available.</span>
+                      </div>
+                    )}
+                    <div className="animation-generation-technical">
+                      <small>{copy.animationStepGenerateBody}</small>
+                      <small>{animationLockedSizeNote}</small>
+                      <label className="check-row inline notification-toggle">
+                        <input
+                          type="checkbox"
+                          checked={jobNotificationsEnabled}
+                          onChange={(event) => setJobNotificationsEnabled(event.target.checked)}
+                        />
+                        <Bell size={16} aria-hidden="true" />
+                        <span>{copy.jobNotifications}</span>
+                      </label>
+                    </div>
+                  </section>
+                  {batchMatrixSources.length >= 2 && (
+                    <section className="animation-utility-section batch-matrix-panel">
+                      <div className="step-heading">
+                        <strong>Batch Matrix</strong>
+                        <span>Characters are rows, motions are columns. Jobs obey the global {MAX_ACTIVE_CODEX_JOBS}-runner limit.</span>
+                      </div>
+                      <div className="batch-matrix-picker">
+                        <div>
+                          <small className="step-kicker">Characters</small>
+                          {batchMatrixSources.slice(0, 6).map((source) => (
+                            <label key={source.id}>
+                              <input type="checkbox" checked={batchMatrixSourceIds.includes(source.id)} onChange={() => toggleBatchMatrixSource(source.id)} />
+                              <span title={source.name}>{source.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div>
+                          <small className="step-kicker">Motions</small>
+                          {animationPresetExamples.slice(0, 8).map((preset) => (
+                            <label key={preset.id}>
+                              <input type="checkbox" checked={batchMatrixPresetIds.includes(preset.id)} onChange={() => toggleBatchMatrixPreset(preset.id)} />
+                              <span>{localizedText(preset.title, language)}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button full"
+                        disabled={isBatchMatrixStarting || batchMatrixSourceIds.length < 2 || batchMatrixPresetIds.length < 2}
+                        onClick={() => void runAnimationBatchMatrix()}
+                      >
+                        {isBatchMatrixStarting ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <Grid3X3 size={16} aria-hidden="true" />}
+                        Queue {batchMatrixSourceIds.length} × {batchMatrixPresetIds.length} Matrix
+                      </button>
+                    </section>
+                  )}
+                </AnimationUtilityModal>
+              )}
+
+              {SHOW_ANIMATION_LIBRARY && (
+                <section className="animation-step animation-library-panel">
+                  <div className="step-heading">
+                    <strong>{copy.animationLibraryTitle}</strong>
+                    <span>{copy.animationLibraryBody}</span>
+                  </div>
+                  <div className="animation-library-tabs" aria-label={copy.animationLibraryTitle}>
+                    <button
+                      className={animationLibraryTab === "official" ? "active" : ""}
+                      onClick={() => setAnimationLibraryTab("official")}
+                    >
+                      {copy.officialAnimations}
+                    </button>
+                    <button
+                      className={animationLibraryTab === "user" ? "active" : ""}
+                      onClick={() => setAnimationLibraryTab("user")}
+                    >
+                      {copy.userAnimations}
+                    </button>
+                  </div>
+                  {animationLibraryTab === "user" && (
+                    <button className="secondary-button full" onClick={() => animationPackInputRef.current?.click()}>
+                      <Upload size={16} aria-hidden="true" />
+                      {copy.importAnimation}
+                    </button>
+                  )}
+                  <div className="animation-library-list">
+                    {activeAnimationLibraryItems.length === 0 ? (
+                      <p className="animation-library-empty">{copy.animationLibraryEmpty}</p>
+                    ) : (
+                      activeAnimationLibraryItems.map((item) => (
+                        <article className="animation-library-card" key={item.id}>
+                          <div className="animation-library-preview">
+                            {item.kind === "official" ? (
+                              <div className={`animation-sample-sprite ${animationLibraryPreviewClassName(item)}`} aria-label={`${item.title} sample animation`} />
+                            ) : (
+                              <img src={item.previewDataUrl ?? item.sheetDataUrl} alt="" />
+                            )}
+                          </div>
+                          <div className="animation-library-info">
+                            <small>{item.kind === "official" ? copy.officialAnimations : copy.userAnimations}</small>
+                            <strong>{item.title}</strong>
+                            <span>{item.action} / {item.manifest.grid.rows}x{item.manifest.grid.columns} / {item.manifest.cell.width}px</span>
+                          </div>
+                          <div className="animation-library-actions">
+                            <button onClick={() => void useAnimationLibraryItem(item)}>
+                              <CheckCircle2 size={14} aria-hidden="true" />
+                              {copy.useAnimationLibraryItem}
+                            </button>
+                            <button onClick={() => void exportAnimationLibraryItem(item)}>
+                              <FileArchive size={14} aria-hidden="true" />
+                              {item.kind === "official" ? copy.exportAnimationSample : copy.exportAnimationPack}
+                            </button>
+                            {item.kind === "user" && (
+                              <>
+                                <button onClick={() => renameUserAnimationItem(item)}>
+                                  <Settings size={14} aria-hidden="true" />
+                                  {copy.renameAnimation}
+                                </button>
+                                <button className="danger" onClick={() => deleteUserAnimationItem(item)}>
+                                  <Trash2 size={14} aria-hidden="true" />
+                                  {copy.deleteAnimation}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
+              )}
+
+              <details className="animation-step collapsible-animation-step animation-generate-step" open>
+                <summary className="step-heading">
+                  <strong>{copy.animationStepGenerateTitle}</strong>
+                  <span>{language === "ja" ? "選択内容でアニメーションを生成します。" : "Generate with the selected preset and directions."}</span>
+                </summary>
+                <div className="animation-source-fingerprint">
+                  <span>Actual source</span>
+                  <strong>{animationSource?.name ?? "-"}</strong>
+                  <code title={animationSourceFingerprint}>{animationSourceFingerprint ? animationSourceFingerprint.slice(0, 16) : "fingerprinting..."}</code>
+                </div>
+                {animationPreviewSourceMismatch && (
+                  <div className="animation-source-mismatch" role="alert">
+                    <AlertTriangle size={15} aria-hidden="true" />
+                    <span>{language === "ja" ? "中央のプレビューは過去結果です。生成には上の Actual source だけを使用します。" : "The canvas shows a previous result. Generation uses only the Actual source shown above."}</span>
+                  </div>
+                )}
+                <button
+                  className="primary-button full"
+                  onClick={() => void handleGenerate()}
+                  disabled={primaryActionDisabled}
+                  aria-describedby={animationInitialAdmissionBlocked ? "animation-runner-admission-status" : undefined}
+                >
+                  <PrimaryActionIcon providerId={providerId} isBusy={isBusy} />
+                  {shouldQueueCodexJob ? codexQueueCopy.queueAction : copy.generateLocalSprite}
+                </button>
+                {animationInitialAdmissionBlocked && (
+                  <p
+                    id="animation-runner-admission-status"
+                    className="animation-runner-admission-status"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <CircleAlert size={15} aria-hidden="true" />
+                    <span>{animationInitialAdmissionStatus}</span>
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="secondary-button full animation-activity-trigger"
+                  onClick={(event) => {
+                    animationActivityReturnFocusRef.current = event.currentTarget;
+                    setShowAnimationActivity(true);
+                  }}
+                >
+                  <Film size={16} aria-hidden="true" />
+                  {language === "ja" ? "生成状況・履歴" : "Generation status & history"}
+                  <small aria-live="polite">{animationTournamentMonitors.length}</small>
+                </button>
+              </details>
+              {showAnimationActivity && (
+                <AnimationUtilityModal
+                  id="animation-generation-activity"
+                  title={language === "ja" ? "生成状況・履歴" : "Generation status & history"}
+                  description={language === "ja" ? "候補比較、方向別状態、修復、過去のトーナメントを必要なときだけ確認します。" : "Review candidates, direction state, repairs, and prior tournaments only when needed."}
+                  onClose={closeAnimationActivity}
+                >
+                <section className="animation-utility-section tournament-monitor">
+                  <div className="step-heading">
+                    <strong>Tournament Monitor</strong>
+                    <span>Persistent candidates, directions, phase, elapsed time, and warnings.</span>
+                  </div>
+                  {animationTournamentMonitors.length === 0 && (
+                    <p className="animation-utility-empty">{language === "ja" ? "まだ生成履歴はありません。" : "No animation generation history yet."}</p>
+                  )}
+                  {animationTournamentMonitors.slice(0, 6).map(({ manifest }) => {
+                    const initialCandidates = manifest.candidates.slice(0, manifest.initialCandidateCount);
+                    const startedInitialCandidateCount = initialCandidates.filter((candidate) => Boolean(candidate.jobId)).length;
+                    const initialBundleComplete = startedInitialCandidateCount === initialCandidates.length;
+                    const initialBundleReady =
+                      manifest.state === "queued" &&
+                      initialCandidates.length > 0 &&
+                      initialCandidates.every((candidate) => !candidate.jobId && candidate.state === "queued");
+                    const initialBundlePartial =
+                      startedInitialCandidateCount > 0 &&
+                      startedInitialCandidateCount < initialCandidates.length;
+                    const initialBundleAdmission = planAnimationInitialCandidateAdmission({
+                      initialCandidateCount: manifest.initialCandidateCount,
+                      activeRunnerCount: activeCodexRunnerCount,
+                      reservedRunnerCount: reservedAnimationRunnerCount,
+                      maxActiveRunnerCount: MAX_ACTIVE_CODEX_JOBS
+                    });
+                    const initialBundleStatusId = `tournament-initial-admission-${manifest.tournamentId}`;
+                    return (
+                    <article className={`tournament-monitor-card state-${manifest.state}`} key={manifest.tournamentId}>
+                      <header>
+                        <span>
+                          <strong>{manifest.generationProfile.toUpperCase()}</strong>
+                          {manifest.pilotMode && <b className="motion-pilot-badge">PILOT · {manifest.pilotDirection}</b>}
+                          <code title={manifest.tournamentId}>{manifest.tournamentId.slice(-12)}</code>
+                        </span>
+                        <em>{manifest.state} · {formatDurationSinceAt(manifest.createdAt, Date.now())}</em>
+                      </header>
+                      {manifest.pilotMode && (
+                        <div className="motion-pilot-metrics">
+                          <span>phase <strong>{manifest.pilotState ?? "piloting"}</strong></span>
+                          <span>direction outputs <strong>{manifest.directionOutputCount ?? manifest.pilotCandidateIds?.length ?? 0}</strong></span>
+                          <span>jobs <strong>{manifest.totalCandidateJobs ?? manifest.pilotCandidateIds?.length ?? 0}</strong></span>
+                          <span>repairs <strong>{manifest.repairCount ?? manifest.retryCount}</strong></span>
+                        </div>
+                      )}
+                      {initialBundleReady && (
+                        <div className="tournament-initial-bundle-actions">
+                          <button
+                            className="secondary-button mini"
+                            type="button"
+                            disabled={!initialBundleAdmission.allowed}
+                            aria-describedby={!initialBundleAdmission.allowed ? initialBundleStatusId : undefined}
+                            onClick={() => void startPersistedTournamentInitialCandidatesFromUi(manifest)}
+                          >
+                            <Zap size={13} aria-hidden="true" />
+                            {language === "ja"
+                              ? `初期候補 ${manifest.initialCandidateCount} 本を同時開始`
+                              : `Start all ${manifest.initialCandidateCount} initial candidates`}
+                          </button>
+                          {!initialBundleAdmission.allowed && (
+                            <p id={initialBundleStatusId} role="status" aria-live="polite">
+                              {animationInitialAdmissionMessage(language, initialBundleAdmission.occupiedSlots)}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {initialBundlePartial && (
+                        <p className="tournament-initial-bundle-warning" role="alert">
+                          {language === "ja"
+                            ? "初期候補が一部だけ開始済みです。個別再開はできないため、このトーナメントをキャンセルして新しく開始してください。"
+                            : "The initial wave is partial. Cancel this tournament and start a new one; initial candidates cannot resume individually."}
+                        </p>
+                      )}
+                      <div className="tournament-candidate-grid">
+                        {manifest.candidates.map((candidate) => {
+                          const unstartedInitialCandidate =
+                            candidate.index < manifest.initialCandidateCount &&
+                            !candidate.jobId;
+                          const adaptiveCandidateNotReady =
+                            candidate.index >= manifest.initialCandidateCount &&
+                            !candidate.jobId &&
+                            (
+                              !initialBundleComplete ||
+                              !(candidate.reason ?? manifest.thirdCandidateReason)
+                            );
+                          return (
+                            <button
+                              key={candidate.index}
+                              type="button"
+                              className={`tournament-candidate state-${candidate.state}`}
+                              disabled={
+                                unstartedInitialCandidate ||
+                                adaptiveCandidateNotReady ||
+                                Boolean(candidate.jobId) ||
+                                candidate.state === "cancelled" ||
+                                manifest.state === "accepted"
+                              }
+                              title={
+                                unstartedInitialCandidate
+                                  ? "Initial candidates must start together."
+                                  : candidate.reason ?? candidate.jobId ?? "Not started"
+                              }
+                              aria-label={`Candidate ${String.fromCharCode(65 + candidate.index)}: ${candidate.state}`}
+                              onClick={candidate.index >= manifest.initialCandidateCount && !adaptiveCandidateNotReady
+                                ? () => void startPersistedTournamentCandidate(manifest, candidate.index, "manual resume")
+                                : undefined}
+                            >
+                              <strong>{String.fromCharCode(65 + candidate.index)}</strong>
+                              <span>{candidate.state}</span>
+                              {typeof candidate.warningCount === "number" && candidate.warningCount > 0 && <em>{candidate.warningCount} warning</em>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <button
+                        className="secondary-button mini tournament-review-button"
+                        type="button"
+                        disabled={!manifest.candidates.some((candidate) => Boolean(candidate.jobId))}
+                        onClick={(event) => void openAnimationReviewCockpit(manifest, event.currentTarget)}
+                      >
+                        <Film size={13} aria-hidden="true" /> {manifest.candidates.filter((candidate) => Boolean(candidate.jobId)).length > 3 ? "Review A/B/C/D" : "Review A/B/C"}
+                      </button>
+                      <div className="tournament-direction-grid">
+                        {manifest.requestedDirections.map((direction) => (
+                          <button
+                            type="button"
+                            key={direction}
+                            className={`${directionRepairSelections[manifest.tournamentId]?.includes(direction) ? "selected" : ""} state-${manifest.directionStates[direction]?.state ?? "queued"}`}
+                            aria-pressed={directionRepairSelections[manifest.tournamentId]?.includes(direction) ?? false}
+                            disabled={manifest.state !== "accepted" || manifest.directionStates[direction]?.state === "repairing"}
+                            onClick={() => toggleDirectionRepairSelection(manifest.tournamentId, direction)}
+                          >
+                            {direction}<small>{manifest.directionStates[direction]?.state ?? "queued"}</small>
+                          </button>
+                        ))}
+                      </div>
+                      {manifest.thirdCandidateReason && <p>Candidate C: {manifest.thirdCandidateReason}</p>}
+                      {manifest.pilotMode && (manifest.state === "pilot-review" || (manifest.state === "failed" && manifest.pilotState === "failed")) && (
+                        <button className="secondary-button mini motion-pilot-fallback" type="button" onClick={() => void fallbackMotionPilotFromUi(manifest)}>
+                          <RefreshCw size={13} aria-hidden="true" /> Fallback to Balanced
+                        </button>
+                      )}
+                      {(manifest.state === "accepted" || manifest.state === "pilot-expanding") && (
+                        <div className="tournament-repair-actions">
+                          {manifest.state === "accepted" && manifest.pilotMode && <button
+                              className="secondary-button mini"
+                              type="button"
+                              onClick={() => void revalidateAcceptedPilotFromUi(manifest)}
+                            >
+                              <CheckCircle2 size={13} aria-hidden="true" /> Revalidate Pilot Final
+                            </button>}
+                          {manifest.state === "accepted" && <button
+                              className="secondary-button mini"
+                              type="button"
+                              disabled={(directionRepairSelections[manifest.tournamentId]?.length ?? 0) === 0 || manifest.retryCount >= 2}
+                              onClick={() => void startDirectionRepairFromUi(manifest)}
+                            >
+                              <RefreshCw size={13} aria-hidden="true" /> Repair selected ({manifest.retryCount}/2 used)
+                            </button>}
+                          {manifest.candidates.filter((candidate) => candidate.repairDirections?.length && candidate.state === "quality-evaluated" && candidate.jobId).map((candidate) => (
+                            <button
+                              className="primary-button mini"
+                              type="button"
+                              key={candidate.jobId}
+                              onClick={() => void acceptDirectionRepairFromUi(manifest, candidate.jobId ?? "")}
+                            >
+                              <CheckCircle2 size={13} aria-hidden="true" /> {manifest.pilotMode && manifest.state === "pilot-expanding" ? "Accept Pilot Expansion" : "Accept Repair"} {candidate.repairDirections?.join(", ")}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {(manifest.state === "queued" || manifest.state === "running") && (
+                        <button className="secondary-button mini" type="button" onClick={() => void cancelTournamentFromUi(manifest.tournamentId)}>
+                          <X size={13} aria-hidden="true" /> Cancel tournament
+                        </button>
+                      )}
+                    </article>
+                    );
+                  })}
+                </section>
+                </AnimationUtilityModal>
+              )}
+            </div>
+          ) : isEffectWorkflow ? (
+            <div className="effect-steps effect-steps-simplified">
+              <section className="effect-step effect-primary-step">
+                <div className="step-heading">
+                  <strong>{language === "ja" ? "1. エフェクトを選ぶ" : "1. Choose Effect"}</strong>
+                  <span>{language === "ja" ? "種類だけ選べば生成できます。色やフレームは詳細設定で調整できます。" : "Choose an effect and generate. Color, frames, and prompts stay optional."}</span>
+                </div>
+                <div className="selected-animation-card animation-selected-summary effect-selected-summary">
+                  <small className="step-kicker">
+                    {language === "ja" ? "選択中のエフェクト" : "Selected effect"} · {activeEffectCategory.experimental ? "Experimental" : "Verified"}
+                  </small>
+                  <strong>{localizedText(activeEffectType.label, language)}</strong>
+                  <span>{localizedText(activeEffectCategory.label, language)} · {localizedText(activeEffectCategory.detail, language)}</span>
+                  <div className="effect-summary-row">
+                    <div className="effect-swatches effect-summary-swatches" aria-label={localizedText(activeEffectPalette.label, language)}>
+                      {activeEffectPalette.swatches.map((swatch) => (
+                        <span key={swatch} style={{ background: swatch }} />
+                      ))}
+                    </div>
+                    <div className="animation-selected-meta effect-selected-meta" aria-label={language === "ja" ? "現在の詳細設定" : "Current advanced settings"}>
+                      <em>{localizedText(activeEffectStyle.label, language)}</em>
+                      <em>{localizedText(activeEffectPalette.label, language)}</em>
+                      <em>{effectFrameCount}f</em>
+                      <em>{effectCanvasSize}px</em>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="prompt-example-trigger effect-picker-trigger"
+                  onClick={(event) => {
+                    effectPickerReturnFocusRef.current = event.currentTarget;
+                    setEffectPickerCategoryId(effectCategoryId);
+                    setEffectPickerTypeId(effectTypeId);
+                    setShowEffectPicker(true);
+                  }}
+                >
+                  <Sparkles size={16} aria-hidden="true" />
+                  {language === "ja" ? "エフェクトを選ぶ" : "Choose Effect"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button full effect-advanced-settings-trigger"
+                  onClick={(event) => {
+                    effectAdvancedReturnFocusRef.current = event.currentTarget;
+                    setShowEffectAdvancedSettings(true);
+                  }}
+                >
+                  <Settings size={16} aria-hidden="true" />
+                  {language === "ja" ? "詳細設定を開く" : "Open advanced settings"}
+                </button>
+              </section>
+
+              {showEffectPicker && (
+                <AnimationUtilityModal
+                  id="effect-picker"
+                  title={language === "ja" ? "エフェクトを選ぶ" : "Choose Effect"}
+                  description={language === "ja" ? "用途を選び、その中の種類を1つ決めます。" : "Pick a use case, then choose one variation."}
+                  onClose={closeEffectPicker}
+                >
+                  <div className="effect-picker-modal-body">
+                    <section className="animation-utility-section">
+                      <div className="step-heading">
+                        <strong>{language === "ja" ? "カテゴリ" : "Category"}</strong>
+                        <span>{localizedText(effectPickerCategory.detail, language)}</span>
+                      </div>
+                      <div className="effect-category-grid effect-picker-category-grid" aria-label={language === "ja" ? "エフェクトカテゴリ" : "Effect categories"}>
+                        {effectCategoryDefinitions.map((category) => (
+                          <button
+                            key={category.id}
+                            type="button"
+                            className={category.id === effectPickerCategoryId ? "selected" : ""}
+                            aria-pressed={category.id === effectPickerCategoryId}
+                            onClick={() => {
+                              setEffectPickerCategoryId(category.id);
+                              setEffectPickerTypeId(category.types[0]?.id ?? "");
+                            }}
+                          >
+                            <Sparkles size={17} aria-hidden="true" />
+                            <span>
+                              <strong>{localizedText(category.label, language)}</strong>
+                              <small>{localizedText(category.detail, language)}</small>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                    <section className="animation-utility-section effect-picker-selection">
+                      <label className="field">
+                        <span>{language === "ja" ? "種類" : "Variation"}</span>
+                        <select value={effectPickerTypeId} onChange={(event) => setEffectPickerTypeId(event.target.value)}>
+                          {effectPickerCategory.types.map((type) => (
+                            <option key={type.id} value={type.id}>{localizedText(type.label, language)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="primary-button full"
+                        onClick={() => {
+                          setEffectCategoryId(effectPickerCategoryId);
+                          setEffectTypeId(effectPickerTypeId);
+                          closeEffectPicker();
+                        }}
+                      >
+                        <CheckCircle2 size={16} aria-hidden="true" />
+                        {language === "ja" ? "このエフェクトを使う" : "Use This Effect"}
+                      </button>
+                    </section>
+                  </div>
+                </AnimationUtilityModal>
+              )}
+
+              {showEffectAdvancedSettings && (
+                <AnimationUtilityModal
+                  id="effect-advanced-settings"
+                  title={language === "ja" ? "エフェクト詳細設定" : "Effect advanced settings"}
+                  description={language === "ja" ? "必要なときだけ見た目、シート、プロンプト、プレビューと合成ツールを調整します。" : "Adjust appearance, sheet, prompts, preview, and compositing tools only when needed."}
+                  onClose={closeEffectAdvancedSettings}
+                >
+                  <section className="animation-utility-section">
+                    <div className="step-heading">
+                      <strong>{language === "ja" ? "見た目" : "Appearance"}</strong>
+                      <span>{language === "ja" ? "スタイルと色だけを上書きします。" : "Override only the visual style and palette."}</span>
+                    </div>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>{language === "ja" ? "スタイル" : "Style"}</span>
+                        <select value={effectStyleId} onChange={(event) => setEffectStyleId(event.target.value as EffectStyleId)}>
+                          {effectStyleOptions.map((style) => (
+                            <option key={style.id} value={style.id}>{localizedText(style.label, language)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{language === "ja" ? "パレット" : "Palette"}</span>
+                        <select value={effectPaletteId} onChange={(event) => setEffectPaletteId(event.target.value as EffectPaletteId)}>
+                          {effectPaletteOptions.map((palette) => (
+                            <option key={palette.id} value={palette.id}>{localizedText(palette.label, language)}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="effect-swatches" aria-label={localizedText(activeEffectPalette.label, language)}>
+                      {activeEffectPalette.swatches.map((swatch) => (
+                        <span key={swatch} style={{ background: swatch }} />
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="animation-utility-section">
+                    <div className="step-heading">
+                      <strong>{language === "ja" ? "シート" : "Sheet"}</strong>
+                      <span>{effectSheetSize.width}x{effectSheetSize.height} / {effectSheetGrid.columns}x{effectSheetGrid.rows}</span>
+                    </div>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>{language === "ja" ? "フレーム" : "Frames"}</span>
+                        <select value={effectFrameCount} onChange={(event) => setEffectFrameCount(Number(event.target.value))}>
+                          {effectFrameCountOptions.map((frameCount) => (
+                            <option key={frameCount} value={frameCount}>{frameCount}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{language === "ja" ? "キャンバス" : "Canvas"}</span>
+                        <select value={effectCanvasSize} onChange={(event) => setEffectCanvasSize(Number(event.target.value))}>
+                          {effectCanvasSizeOptions.map((canvasSize) => (
+                            <option key={canvasSize} value={canvasSize}>{canvasSize} x {canvasSize}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>{language === "ja" ? "レイアウト" : "Layout"}</span>
+                        <select value={effectLayoutId} onChange={(event) => setEffectLayoutId(event.target.value as EffectLayoutId)}>
+                          {effectLayoutOptions.map((layoutOption) => (
+                            <option key={layoutOption.id} value={layoutOption.id}>{localizedText(layoutOption.label, language)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span>{language === "ja" ? "ループ" : "Loop"}</span>
+                        <select value={effectLoopMode} onChange={(event) => setEffectLoopMode(event.target.value as EffectLoopMode)}>
+                          {effectLoopModeOptions.map((loopOption) => (
+                            <option key={loopOption.id} value={loopOption.id}>{localizedText(loopOption.label, language)}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <label className="field">
+                      <span>{language === "ja" ? "アンカー" : "Anchor"}</span>
+                      <select value={effectAnchorMode} onChange={(event) => setEffectAnchorMode(event.target.value as EffectAnchorMode)}>
+                        {effectAnchorOptions.map((anchorOption) => (
+                          <option key={anchorOption.id} value={anchorOption.id}>{localizedText(anchorOption.label, language)}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="effect-sheet-mini" style={effectSheetGridStyle} aria-label={`${activeEffectLayout.id} ${effectSheetGrid.columns} by ${effectSheetGrid.rows}`}>
+                      {Array.from({ length: effectSheetGrid.columns * effectSheetGrid.rows }, (_, index) => (
+                        <span key={index} className={index < effectFrameCount ? "filled" : ""}>{index + 1}</span>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="animation-utility-section">
+                    <div className="step-heading">
+                      <strong>{language === "ja" ? "プロンプト（任意）" : "Prompt (optional)"}</strong>
+                      <span>{language === "ja" ? "現在値のままでも生成できます。必要な指示だけ追記します。" : "The defaults are ready to use. Add only the direction you need."}</span>
+                    </div>
+                    <label className="field">
+                      <span>{activeWorkflowFormCopy.promptLabel}</span>
+                      <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={1200} />
+                      <small>{prompt.length} / 1200</small>
+                    </label>
+                    <label className="field">
+                      <span>{activeWorkflowFormCopy.negativeLabel}</span>
+                      <textarea value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={2} />
+                    </label>
+                    <label className="field">
+                      <span>{activeWorkflowFormCopy.notesLabel}</span>
+                      <textarea
+                        value={jobNotes}
+                        onChange={(event) => setJobNotes(event.target.value)}
+                        rows={3}
+                        maxLength={1000}
+                        placeholder={activeWorkflowFormCopy.notesPlaceholder}
+                      />
+                      <small>{jobNotes.length} / 1000</small>
+                    </label>
+                  </section>
+
+                  <section className="animation-utility-section">
+                    <div className="step-heading">
+                      <strong>{language === "ja" ? "プレビュー背景" : "Preview background"}</strong>
+                      <span>{language === "ja" ? "透過境界を確認しやすい背景を選びます。" : "Choose a background that makes alpha edges easy to inspect."}</span>
+                    </div>
+                    <div className="effect-background-switch" aria-label={language === "ja" ? "プレビュー背景" : "Preview background"}>
+                      {effectBackgroundOptions.map((background) => (
+                        <button
+                          key={background.id}
+                          type="button"
+                          className={effectBackgroundPreview === background.id ? "active" : ""}
+                          aria-pressed={effectBackgroundPreview === background.id}
+                          onClick={() => setEffectBackgroundPreview(background.id)}
+                        >
+                          {background.label}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <details className="animation-utility-section effect-optional-tools">
+                    <summary className="step-heading">
+                      <strong>{language === "ja" ? "合成ツール（生成後）" : "Compositing tools (after generation)"}</strong>
+                      <span>{language === "ja" ? "キャラクターとエフェクトを別レイヤーで同期するときだけ使います。" : "Use only when syncing a character and effect as separate layers."}</span>
+                    </summary>
+                    <div className="effect-optional-tools-body vfx-composite-launch-panel">
+                      <div className="vfx-launch-summary">
+                        <span><Film size={14} aria-hidden="true" /> {vfxCompositeCharacters.length} character</span>
+                        <span><Sparkles size={14} aria-hidden="true" /> {vfxCompositeEffects.length} effect</span>
+                        <span>socket + event + Pack v2</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button full"
+                        disabled={vfxCompositeCharacters.length === 0 || vfxCompositeEffects.length === 0}
+                        onClick={(event) => openVfxCompositeStage(event.currentTarget)}
+                      >
+                        <Layers3 size={15} aria-hidden="true" /> Open Composite Stage
+                      </button>
+                      {(vfxCompositeCharacters.length === 0 || vfxCompositeEffects.length === 0) && (
+                        <small>{language === "ja" ? "character animationとdownload可能なeffectを先に用意してください" : "Create a character animation and a downloadable effect first."}</small>
+                      )}
+                    </div>
+                  </details>
+                </AnimationUtilityModal>
+              )}
+
+              <section className="effect-step effect-generate-step">
+                <div className="step-heading">
+                  <strong>{language === "ja" ? "2. 生成する" : "2. Generate"}</strong>
+                  <span>{language === "ja" ? "選択内容で透過エフェクトシートを生成します。" : "Generate a transparent effect sheet with the current selection."}</span>
+                </div>
+                <small className="effect-generation-summary">
+                  {localizedText(activeEffectType.label, language)} · {effectSheetSize.width}x{effectSheetSize.height} · {localizedText(effectLoopModeOptions.find((item) => item.id === effectLoopMode)?.label ?? effectLoopModeOptions[0].label, language)}
+                </small>
+                <button className="primary-button full" onClick={() => void handleGenerate()} disabled={primaryActionDisabled}>
+                  <PrimaryActionIcon providerId={providerId} isBusy={isBusy} />
+                  {shouldQueueCodexJob ? codexQueueCopy.queueAction : language === "ja" ? "エフェクト生成" : "Generate Effect"}
+                </button>
+              </section>
+            </div>
+          ) : (
+            <>
+              <label className="field">
+                <span>{activeWorkflowFormCopy?.promptLabel ?? "Prompt"}</span>
+                <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={1200} />
+                <small>{prompt.length} / 1200</small>
+              </label>
+              {workflowMode === "image-generate" && (
+                <button
+                  className="prompt-example-trigger"
+                  onClick={(event) => {
+                    promptExamplesReturnFocusRef.current = event.currentTarget;
+                    setShowPromptExamples(true);
+                  }}
+                >
+                  <FileJson size={15} aria-hidden="true" />
+                  {copy.promptExamples}
+                </button>
+              )}
+              {isImageEditWorkflow && (
+                <section className="image-edit-panel">
+                  <div className="step-heading">
+                    <strong>{copy.selectedEditSource}</strong>
+                    <span>{selectedEditSourceIsFinalArtifact ? selectedEditSourceFinalBody : copy.imageEditRegionsHelp}</span>
+                  </div>
+                  <button className="secondary-button full inline-full" onClick={() => fileInputRef.current?.click()}>
+                    <Upload size={16} aria-hidden="true" />
+                    {copy.uploadImageForEdit}
+                  </button>
+                  <div className="source-preview edit-source-preview">
+                    {selected ? (
+                      <>
+                        <img src={selected.dataUrl} alt="" />
+                        <span>
+                          <small>{copy.selectedEditSource}</small>
+                          <strong>{selected.name}</strong>
+                          <em>{selected.size} / {selected.source}</em>
+                        </span>
+                      </>
+                    ) : (
+                      <span>{copy.noEditSource}</span>
+                    )}
+                  </div>
+
+                  {selectedEditSourceIsFinalArtifact ? (
+                    <div className="edit-final-notice">
+                      <strong>{selectedEditSourceFinalTitle}</strong>
+                      <span>{selectedEditSourceFinalBody}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="annotation-region-heading">
+                        <span>{copy.imageEditRegionsTitle}</span>
+                        {selectedAnnotations.length > 0 && (
+                          <button className="secondary-button mini" onClick={clearSelectedAnnotations}>
+                            <Trash2 size={14} aria-hidden="true" />
+                            {copy.clearRegions}
+                          </button>
+                        )}
+                      </div>
+                      <div className="annotation-region-list">
+                        {selectedAnnotations.length === 0 ? (
+                          <p className="annotation-empty">{copy.noEditRegions}</p>
+                        ) : (
+                          selectedAnnotations.map((annotation, index) => (
+                            <label className="annotation-region-row" key={annotation.id}>
+                              <span>
+                                <strong>#{annotation.number ?? index + 1}</strong>
+                                {copy.editRegionLabel}
+                              </span>
+                              <textarea
+                                className="annotation-comment-field"
+                                value={annotation.comment ?? ""}
+                                onChange={(event) => updateAnnotationComment(annotation.id, event.target.value)}
+                                placeholder={copy.editRegionPlaceholder}
+                                rows={2}
+                              />
+                              <button className="icon-button danger" type="button" title={copy.removeRegion} onClick={() => removeAnnotation(annotation.id)}>
+                                <Trash2 size={16} aria-hidden="true" />
+                              </button>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+              {workflowMode === "image-generate" && (
+                <div className="button-row primary-action-row">
+                  <button className="primary-button" onClick={() => void handleGenerate()} disabled={primaryActionDisabled}>
+                    <PrimaryActionIcon providerId={providerId} isBusy={isBusy} />
+                    {isImageEditWorkflow && selectedEditSourceIsFinalArtifact
+                      ? copy.editImage
+                      : shouldQueueCodexJob
+                        ? codexQueueCopy.queueAction
+                        : primaryActionLabel(providerId, workflowMode, copy)}
+                  </button>
+                  <p className="action-note">{copy.generationMayTakeMinutes}</p>
+                </div>
+              )}
+              <label className="field">
+                <span>{activeWorkflowFormCopy?.negativeLabel ?? "Negative Prompt"}</span>
+                <textarea value={negativePrompt} onChange={(event) => setNegativePrompt(event.target.value)} rows={2} />
+              </label>
+              <label className="field">
+                <span>{activeWorkflowFormCopy?.notesLabel ?? copy.jobNotes}</span>
+                <textarea
+                  value={jobNotes}
+                  onChange={(event) => setJobNotes(event.target.value)}
+                  rows={3}
+                  maxLength={1000}
+                  placeholder={activeWorkflowFormCopy?.notesPlaceholder ?? copy.jobNotesPlaceholder}
+                />
+                <small>{jobNotes.length} / 1000</small>
+              </label>
+
+              {SHOW_LOW_PRIORITY_CONTROLS && (
+                <>
+                  <div className="field-row">
+                    <label className="field">
+                      <span>Seed</span>
+                      <input value={seed} onChange={(event) => setSeed(event.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Count</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={4}
+                        value={count}
+                        onChange={(event) => setCount(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="field-row">
+                    <label className="field">
+                      <span>Size</span>
+                      <select value={size} onChange={(event) => setSize(event.target.value)}>
+                        <option>1024x1024</option>
+                        <option>1536x1024</option>
+                        <option>1024x1536</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Quality</span>
+                      <select value={quality} onChange={(event) => setQuality(event.target.value)}>
+                        <option>auto</option>
+                        <option>low</option>
+                        <option>medium</option>
+                        <option>high</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {workflowMode !== "image-generate" && (
+                <div className="button-row primary-action-row">
+                  <button className="primary-button" onClick={() => void handleGenerate()} disabled={primaryActionDisabled}>
+                    <PrimaryActionIcon providerId={providerId} isBusy={isBusy} />
+                    {shouldQueueCodexJob ? codexQueueCopy.queueAction : primaryActionLabel(providerId, workflowMode, copy)}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(event) => {
+              if (event.target.files) void handleFiles(event.target.files);
+              event.currentTarget.value = "";
+            }}
+          />
+          <input
+            ref={animationPackInputRef}
+            type="file"
+            accept=".image-cockpit-animation.zip,.zip,application/zip,application/x-zip-compressed"
+            multiple
+            hidden
+            onChange={(event) => {
+              if (event.target.files) void handleAnimationPackFiles(event.target.files);
+              event.currentTarget.value = "";
+            }}
+          />
+
+          {SHOW_LOW_PRIORITY_CONTROLS && (
+            <>
+              <SectionLabel title="Providers" />
+              <div className="provider-list">
+                {providers.map((provider) => (
+                  <button
+                    key={provider.id}
+                    className={`provider ${providerId === provider.id ? "selected" : ""}`}
+                    onClick={() => setProviderId(provider.id)}
+                    disabled={!provider.enabled}
+                  >
+                    {provider.id === "local-file" && <FolderOpen size={22} aria-hidden="true" />}
+                    {provider.id === "local-generator" && <ImagePlus size={22} aria-hidden="true" />}
+                    {provider.id === "codex-handoff" && <Plug size={22} aria-hidden="true" />}
+                    {provider.id === "local-inbox" && <Archive size={22} aria-hidden="true" />}
+                    <span>
+                      <strong>{providerLabel(provider.id, language)}</strong>
+                      <small>{providerMessage(provider, language)}</small>
+                    </span>
+                    {provider.enabled ? <CheckCircle2 size={16} aria-hidden="true" /> : <em>Off</em>}
+                  </button>
+                ))}
+              </div>
+
+              <div className="notice">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <span>
+                  This app does not call OpenAI APIs directly. Codex jobs are written to the local inbox
+                  {codexProvider?.path ? `: ${codexProvider.path}` : "."}
+                </span>
+              </div>
+            </>
+          )}
+
+          {showFrameGridControls && (
+            <>
+              <div className="field-row">
+                <NumberField label={copy.frameWidth} value={activeAction.cell.width} min={MIN_ANIMATION_CELL_SIZE} onChange={(width) => updateCell(width, activeAction.cell.height)} />
+                <NumberField label={copy.frameHeight} value={activeAction.cell.height} min={MIN_ANIMATION_CELL_SIZE} onChange={(height) => updateCell(activeAction.cell.width, height)} />
+              </div>
+              <label className="check-row">
+                <input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />
+                {copy.showGrid}
+              </label>
+              <label className="check-row">
+                <input type="checkbox" checked={showCenter} onChange={(event) => setShowCenter(event.target.checked)} />
+                {copy.showCenter}
+              </label>
+            </>
+          )}
+
+          {showSpriteTuningControls && (
+            <>
+              <SectionLabel title={copy.transparencyCleanup} />
+              <label className="field">
+                <span>{copy.keyColor}</span>
+                <input type="color" value={annotationColor} onChange={(event) => setAnnotationColor(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>{copy.tolerance}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={120}
+                  value={chromaTolerance}
+                  onChange={(event) => setChromaTolerance(Number(event.target.value))}
+                />
+              </label>
+              <button className="secondary-button full" onClick={() => void applyChromaToSelectedFrame()} disabled={!selectedFrame}>
+                <Pipette size={16} aria-hidden="true" />
+                {copy.applyChromaKey}
+              </button>
+            </>
+          )}
+        </aside>
+
+        <section className={`workspace with-downloads ${resultDownloadIsEffect ? "showing-effect-result" : resultDownloadIsAnimation ? "showing-animation-result" : "showing-image-result"}`}>
+          <div className={`panel canvas-panel ${showAnnotationToolbar ? "" : "without-toolbar"}`}>
+            <PanelTitle index="2" title={copy.canvasAnnotationTitle} />
+            {showAnnotationToolbar && (
+              <div className="toolbar edit-toolbar">
+                <span className="edit-tool-pill">
+                  <Square size={16} aria-hidden="true" />
+                  {copy.rectangleTool}
+                </span>
+                <span>{copy.imageEditRegionsHelp}</span>
+              </div>
+            )}
+            <div
+              className={`canvas-stage ${previewMode === "result" ? "showing-result" : ""}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                void handleFiles(event.dataTransfer.files);
+              }}
+            >
+              {previewMode === "result" && selected && (
+                <div className={`result-preview-frame ${selectedEffectExportReady ? "with-effect-previews" : selectedAnimationExportReady ? "with-animation-previews" : ""}`}>
+                  {selectedAnimationExportReady ? (
+                    <div className="animation-composite-preview">
+                      <div className="animation-preview-card direction-preview-card">
+                        <div className="animation-preview-card-heading">
+                          <strong>{copy.directionalPreviews}</strong>
+                          <small>{copy.previewGif}</small>
+                        </div>
+                        {isAnimationPreviewBuilding ? (
+                          <div className="animation-preview compact-animation-preview">{copy.animationPreviewsBuilding}</div>
+                        ) : animationDirectionPreviews.length > 0 ? (
+                          <div className="direction-preview-list">
+                            {animationDirectionPreviews.map((preview) => (
+                              <div className="direction-preview-row" key={preview.id}>
+                                <span>{preview.label}</span>
+                                <div className="animation-preview direction-gif-preview">
+                                  <img src={preview.gifUrl} alt="" />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="animation-preview compact-animation-preview">{copy.noFrames}</div>
+                        )}
+                      </div>
+                      <div className="animation-preview-card sprite-sheet-preview-card">
+                        <strong>{copy.previewSpriteSheet}</strong>
+                        <div className="animation-preview sheet-preview">
+                          <span className="sprite-sheet-grid-preview" style={selectedAnimationSheetGridStyle}>
+                            <img className="result-preview-image" src={selected.dataUrl} alt="" />
+                            <span className="sprite-sheet-grid-overlay" aria-hidden="true" />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : selectedEffectExportReady ? (
+                    <div className={`effect-composite-preview effect-bg-${effectBackgroundPreview}`}>
+                      <div className="effect-preview-card effect-gif-card">
+                        <div className="animation-preview-card-heading">
+                          <strong>{language === "ja" ? "GIF preview" : "GIF preview"}</strong>
+                          <small>{selectedEffectMetadata?.qualityRank ?? "checking"}</small>
+                        </div>
+                        <div className="effect-preview-stage">
+                          {isEffectPreviewBuilding ? (
+                            <div className="animation-preview compact-animation-preview">{language === "ja" ? "構築中" : "Building"}</div>
+                          ) : effectGifPreviewUrl ? (
+                            <img src={effectGifPreviewUrl} alt="" />
+                          ) : (
+                            <div className="animation-preview compact-animation-preview">{copy.noFrames}</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="effect-preview-card effect-sheet-card">
+                        <div className="animation-preview-card-heading">
+                          <strong>{language === "ja" ? "Sheet preview" : "Sheet preview"}</strong>
+                          <small>{selectedEffectSheetGrid.columns}x{selectedEffectSheetGrid.rows}</small>
+                        </div>
+                        <div className="effect-sheet-preview">
+                          <span className="sprite-sheet-grid-preview" style={selectedEffectSheetGridStyle}>
+                            <img className="result-preview-image" src={selected.dataUrl} alt="" />
+                            <span className="sprite-sheet-grid-overlay" aria-hidden="true" />
+                          </span>
+                        </div>
+                      </div>
+                      <div className="effect-preview-card effect-timeline-card">
+                        <div className="animation-preview-card-heading">
+                          <strong>{language === "ja" ? "Frame timeline" : "Frame timeline"}</strong>
+                          <small>{selectedEffectFrames.length}/{selectedEffectMetadata?.frameCount ?? selectedEffectFrames.length}</small>
+                        </div>
+                        <div className="effect-timeline">
+                          {selectedEffectFrames.map((frame, index) => (
+                            <button
+                              key={frame.id}
+                              type="button"
+                              className={selectedFrameId === frame.id ? "selected" : ""}
+                              onClick={() => setSelectedFrameId(frame.id)}
+                            >
+                              <span>{index + 1}</span>
+                              <img src={frame.dataUrl} alt="" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="effect-qc-strip">
+                        <strong>{(selectedEffectMetadata?.qualityRank ?? "blocked").toUpperCase()}</strong>
+                        <span>
+                          {selectedEffectMetadata?.warnings.length
+                            ? selectedEffectMetadata.warnings.slice(0, 2).join(" / ")
+                            : language === "ja" ? "QC warningなし" : "No QC warnings"}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="static-result-preview-viewport">
+                      <img className="result-preview-image" src={selected.dataUrl} alt="" />
+                    </div>
+                  )}
+                </div>
+              )}
+              <canvas
+                ref={canvasRef}
+                width={CANVAS_WIDTH}
+                height={CANVAS_HEIGHT}
+                data-preview-mode={previewMode}
+                data-preview-name={selected?.name ?? ""}
+                data-grid-columns={grid.columns}
+                data-grid-rows={grid.rows}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              />
+              {SHOW_LOW_PRIORITY_CONTROLS && (
+                <div className="split-popover">
+                  <strong>Split Grid</strong>
+                  <NumberField label="Columns" value={grid.columns} onChange={(columns) => setGrid({ ...grid, columns })} />
+                  <NumberField label="Rows" value={grid.rows} onChange={(rows) => setGrid({ ...grid, rows })} />
+                  <NumberField label="Gutter" value={grid.gutter} onChange={(gutter) => setGrid({ ...grid, gutter })} />
+                  <button onClick={() => void splitSelectedToTimeline()}>Apply to Sheet</button>
+                </div>
+              )}
+            </div>
+            <div className="canvas-status">
+              <span>{previewStatus}</span>
+              {selectedAnimationExportReady && (
+                selectedAnimationSource ? (
+                  <button
+                    type="button"
+                    className="source-status-chip source-status-button animation-source-status"
+                    onClick={() => selectSourceFromPreview(selectedAnimationSource)}
+                    title={`${copy.openSourcePreview}: ${selectedAnimationSource.name}`}
+                    aria-label={`${copy.openSourcePreview}: ${selectedAnimationSource.name}`}
+                  >
+                    <img src={selectedAnimationSource.dataUrl} alt="" />
+                    <span className="source-status-text">
+                      <small>{copy.animationGeneratedFrom}</small>
+                      <strong>{selectedAnimationSource.name}</strong>
+                    </span>
+                  </button>
+                ) : (
+                  <span className="source-status-chip animation-source-status">
+                    <span className="source-thumb-placeholder" />
+                    <span className="source-status-text">
+                      <small>{copy.animationGeneratedFrom}</small>
+                      <strong>{selectedAnimationSourceName ?? copy.animationSourceUnknown}</strong>
+                    </span>
+                  </span>
+                )
+              )}
+              {selectedImageEditSourceName && (
+                selectedImageEditSource ? (
+                  <button
+                    type="button"
+                    className="source-status-chip source-status-button image-edit-source-status"
+                    onClick={() => selectSourceFromPreview(selectedImageEditSource)}
+                    title={`${copy.openSourcePreview}: ${selectedImageEditSource.name}`}
+                    aria-label={`${copy.openSourcePreview}: ${selectedImageEditSource.name}`}
+                  >
+                    <img src={selectedImageEditSource.dataUrl} alt="" />
+                    <span className="source-status-text">
+                      <small>{copy.imageEditGeneratedFrom}</small>
+                      <strong>{selectedImageEditSourceName}</strong>
+                    </span>
+                  </button>
+                ) : (
+                  <span className="source-status-chip image-edit-source-status">
+                    <span className="source-thumb-placeholder" />
+                    <span className="source-status-text">
+                      <small>{copy.imageEditGeneratedFrom}</small>
+                      <strong>{selectedImageEditSourceName ?? copy.imageEditSourceUnknown}</strong>
+                    </span>
+                  </span>
+                )
+              )}
+              <span>{copy.sizeLabel}: {previewSize}</span>
+              <span>{copy.anchorLabel}: {selectedEffectMetadata ? `${selectedEffectMetadata.anchor.x}, ${selectedEffectMetadata.anchor.y}` : `${activeAction.anchor.x}, ${activeAction.anchor.y}`}</span>
+              <span>{copy.zoomLabel}: {copy.zoomFit}</span>
+              <span className="swatch" style={{ background: annotationColor }} />
+            </div>
+          </div>
+          <section className={`panel result-download-panel ${resultDownloadReady ? "complete" : ""} ${resultDownloadIsEffect ? "effect-result-download" : resultDownloadIsAnimation ? "animation-result-download" : "image-result-download"}`}>
+            <PanelTitle index="4" title={copy.imageDownloadTitle} />
+            <div className="result-download-body">
+              <div className="step-heading">
+                <strong>{selected?.name ?? copy.imageDownloadTitle}</strong>
+                <span>{resultDownloadStatus}</span>
+              </div>
+              <button
+                className="primary-button result-download-action"
+                onClick={openDownloadModal}
+                disabled={!resultDownloadReady}
+                aria-haspopup="dialog"
+              >
+                <Download size={16} aria-hidden="true" />
+                {copy.openDownloadModal}
+              </button>
+            </div>
+          </section>
+        </section>
+
+        <aside className="panel history-panel">
+          <PanelTitle index="3" title={copy.results} />
+          <div className="history-tools">
+            <button className="secondary-button mini" onClick={() => void recoverUnimportedOutboxResults()} disabled={isRecoveringOutboxResults}>
+              <Archive size={14} aria-hidden="true" />
+              {recoverResultsLabel}
+            </button>
+            <button className="secondary-button mini" onClick={() => void dedupeLocalInboxHistoryNow()} disabled={isDedupingHistory}>
+              <Scissors size={14} aria-hidden="true" />
+              {dedupeHistoryLabel}
+            </button>
+          </div>
+          {providerId === "codex-handoff" && codexJobs.length > 0 && (
+            <CodexJobShelf jobs={codexJobs} maxActive={MAX_ACTIVE_CODEX_JOBS} language={language} />
+          )}
+          {SHOW_LOW_PRIORITY_CONTROLS && (
+            <div className="tabs">
+              <button className="tab active">History</button>
+              <button className="tab">Adopted ({history.filter((item) => item.adopted).length})</button>
+            </div>
+          )}
+          <div
+            ref={historyListRef}
+            className="history-list"
+            data-visible-count={visibleHistoryCount}
+            data-total-count={history.length}
+            onScroll={handleHistoryScroll}
+          >
+            {codexFailureNotices.map((notice) => (
+              <CodexFailureCard
+                key={notice.id}
+                notice={notice}
+                language={language}
+                onRetryImport={notice.retryJob ? retryCodexFailureImport : undefined}
+              />
+            ))}
+            {visibleHistory.map((item) => {
+              const effectMetadata = item.effectAnimation;
+              return (
+                <button
+                  key={item.id}
+                  className={`history-item ${selected?.id === item.id ? "selected" : ""} ${isEffectAnimationHistoryItem(item) ? "effect-result" : ""}`}
+                  title={item.name}
+                  onClick={() => selectHistoryResult(item)}
+                >
+                  <img src={item.dataUrl} alt="" loading="lazy" decoding="async" />
+                  <span>
+                    {effectMetadata ? (
+                      <>
+                        <strong>{formatEffectHistoryTitle(effectMetadata, language)}</strong>
+                        <small>{formatEffectHistoryMeta(effectMetadata)}</small>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{item.name}</strong>
+                        <small>{formatTime(item.createdAt)} • {providerLabel(item.provider, language)}</small>
+                        <small>{item.size} • {item.source}</small>
+                      </>
+                    )}
+                  </span>
+                  {SHOW_LOW_PRIORITY_CONTROLS && item.adopted && <em>Adopted</em>}
+                </button>
+              );
+            })}
+            {hasMoreHistory && <div ref={historyLoadMoreRef} className="history-load-more-sentinel" aria-hidden="true" />}
+          </div>
+          {SHOW_LOW_PRIORITY_CONTROLS && (
+            <div className="variant-box">
+              <div className="variant-title">
+                <strong>Variant Comparison</strong>
+                <button className="secondary-button mini" onClick={() => void adoptSelected()} disabled={!selected}>
+                  Adopt
+                </button>
+              </div>
+              <div className="variant-strip">
+                {history.slice(0, 3).map((item) => (
+                  <button
+                    key={item.id}
+                    className={selected?.id === item.id ? "variant selected" : "variant"}
+                    onClick={() => selectHistoryResult(item)}
+                  >
+                    <img src={item.dataUrl} alt="" />
+                    <span>{item.adopted ? "Adopted" : "Candidate"}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+
+        {showSpriteActionsPanel && (
+        <section className="panel sprite-bench">
+          <PanelTitle index="4" title={copy.spriteActions} />
+          <div className="action-tabs">
+            {actions.map((action) => (
+              <button
+                key={action.name}
+                className={action.name === activeAction.name ? "active" : ""}
+                onClick={() => setActiveActionName(action.name)}
+              >
+                {action.name}
+              </button>
+            ))}
+            {SHOW_LOW_PRIORITY_CONTROLS && (
+              <button className="icon-button" title="Add action preset">
+                <Plus size={16} aria-hidden="true" />
+              </button>
+            )}
+            <span className="spacer" />
+            {SHOW_LOW_PRIORITY_CONTROLS && (
+              <>
+                <label>
+                  FPS
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={activeAction.fps}
+                    onChange={(event) => updateActiveAction({ fps: Number(event.target.value) })}
+                  />
+                </label>
+                <label className="check-row inline">
+                  <input
+                    type="checkbox"
+                    checked={activeAction.loop}
+                    onChange={(event) => updateActiveAction({ loop: event.target.checked })}
+                  />
+                  Loop
+                </label>
+              </>
+            )}
+          </div>
+
+          <div className={`bench-grid ${showSpriteTuningControls ? "with-sprite-tuning" : ""}`}>
+            <div className="timeline">
+              {actionFrames.map((frame, index) => (
+                <button
+                  key={frame.id}
+                  className={`frame-tile ${selectedFrame?.id === frame.id ? "selected" : ""}`}
+                  onClick={() => setSelectedFrameId(frame.id)}
+                >
+                  <span>{index}</span>
+                  <img src={frame.dataUrl} alt="" />
+                  <small>{frame.width}x{frame.height}</small>
+                </button>
+              ))}
+              <button className="add-frame" onClick={() => void addSelectedAsFrame()} title={copy.addFrame}>
+                <Plus size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="frame-tools">
+              <button className="icon-button" title={copy.moveFrameLeft} disabled={!selectedFrame} onClick={() => selectedFrame && moveFrame(selectedFrame.id, -1)}>
+                <ArrowLeft size={16} aria-hidden="true" />
+              </button>
+              <button className="icon-button" title={copy.moveFrameRight} disabled={!selectedFrame} onClick={() => selectedFrame && moveFrame(selectedFrame.id, 1)}>
+                <ArrowRight size={16} aria-hidden="true" />
+              </button>
+              <button className="icon-button danger" title={copy.removeFrame} disabled={!selectedFrame} onClick={() => selectedFrame && removeFrame(selectedFrame.id)}>
+                <Trash2 size={16} aria-hidden="true" />
+              </button>
+            </div>
+
+            {SHOW_LOW_PRIORITY_CONTROLS && (
+              <>
+                <div className="qc-panel">
+                  <h3>QC Checks <em>{qc.sizeMismatchCount + qc.duplicateCount}</em></h3>
+                  <QcLine ok={qc.sizeMismatchCount === 0} label="Frame Size Consistency" value={qc.sizeMismatchCount ? `${qc.sizeMismatchCount} mismatches` : "All frames match"} />
+                  <QcLine ok={qc.transparentFrames === actionFrames.length && actionFrames.length > 0} label="Transparent PNG" value={`${qc.transparentFrames}/${actionFrames.length} frames`} />
+                  <QcLine ok={qc.duplicateCount === 0} label="Duplicate Frame Check" value={qc.duplicateCount ? `${qc.duplicateCount} duplicates` : "No duplicates found"} />
+                  <QcLine ok={activeAction.anchor.y >= activeAction.cell.height * 0.75} label="Anchor at Feet" value={`${activeAction.anchor.x}, ${activeAction.anchor.y}`} />
+                  <button className="secondary-button mini">
+                    <RefreshCw size={14} aria-hidden="true" />
+                    Re-check
+                  </button>
+                </div>
+
+                <div className="preview-panel">
+                  <h3>Preview (GIF)</h3>
+                  <div className="gif-preview">{gifPreviewUrl ? <img src={gifPreviewUrl} alt="" /> : <span>{copy.noFrames}</span>}</div>
+                  <small>{activeAction.cell.width}x{activeAction.cell.height} • {activeAction.fps} FPS</small>
+                </div>
+              </>
+            )}
+
+            {!isAnimationWorkflow && (
+              <div className="export-panel">
+                <h3>{copy.exportSprite}</h3>
+                <button onClick={() => void exportSpriteSheet(frames, activeAction)} disabled={actionFrames.length === 0}>
+                  <FileImage size={18} aria-hidden="true" />
+                  {copy.exportSheetPng}
+                </button>
+                <button onClick={() => void exportFramesZip(frames, activeAction)} disabled={actionFrames.length === 0}>
+                  <FileArchive size={18} aria-hidden="true" />
+                  {copy.exportZipFrames}
+                </button>
+                <button onClick={() => void exportGif(frames, activeAction)} disabled={actionFrames.length === 0}>
+                  <Film size={18} aria-hidden="true" />
+                  {copy.exportGifLabel}
+                </button>
+                <button onClick={() => exportMetadata("forest_mage", actions, frames)}>
+                  <FileJson size={18} aria-hidden="true" />
+                  {copy.exportMetadataJson}
+                </button>
+              </div>
+            )}
+
+            {showSpriteTuningControls && (
+              <div className="metadata-panel">
+                <h3>{copy.metadata}</h3>
+                <label>
+                  {copy.anchorX}
+                  <input
+                    type="number"
+                    value={activeAction.anchor.x}
+                    onChange={(event) => updateActiveAction({ anchor: { ...activeAction.anchor, x: Number(event.target.value) } })}
+                  />
+                </label>
+                <label>
+                  {copy.anchorY}
+                  <input
+                    type="number"
+                    value={activeAction.anchor.y}
+                    onChange={(event) => updateActiveAction({ anchor: { ...activeAction.anchor, y: Number(event.target.value) } })}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        </section>
+        )}
+      </main>
+
+      <CodexLogPanel
+        logs={codexJobLogs}
+        jobs={codexJobs}
+        collapsed={codexLogsCollapsed}
+        fullscreen={codexLogsFullscreen}
+        language={language}
+        onToggle={() => setCodexLogsCollapsed((current) => !current)}
+        onEnterFullscreen={enterCodexLogsFullscreen}
+        onExitFullscreen={() => setCodexLogsFullscreen(false)}
+      />
+
+      <footer className="statusbar">
+        <span className="live-dot" />
+        <span>{status}</span>
+        <span className="spacer" />
+        <Archive size={15} aria-hidden="true" />
+        <span>{copy.localWorkspace}</span>
+      </footer>
+
+      {showPromptExamples && (
+        <PromptExamplesModal
+          language={language}
+          onClose={closePromptExamples}
+          onCopy={copyPromptExample}
+          onUseQuick={useQuickPrompt}
+          onUse={usePromptExample}
+        />
+      )}
+      {showAnimationPresetExamples && (
+        <AnimationPresetExamplesModal
+          language={language}
+          favoriteIds={favoriteAnimationPresetIds}
+          recentIds={recentAnimationPresetIds}
+          onClose={closeAnimationPresetExamples}
+          onUse={useAnimationPresetExample}
+          onToggleFavorite={toggleFavoriteAnimationPreset}
+        />
+      )}
+      {animationReviewManifest && (
+        <AnimationReviewCockpit
+          language={language === "ja" ? "ja" : "en"}
+          manifest={animationReviewManifest}
+          candidates={animationReviewCandidates}
+          frameCount={animationReviewFrameCount}
+          sourceDataUrl={animationReviewSourceDataUrl}
+          initialReview={animationReviewManifest.humanReview}
+          initialDirection={animationReviewManifest.pilotMode ? animationReviewManifest.pilotDirection : undefined}
+          loading={animationReviewLoading}
+          adoptDisabled={animationReviewManifest.pilotMode && animationReviewManifest.state === "pilot-review" && activeCodexRunnerCount >= MAX_ACTIVE_CODEX_JOBS}
+          adoptDisabledReason={animationReviewManifest.pilotMode && animationReviewManifest.state === "pilot-review" && activeCodexRunnerCount >= MAX_ACTIVE_CODEX_JOBS
+            ? `Runner slots are full (${activeCodexRunnerCount}/${MAX_ACTIVE_CODEX_JOBS}). Pilot expansion will remain in review until a slot is free.`
+            : undefined}
+          onClose={closeAnimationReviewCockpit}
+          onSaveReview={saveAnimationHumanReview}
+          onAdopt={adoptAnimationReviewWinner}
+          onRepairDirection={repairAnimationReviewDirection}
+        />
+      )}
+      {showVfxCompositeStage && vfxCompositeCharacters.length > 0 && vfxCompositeEffects.length > 0 && (
+        <VfxCompositeStage
+          language={language}
+          characters={vfxCompositeCharacters}
+          effects={vfxCompositeEffects}
+          frames={frames}
+          initialCharacterId={selected && vfxCompositeCharacters.some((item) => item.id === selected.id) ? selected.id : undefined}
+          initialEffectId={selected && vfxCompositeEffects.some((item) => item.id === selected.id) ? selected.id : undefined}
+          onClose={closeVfxCompositeStage}
+          onOpenHistoryResult={openVfxSourceResult}
+          onStatus={setStatus}
+        />
+      )}
+      {downloadModalOpen && (
+        <DownloadOptionsModal
+          language={language}
+          selectedName={selected?.name ?? copy.imageDownloadTitle}
+          isAnimation={resultDownloadIsAnimation}
+          isEffect={resultDownloadIsEffect}
+          body={resultDownloadBody}
+          status={resultDownloadStatus}
+          imageReady={selectedImageDownloadReady}
+          animationReady={selectedAnimationExportReady}
+          effectReady={selectedEffectExportReady && selectedFinalDownloadAllowed}
+          onClose={() => setDownloadModalOpen(false)}
+          onDownloadImage={downloadSelectedImage}
+          onExportGif={() => void exportDirectionalAnimations("gif")}
+          onExportWebp={() => void exportDirectionalAnimations("webp")}
+          onExportApng={() => void exportDirectionalAnimations("apng")}
+          onExportSpriteSheet={() => void exportSpriteSheet(frames, selectedAnimationAction, selectedAnimationFramesPerDirection)}
+          onEditTimeline={openAnimationTimelineEditor}
+          onExportAnimationPack={openSelectedAnimationPackExportModal}
+          onExportEffectGif={() => void exportSelectedEffectGif()}
+          onExportEffectApng={() => void exportSelectedEffectApng()}
+          onExportEffectSheet={() => void exportSelectedEffectSheet()}
+          onExportEffectFramesZip={() => void exportSelectedEffectFramesZip()}
+          onExportEffectMetadata={exportSelectedEffectMetadata}
+          onExportEffectPack={() => void exportSelectedEffectPack()}
+        />
+      )}
+      {showAnimationPackExportModal && (
+        <AnimationPackExportModal
+          language={language}
+          draft={animationPackExportDraft}
+          onChange={setAnimationPackExportDraft}
+          onClose={() => setShowAnimationPackExportModal(false)}
+          onExport={() => void exportSelectedAnimationPack()}
+        />
+      )}
+      {animationTimelineEditor && (
+        <AnimationTimelineEditorModal
+          language={language}
+          session={animationTimelineEditor}
+          onClose={() => setAnimationTimelineEditor(null)}
+          onSave={saveAnimationTimelinePack}
+          onExport={(pack) => void exportSelectedAnimationPackV2(pack)}
+          onExportEngine={exportAnimationEngineMetadata}
+          onRoundTrip={verifyAnimationPackV2RoundTrip}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsModal
+          activeTab={settingsTab}
+          language={language}
+          report={environmentReport}
+          cockpitHealth={cockpitHealth}
+          runnerPreflight={runnerPreflight}
+          storageScreen={storageScreen}
+          storageClearState={storageClearState}
+          copyStatus={settingsCopyStatus}
+          recovering={isRecoveringOutboxResults}
+          repairing={isCockpitRepairing}
+          deduping={isDedupingHistory}
+          onTabChange={setSettingsTab}
+          onClose={closeSettings}
+          onOpenSafeMode={openStorageSafeMode}
+          onOpenNormalMode={openStorageNormalMode}
+          onOpenResetPage={openStaticResetPage}
+          onClear={clearLocalStateScope}
+          onDedupeHistory={() => void dedupeLocalInboxHistoryNow()}
+          onDiagnose={() => void runCockpitHealthCheck()}
+          onRecover={() => void recoverUnimportedOutboxResults()}
+          onRepair={() => void repairCockpit()}
+          onCopyMarkdown={() => void copyEnvironmentReport("markdown")}
+          onCopyJson={() => void copyEnvironmentReport("json")}
+        />
+      )}
+    </div>
+  );
+
+  function canvasPoint(event: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH,
+      y: ((event.clientY - rect.top) / rect.height) * CANVAS_HEIGHT
+    };
+  }
+}
+
+function PanelTitle({ index, title }: { index: string; title: string }) {
+  return (
+    <div className="panel-title">
+      <strong>{index}. {title}</strong>
+    </div>
+  );
+}
+
+function SettingsModal({
+  activeTab,
+  language,
+  report,
+  cockpitHealth,
+  runnerPreflight,
+  storageScreen,
+  storageClearState,
+  copyStatus,
+  recovering,
+  repairing,
+  deduping,
+  onTabChange,
+  onClose,
+  onOpenSafeMode,
+  onOpenNormalMode,
+  onOpenResetPage,
+  onClear,
+  onDedupeHistory,
+  onDiagnose,
+  onRecover,
+  onRepair,
+  onCopyMarkdown,
+  onCopyJson
+}: {
+  activeTab: SettingsTab;
+  language: Language;
+  report: EnvironmentReport;
+  cockpitHealth: CockpitHealthReport;
+  runnerPreflight: CodexRunnerPreflight | null;
+  storageScreen: LocalStateScreenState;
+  storageClearState: { scope?: LocalStateResetScope; message?: string; error?: string };
+  copyStatus?: string;
+  recovering: boolean;
+  repairing: boolean;
+  deduping: boolean;
+  onTabChange: (tab: SettingsTab) => void;
+  onClose: () => void;
+  onOpenSafeMode: () => void;
+  onOpenNormalMode: () => void;
+  onOpenResetPage: () => void;
+  onClear: (scope: LocalStateResetScope) => void;
+  onDedupeHistory: () => void;
+  onDiagnose: () => void;
+  onRecover: () => void;
+  onRepair: () => void;
+  onCopyMarkdown: () => void;
+  onCopyJson: () => void;
+}) {
+  const isJa = language === "ja";
+  const labels = {
+    title: isJa ? "設定" : "Settings",
+    subtitle: isJa ? "復旧、診断、環境レポートをここに集約します。" : "Recovery, diagnostics, and environment reporting live here.",
+    general: isJa ? "一般" : "General",
+    recovery: isJa ? "復旧" : "Recovery",
+    diagnostics: isJa ? "診断" : "Diagnostics",
+    environment: isJa ? "環境レポート" : "Environment Report",
+    safe: isJa ? "Safe modeで開く" : "Open Safe Mode",
+    normal: isJa ? "通常URLで開く" : "Open Normal URL",
+    reset: isJa ? "Reset local stateを開く" : "Open Reset Local State",
+    diagnose: isJa ? "診断" : "Diagnose",
+    recover: isJa ? "結果を再取り込み" : "Recover Results",
+    repair: isJa ? "Cockpitを修復" : "Repair Cockpit",
+    dedupe: isJa ? "重複履歴を整理" : "Dedupe History",
+    clearHistory: isJa ? "履歴を削除" : "Clear History",
+    clearFrames: isJa ? "フレームを削除" : "Clear Frames",
+    clearLibrary: isJa ? "Animation libraryを削除" : "Clear Animation Library",
+    clearAll: isJa ? "全ローカル状態を削除" : "Clear All Local State",
+    copyMarkdown: isJa ? "Markdownをコピー" : "Copy Markdown",
+    copyJson: isJa ? "JSONをコピー" : "Copy JSON",
+    refresh: isJa ? "更新" : "Refresh",
+    close: isJa ? "閉じる" : "Close"
+  };
+  const tabOptions: Array<{ id: SettingsTab; label: string }> = [
+    { id: "general", label: labels.general },
+    { id: "recovery", label: labels.recovery },
+    { id: "diagnostics", label: labels.diagnostics },
+    { id: "environment", label: labels.environment }
+  ];
+  const markdown = report.markdown;
+  const json = JSON.stringify(report.json, null, 2);
+  return (
+    <div className="settings-modal-backdrop" role="presentation">
+      <section className="settings-modal" role="dialog" aria-modal="true" aria-label={labels.title}>
+        <header className="settings-modal-header">
+          <span>
+            <Settings size={18} aria-hidden="true" />
+            <strong>{labels.title}</strong>
+            <small>{labels.subtitle}</small>
+          </span>
+          <button className="icon-button" onClick={onClose} aria-label={labels.close} title={labels.close}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <nav className="settings-tabs" aria-label={labels.title}>
+          {tabOptions.map((tab) => (
+            <button key={tab.id} className={activeTab === tab.id ? "active" : ""} onClick={() => onTabChange(tab.id)}>
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        {activeTab === "general" && (
+          <div className="settings-section">
+            <article className="settings-card">
+              <small>Image Cockpit</small>
+              <strong>v0.2.1</strong>
+              <span>{isJa ? "ChatGPTの画像生成可否と、ローカルCodex runner内でimagegenを使えるかは別の状態です。" : "ChatGPT image generation availability and local Codex runner imagegen availability are separate states."}</span>
+            </article>
+            <article className="settings-card">
+              <small>{isJa ? "現在の状態" : "Current state"}</small>
+              <strong>{cockpitHealth.message}</strong>
+              <span>Runner: {runnerPreflight?.state ?? cockpitHealth.api?.runner.state ?? "unknown"} / Storage: {storageScreen.preflight?.pressure ?? storageScreen.mode}</span>
+            </article>
+          </div>
+        )}
+
+        {activeTab === "recovery" && (
+          <div className="settings-section">
+            <div className="settings-action-grid">
+              <button className="secondary-button" onClick={onOpenSafeMode}>
+                <ShieldIcon />
+                {labels.safe}
+              </button>
+              <button className="secondary-button" onClick={onOpenNormalMode}>
+                <ArrowRight size={16} aria-hidden="true" />
+                {labels.normal}
+              </button>
+              <button className="secondary-button" onClick={onOpenResetPage}>
+                <Trash2 size={16} aria-hidden="true" />
+                {labels.reset}
+              </button>
+              <button className="secondary-button" onClick={onRecover} disabled={recovering || cockpitHealth.state === "broken"}>
+                <Archive size={16} aria-hidden="true" />
+                {labels.recover}
+              </button>
+              <button className="secondary-button" onClick={onDedupeHistory} disabled={deduping}>
+                <Scissors size={16} aria-hidden="true" />
+                {labels.dedupe}
+              </button>
+              <button className="secondary-button" onClick={onRepair} disabled={repairing || !cockpitHealth.repairAvailable}>
+                <Settings size={16} aria-hidden="true" />
+                {labels.repair}
+              </button>
+              <button className="secondary-button" onClick={onDiagnose}>
+                <RefreshCw size={16} aria-hidden="true" />
+                {labels.diagnose}
+              </button>
+            </div>
+            <div className="settings-danger-zone">
+              <button className="secondary-button" onClick={() => onClear("history")} disabled={storageClearState.scope === "history"}>{labels.clearHistory}</button>
+              <button className="secondary-button" onClick={() => onClear("frames")} disabled={storageClearState.scope === "frames"}>{labels.clearFrames}</button>
+              <button className="secondary-button" onClick={() => onClear("animation-library")} disabled={storageClearState.scope === "animation-library"}>{labels.clearLibrary}</button>
+              <button className="secondary-button storage-danger-button" onClick={() => onClear("all")} disabled={storageClearState.scope === "all"}>{labels.clearAll}</button>
+            </div>
+            {(storageClearState.message || storageClearState.error) && (
+              <p className={storageClearState.error ? "settings-error" : "settings-note"}>
+                {storageClearState.error ?? storageClearState.message}
+              </p>
+            )}
+          </div>
+        )}
+
+        {activeTab === "diagnostics" && (
+          <div className="settings-section">
+            <CockpitHealthPanel
+              report={cockpitHealth}
+              language={language}
+              repairing={repairing}
+              recovering={recovering}
+              onRefresh={onDiagnose}
+              onRecover={onRecover}
+              onRepair={onRepair}
+            />
+            <article className="settings-card">
+              <small>Codex Runner</small>
+              <strong>{runnerPreflight?.state ?? cockpitHealth.api?.runner.state ?? "unknown"}</strong>
+              <span>{runnerPreflight?.setupHint ?? runnerPreflight?.message ?? cockpitHealth.api?.runner.message ?? "No runner detail available."}</span>
+            </article>
+          </div>
+        )}
+
+        {activeTab === "environment" && (
+          <div className="settings-section environment-report-section">
+            <div className="settings-report-actions">
+              <button className="secondary-button" onClick={onCopyMarkdown}>
+                <Copy size={16} aria-hidden="true" />
+                {labels.copyMarkdown}
+              </button>
+              <button className="secondary-button" onClick={onCopyJson}>
+                <FileJson size={16} aria-hidden="true" />
+                {labels.copyJson}
+              </button>
+              <button className="secondary-button" onClick={onDiagnose}>
+                <RefreshCw size={16} aria-hidden="true" />
+                {labels.refresh}
+              </button>
+              {copyStatus && <span className="settings-copy-status">{copyStatus}</span>}
+            </div>
+            <div className="environment-report-grid">
+              <article>
+                <strong>Markdown</strong>
+                <pre>{markdown}</pre>
+              </article>
+              <article>
+                <strong>JSON</strong>
+                <pre>{json}</pre>
+              </article>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function LocalStateRecoveryScreen({
+  mode,
+  preflight,
+  summaries,
+  message,
+  error,
+  runnerLabel,
+  runnerState,
+  clearingScope,
+  clearMessage,
+  clearError,
+  onOpenSafeMode,
+  onOpenNormalMode,
+  onOpenLocalhostOrigin,
+  onForceLoad,
+  onClear,
+  onDedupeHistory
+}: {
+  mode: LocalStateScreenMode;
+  preflight?: LocalStateStoragePreflight;
+  summaries?: { history: LocalStateSummary | null; frames: LocalStateSummary | null };
+  message?: string;
+  error?: string;
+  runnerLabel: string;
+  runnerState: CodexRunnerPreflight["state"];
+  clearingScope?: LocalStateResetScope;
+  clearMessage?: string;
+  clearError?: string;
+  onOpenSafeMode: () => void;
+  onOpenNormalMode: () => void;
+  onOpenLocalhostOrigin: () => void;
+  onForceLoad: () => void;
+  onClear: (scope: LocalStateResetScope) => void;
+  onDedupeHistory: () => void;
+}) {
+  const title =
+    mode === "checking"
+      ? "Checking local browser state"
+      : mode === "safe"
+        ? "Local state safe mode"
+        : mode === "reset"
+          ? "Local state reset"
+          : mode === "reset-complete"
+            ? "Local state reset complete"
+            : "Local state recovery";
+  const detail =
+    mode === "checking"
+      ? "Image Cockpit is checking origin storage before reading IndexedDB."
+      : mode === "safe"
+        ? "Large history, frames, and animation library state were not loaded."
+        : mode === "reset"
+          ? "Choose a reset action. Browser state is cleared only after confirmation."
+          : mode === "reset-complete"
+            ? "Image Cockpit browser local state has been cleared for this origin."
+            : "Origin storage is above the safe startup threshold, so large local state was skipped.";
+  const usage = formatStorageBytes(preflight?.estimate?.usage);
+  const quota = formatStorageBytes(preflight?.estimate?.quota);
+  const historySummary = summaries?.history;
+  const framesSummary = summaries?.frames;
+  const canForceLoad = mode === "recovery" || mode === "safe";
+
+  return (
+    <div className="app-shell storage-recovery-shell">
+      <header className="topbar">
+        <div className="brand">
+          <Grid3X3 size={18} aria-hidden="true" />
+          <strong>Image Cockpit for Codex Workflows</strong>
+          <span>Storage recovery</span>
+          <small>v0.2.1</small>
+        </div>
+      </header>
+
+      <main className="storage-recovery-main">
+        <section className={`storage-recovery-panel ${mode}`}>
+          <div className="storage-recovery-heading">
+            {mode === "reset-complete" ? <CheckCircle2 size={28} aria-hidden="true" /> : <AlertTriangle size={28} aria-hidden="true" />}
+            <div>
+              <small>Local State Recovery</small>
+              <h1>{title}</h1>
+              <p>{detail}</p>
+            </div>
+          </div>
+
+          <div className="storage-metric-grid">
+            <div>
+              <small>Origin storage</small>
+              <strong>{usage}</strong>
+              <span>Quota: {quota}</span>
+            </div>
+            <div>
+              <small>Startup threshold</small>
+              <strong>{preflight?.pressure ?? "checking"}</strong>
+              <span>Warning 200 MB / Auto safe 500 MB / Hard block 1 GB</span>
+            </div>
+            <div>
+              <small>Codex runner</small>
+              <strong className={`runner-pill runner-${runnerState}`}>
+                <Plug size={14} aria-hidden="true" />
+                {runnerLabel}
+              </strong>
+              <span>Server checks stay available while local state is skipped.</span>
+            </div>
+          </div>
+
+          <div className="storage-summary-grid">
+            <LocalStateSummaryCard title="History summary" summary={historySummary} />
+            <LocalStateSummaryCard title="Frames summary" summary={framesSummary} />
+          </div>
+
+          {(message || error || clearMessage || clearError) && (
+            <div className={`storage-recovery-message ${error || clearError ? "error" : ""}`}>
+              {error || clearError || message || clearMessage}
+            </div>
+          )}
+
+          <div className="storage-action-grid">
+            <button className="primary-button" onClick={onOpenSafeMode}>
+              <ShieldIcon />
+              Safe modeで開く
+            </button>
+            <button className="secondary-button" onClick={onOpenNormalMode}>
+              <RefreshCw size={16} aria-hidden="true" />
+              通常起動へ戻る / export
+            </button>
+            <button className="secondary-button" onClick={onOpenLocalhostOrigin}>
+              <ArrowRight size={16} aria-hidden="true" />
+              localhostで新規origin
+            </button>
+            <button className="secondary-button storage-danger-button" onClick={onForceLoad} disabled={!canForceLoad}>
+              <AlertTriangle size={16} aria-hidden="true" />
+              危険を理解して読み込む
+            </button>
+          </div>
+
+          <div className="storage-reset-panel">
+            <div>
+              <strong>Reset browser local state</strong>
+              <span>These actions never delete repository files, codex-handoff/outbox, docs/qa, or generated PNG files.</span>
+            </div>
+            <div className="storage-reset-grid">
+              <button className="secondary-button" onClick={onDedupeHistory} disabled={clearingScope === "history"}>
+                <Scissors size={16} aria-hidden="true" />
+                重複した取り込み履歴を整理
+              </button>
+              <button className="secondary-button" onClick={() => onClear("history")} disabled={clearingScope === "history"}>
+                <Trash2 size={16} aria-hidden="true" />
+                Clear history
+              </button>
+              <button className="secondary-button" onClick={() => onClear("frames")} disabled={clearingScope === "frames"}>
+                <Trash2 size={16} aria-hidden="true" />
+                Clear frames
+              </button>
+              <button className="secondary-button" onClick={() => onClear("animation-library")} disabled={clearingScope === "animation-library"}>
+                <Trash2 size={16} aria-hidden="true" />
+                Clear animation library
+              </button>
+              <button className="secondary-button storage-danger-button" onClick={() => onClear("all")} disabled={clearingScope === "all"}>
+                <Trash2 size={16} aria-hidden="true" />
+                Clear all local Image Cockpit state
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="statusbar">
+        <span className="live-dot" />
+        <span>{message || clearMessage || "Large browser local state has not been loaded."}</span>
+        <span className="spacer" />
+        <Archive size={15} aria-hidden="true" />
+        <span>Local workspace</span>
+      </footer>
+    </div>
+  );
+}
+
+function LocalStateSummaryCard({ title, summary }: { title: string; summary: LocalStateSummary | null | undefined }) {
+  return (
+    <article className="storage-summary-card">
+      <small>{title}</small>
+      <strong>{summary ? `${summary.persistedCount}/${summary.count} items` : "No summary"}</strong>
+      <span>{summary ? `${formatStorageBytes(summary.approxBytes)} retained, largest ${formatStorageBytes(summary.largestItemBytes)}` : "No retained local summary was found."}</span>
+      {summary && <em>{summary.retentionPolicy}</em>}
+    </article>
+  );
+}
+
+function ShieldIcon() {
+  return <CheckCircle2 size={16} aria-hidden="true" />;
+}
+
+function localStateResetScopeLabel(scope: LocalStateResetScope) {
+  if (scope === "history") return "history";
+  if (scope === "frames") return "frames";
+  if (scope === "animation-library") return "animation library";
+  if (scope === "actions") return "actions";
+  return "all local Image Cockpit state";
+}
+
+function selectedImageSafeBaseName(item: Pick<HistoryItem, "name">) {
+  const baseName = item.name.replace(/\.[^.]+$/, "") || "image-cockpit-result";
+  return baseName.replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-");
+}
+
+function formatEffectHistoryTitle(metadata: EffectAnimationMetadata, language: Language) {
+  const category = effectCategoryDefinitions.find((item) => item.id === metadata.category);
+  const label = category ? localizedText(category.label, language) : formatEffectSlugForDisplay(metadata.category);
+  return `Effect: ${label}`;
+}
+
+function formatEffectHistoryMeta(metadata: EffectAnimationMetadata) {
+  const frameSize = metadata.frameSize?.width && metadata.frameSize.height
+    ? `${metadata.frameSize.width}px`
+    : "";
+  return [
+    metadata.qualityRank.toUpperCase(),
+    `${metadata.frameCount}f`,
+    frameSize
+  ].filter(Boolean).join(" / ");
+}
+
+function formatEffectSlugForDisplay(value: string) {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Effect";
+}
+
+function isUsableHistoryDownloadItem(item: Pick<HistoryItem, "name" | "outboxImportKey" | "effectAnimation">) {
+  if (item.effectAnimation && !effectQualityRankAllowsDownload(item.effectAnimation.qualityRank)) return false;
+  const name = normalizeOutboxResultNameForFiltering(item.name);
+  const importKey = item.outboxImportKey?.toLowerCase() ?? "";
+  return !(
+    name.includes("bronze-candidate") ||
+    name.includes("candidate-contact") ||
+    name.includes("preview-grid") ||
+    name.includes("contact-sheet") ||
+    hasDebugOutboxResultMarker(name) ||
+    hasQaOutboxResultMarker(name) ||
+    importKey.startsWith("bronze-candidate:") ||
+    importKey.includes(":bronze-candidate")
+  );
+}
+
+function createAnimationPackExportDraft(overrides: Partial<AnimationPackExportDraft> = {}): AnimationPackExportDraft {
+  return {
+    title: "",
+    tags: "character, sprite",
+    license: "user-controlled",
+    sourceNote: "",
+    promptSummary: "",
+    includePromptSummary: false,
+    ...overrides
+  };
+}
+
+function buildSelectedAnimationPackManifest({
+  draft,
+  selected,
+  action,
+  grid,
+  directions
+}: {
+  draft: AnimationPackExportDraft;
+  selected: HistoryItem;
+  action: SpriteAction;
+  grid: GridSettings;
+  directions: string[];
+}): AnimationPackManifest {
+  const title = draft.title.trim() || selected.name.replace(/\.[^.]+$/, "") || action.name;
+  const resolvedDirections = directions.length > 0 ? directions : ANIMATION_DIRECTIONS;
+  return {
+    schema: "image-cockpit.animation.v1",
+    title,
+    kind: "user",
+    action: action.name,
+    directions: resolvedDirections,
+    grid,
+    cell: action.cell,
+    framesPerDirection: grid.columns,
+    playback: action.playbackMode ?? "normal",
+    createdAt: new Date().toISOString(),
+    createdWith: "Image Cockpit for Codex Workflows",
+    license: draft.license.trim(),
+    sourceNote: draft.sourceNote.trim(),
+    promptSummary: draft.includePromptSummary ? draft.promptSummary.trim() : "",
+    tags: parseTagList(draft.tags),
+    motionRecipe: selected.motionRecipe ?? motionRecipeReference(resolveMotionRecipe({ actionName: action.name }).recipe),
+    files: animationPackFileSet(resolvedDirections)
+  };
+}
+
+function animationPackFileSet(directions: string[] = ANIMATION_DIRECTIONS): AnimationPackManifest["files"] {
+  return {
+    sheet: "sheet.png",
+    previewGif: "preview.gif",
+    previewWebp: "preview.webp",
+    previewApng: "preview.apng",
+    directionPreviews: directions.map((direction) => ({
+      direction,
+      gif: `previews/${safeAnimationDirectionFileName(direction)}.gif`,
+      webp: `previews/${safeAnimationDirectionFileName(direction)}.webp`,
+      apng: `previews/${safeAnimationDirectionFileName(direction)}.apng`
+    })),
+    metadata: "metadata.json"
+  };
+}
+
+function animationPackMetadata(
+  manifest: AnimationPackManifest,
+  details: { libraryKind: AnimationLibraryKind; sourceNote: string }
+) {
+  return {
+    schema: manifest.schema,
+    title: manifest.title,
+    kind: details.libraryKind,
+    action: manifest.action,
+    exportedAt: new Date().toISOString(),
+    createdWith: manifest.createdWith,
+    directions: manifest.directions,
+    grid: manifest.grid,
+    cell: manifest.cell,
+    framesPerDirection: manifest.framesPerDirection,
+    playback: manifest.playback ?? "normal",
+    tags: manifest.tags ?? [],
+    license: manifest.license ?? "",
+    sourceNote: details.sourceNote,
+    promptSummaryIncluded: Boolean(manifest.promptSummary),
+    motionRecipe: manifest.motionRecipe
+  };
+}
+
+function parseTagList(tags: string) {
+  return tags
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+export function buildAnimationManifestPreviewActions(manifest: AnimationPackManifest, frames: SpriteFrame[]) {
+  const directions = manifest.directions.length > 0 ? manifest.directions : ANIMATION_DIRECTIONS;
+  return directions.map((directionId, index) => {
+    const rowStart = index * manifest.framesPerDirection;
+    const rowFrames = frames.slice(rowStart, rowStart + manifest.framesPerDirection);
+    return {
+      directionId,
+      action: actionFromAnimationManifest(manifest, rowFrames.map((frame) => frame.id))
+    };
+  }).filter((preview) => preview.action.frameIds.length > 0);
+}
+
+async function createDirectionPreviewBlobs(
+  frames: SpriteFrame[],
+  previews: Array<{ directionId: string; action: SpriteAction }>
+) {
+  return Promise.all(
+    previews.map(async ({ directionId, action }) => ({
+      direction: directionId,
+      gif: await createGifBlob(frames, action),
+      webp: await createAnimatedWebpBlob(frames, action),
+      apng: await createApngBlob(frames, action)
+    }))
+  );
+}
+
+function actionFromAnimationManifest(manifest: AnimationPackManifest, frameIds: string[]): SpriteAction {
+  const fallback = defaultActions.find((action) => action.name === manifest.action);
+  return {
+    name: manifest.action,
+    fps: fallback?.fps ?? (manifest.action === "run" ? 20 : 12),
+    loop: true,
+    playbackMode: manifest.playback === "ping-pong-reverse" ? "ping-pong-reverse" : undefined,
+    frameIds,
+    cell: manifest.cell,
+    anchor: animationExportAnchor(manifest.cell.width, manifest.cell.height)
+  };
+}
+
+function upsertSpriteAction(actions: SpriteAction[], nextAction: SpriteAction) {
+  return actions.some((action) => action.name === nextAction.name)
+    ? actions.map((action) => (action.name === nextAction.name ? nextAction : action))
+    : [...actions, nextAction];
+}
+
+function safeAnimationFileBaseName(title: string, action: string) {
+  return `${title || action || "animation"}`
+    .replace(/\.[^.]+$/, "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "image-cockpit-animation";
+}
+
+function safeAnimationDirectionFileName(direction: string) {
+  return direction
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "") || "direction";
+}
+
+async function resolveImageSourceDataUrl(source: string) {
+  if (source.startsWith("data:")) return source;
+  const image = await loadImage(source);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, image.naturalWidth || image.width);
+  canvas.height = Math.max(1, image.naturalHeight || image.height);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not read animation sheet image.");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
+function SectionLabel({ title }: { title: string }) {
+  return <h2 className="section-label">{title}</h2>;
+}
+
+function LanguageSelect({
+  language,
+  label,
+  onChange
+}: {
+  language: Language;
+  label: string;
+  onChange: (language: Language) => void;
+}) {
+  return (
+    <label className="language-control" title={label}>
+      <Languages size={15} aria-hidden="true" />
+      <span>{label}</span>
+      <select aria-label={label} value={language} onChange={(event) => onChange(event.target.value as Language)}>
+        {languageOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function useCodexProgressNow(active: boolean) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) return;
+    setNowMs(Date.now());
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), CODEX_PROGRESS_TICK_MS);
+    return () => window.clearInterval(intervalId);
+  }, [active]);
+
+  return nowMs;
+}
+
+function codexProgressPhaseLabel(labels: ReturnType<typeof codexJobQueueLabels>, phase: CodexJobProgressPhase) {
+  if (phase === "queued") return labels.phaseQueued;
+  if (phase === "starting") return labels.phaseStarting;
+  if (phase === "checking") return labels.phaseChecking;
+  if (phase === "extended") return labels.phaseExtended;
+  return labels.phaseGenerating;
+}
+
+function CodexJobProgress({
+  job,
+  labels,
+  compact = false
+}: {
+  job: Pick<CodexJobQueueItem, "state" | "createdAt" | "workflowMode">;
+  labels: ReturnType<typeof codexJobQueueLabels>;
+  compact?: boolean;
+}) {
+  const active = job.state === "running" || job.state === "queued";
+  const nowMs = useCodexProgressNow(active);
+  if (!active) return null;
+
+  const phase = codexJobProgressPhase(job.state, job.createdAt, nowMs, job.workflowMode);
+  const phaseLabel = codexProgressPhaseLabel(labels, phase);
+  const elapsed = formatDurationSinceAt(job.createdAt, nowMs);
+  const progress = job.state === "queued" ? 6 : estimateCodexJobProgress(job.createdAt, nowMs, job.workflowMode);
+  const progressStyle = { "--codex-progress-value": `${progress}%` } as CSSProperties;
+  const valueText = `${phaseLabel}, ${labels.elapsed}: ${elapsed}`;
+
+  return (
+    <div className={`codex-progress-meter ${compact ? "compact" : ""} state-${job.state}`}>
+      {!compact && (
+        <div className="codex-progress-copy">
+          <span>{phaseLabel}</span>
+          <span>{labels.elapsed}: {elapsed}</span>
+        </div>
+      )}
+      <div className="codex-progress-track" role="progressbar" aria-label={labels.progressLabel} aria-valuetext={valueText}>
+        <span className="codex-progress-fill" style={progressStyle} />
+      </div>
+    </div>
+  );
+}
+
+function CodexJobShelf({
+  jobs,
+  maxActive,
+  language
+}: {
+  jobs: CodexJobQueueItem[];
+  maxActive: number;
+  language: Language;
+}) {
+  const labels = codexJobQueueLabels(language);
+  const runningCount = jobs.filter((job) => job.state === "running").length;
+
+  return (
+    <section className="codex-job-shelf" aria-label={labels.title}>
+      <div className="codex-job-shelf-heading">
+        <strong>{labels.title}</strong>
+        <span>{labels.activeSlots} {runningCount}/{maxActive}</span>
+      </div>
+      <div className="codex-job-list">
+        {jobs.map((job) => (
+          <div className="codex-job-row" key={job.id}>
+            <span className={`codex-job-state ${job.state}`}>
+              {job.state === "running" ? labels.running : job.state === "evaluating" ? labels.evaluating : labels.queued}
+            </span>
+            <strong>{job.label}</strong>
+            <small>{job.state === "running" ? job.id : job.state === "evaluating" ? labels.waitingForTournament : labels.waitingForSlot}</small>
+            {job.state === "running" && <CodexJobProgress job={job} labels={labels} />}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CodexLogPanel({
+  logs,
+  jobs,
+  collapsed,
+  fullscreen,
+  language,
+  onToggle,
+  onEnterFullscreen,
+  onExitFullscreen
+}: {
+  logs: CodexJobLogItem[];
+  jobs: CodexJobQueueItem[];
+  collapsed: boolean;
+  fullscreen: boolean;
+  language: Language;
+  onToggle: () => void;
+  onEnterFullscreen: () => void;
+  onExitFullscreen: () => void;
+}) {
+  const copy = uiCopy[language];
+  const labels = codexJobQueueLabels(language);
+  const runningCount = jobs.filter((job) => job.state === "running").length;
+  const firstRunningJob = jobs.find((job) => job.state === "running");
+  const jobsById = useMemo(() => new Map(jobs.map((job) => [job.id, job])), [jobs]);
+  const hasContent = logs.length > 0 || jobs.length > 0;
+  const visibleLogs = logs.length > 0
+    ? logs
+    : jobs.slice(0, CODEX_LOG_HISTORY_LIMIT).map((job) => createCodexJobLogItem(job, undefined, job.state));
+  const visibleLogSignature = visibleLogs
+    .map((log) => `${log.jobId}:${log.state}:${log.readAt}:${log.modifiedAt}:${log.size}:${log.error ? "error" : ""}`)
+    .join("|");
+  const codexLogPreRefs = useRef(new Map<string, HTMLPreElement>());
+  const codexLogAutoScrollRef = useRef(new Map<string, boolean>());
+  const previousFullscreenRef = useRef(fullscreen);
+
+  const setCodexLogPreRef = useCallback((jobId: string, node: HTMLPreElement | null) => {
+    if (!node) {
+      codexLogPreRefs.current.delete(jobId);
+      return;
+    }
+    codexLogPreRefs.current.set(jobId, node);
+    if (!codexLogAutoScrollRef.current.has(jobId)) {
+      codexLogAutoScrollRef.current.set(jobId, true);
+    }
+  }, []);
+
+  const handleCodexLogScroll = useCallback((jobId: string, event: UIEvent<HTMLPreElement>) => {
+    const target = event.currentTarget;
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    codexLogAutoScrollRef.current.set(jobId, distanceFromBottom < 24);
+  }, []);
+
+  useEffect(() => {
+    const fullscreenChanged = previousFullscreenRef.current !== fullscreen;
+    previousFullscreenRef.current = fullscreen;
+    const visibleJobIds = new Set(visibleLogs.map((log) => log.jobId));
+    Array.from(codexLogAutoScrollRef.current.keys()).forEach((jobId) => {
+      if (!visibleJobIds.has(jobId)) {
+        codexLogAutoScrollRef.current.delete(jobId);
+      }
+    });
+    const frame = window.requestAnimationFrame(() => {
+      visibleLogs.forEach((log) => {
+        const pre = codexLogPreRefs.current.get(log.jobId);
+        if (!pre) return;
+        const shouldAutoScroll = fullscreenChanged || (codexLogAutoScrollRef.current.get(log.jobId) ?? true);
+        if (!shouldAutoScroll) return;
+        pre.scrollTop = pre.scrollHeight;
+        codexLogAutoScrollRef.current.set(log.jobId, true);
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [fullscreen, visibleLogSignature]);
+
+  if (!hasContent) return null;
+
+  return (
+    <section className={`codex-log-panel ${collapsed ? "collapsed" : ""} ${fullscreen ? "fullscreen" : ""}`} aria-label={copy.codexLogTitle}>
+      <div className="codex-log-header">
+        <span>
+          <Terminal size={15} aria-hidden="true" />
+          <strong>{copy.codexLogTitle}</strong>
+          <small>{copy.codexLogLive}</small>
+        </span>
+        <span className="codex-log-meta">
+          <em>{runningCount}/{MAX_ACTIVE_CODEX_JOBS}</em>
+          <button
+            className="secondary-button mini icon-button codex-log-fullscreen-button"
+            onClick={fullscreen ? onExitFullscreen : onEnterFullscreen}
+            aria-label={fullscreen ? copy.codexLogExitFullscreen : copy.codexLogFullscreen}
+            title={fullscreen ? copy.codexLogExitFullscreen : copy.codexLogFullscreen}
+          >
+            {fullscreen ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+          </button>
+          <button className="secondary-button mini" onClick={onToggle}>
+            {collapsed ? copy.codexLogExpand : copy.codexLogCollapse}
+          </button>
+        </span>
+        {firstRunningJob && <CodexJobProgress job={firstRunningJob} labels={labels} compact />}
+      </div>
+      {!collapsed && (
+        <div className="codex-log-list">
+          {visibleLogs.map((log) => {
+            const activeJob = jobsById.get(log.jobId);
+            const showProgress = activeJob?.state === "running";
+            return (
+              <article className={`codex-log-card state-${log.state}`} key={log.jobId}>
+                <div className="codex-log-card-heading">
+                  <span className={`codex-job-state ${log.state === "queued" ? "queued" : "running"}`}>
+                    {log.state}
+                  </span>
+                  <strong>{log.label}</strong>
+                  <small>{log.jobId}</small>
+                </div>
+                <div className="codex-log-card-meta">
+                  <span>{copy.codexLogElapsed}: {formatDurationSince(log.createdAt)}</span>
+                  <span>{copy.codexLogUpdated}: {log.modifiedAt ? formatTime(log.modifiedAt) : "-"}</span>
+                  {log.truncated && <span>{copy.codexLogTruncated}</span>}
+                </div>
+                <div className="codex-log-progress-slot">
+                  {showProgress && <CodexJobProgress job={activeJob} labels={labels} />}
+                </div>
+                <pre
+                  ref={(node) => setCodexLogPreRef(log.jobId, node)}
+                  onScroll={(event) => handleCodexLogScroll(log.jobId, event)}
+                >
+                  {log.error || log.text || (log.exists ? copy.codexLogNoOutput : copy.codexLogWaiting)}
+                </pre>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CockpitHealthPanel({
+  report,
+  language,
+  repairing,
+  recovering,
+  onRefresh,
+  onRecover,
+  onRepair
+}: {
+  report: CockpitHealthReport;
+  language: Language;
+  repairing: boolean;
+  recovering: boolean;
+  onRefresh: () => void;
+  onRecover: () => void;
+  onRepair: () => void;
+}) {
+  const stateLabel =
+    report.state === "ok"
+      ? "OK"
+      : report.state === "warning"
+        ? "Warning"
+        : report.state === "broken"
+          ? "Broken"
+          : report.state === "repairing"
+            ? "Repairing"
+            : "Checking";
+  const apiLabel = report.api ? `API ${report.api.port}` : "API mismatch";
+  const runnerLabel = report.api?.runner.state ?? "unknown";
+  const supervisorLabel = report.supervisor ? `Supervisor ${report.supervisor.supervisor.port}` : "Supervisor off";
+  const recoverLabel = language === "ja" ? "結果を再取り込み" : "Recover Results";
+  const repairLabel = language === "ja" ? "Cockpitを修復" : "Repair Cockpit";
+  const refreshLabel = language === "ja" ? "診断" : "Diagnose";
+  return (
+    <section className={`cockpit-health-panel state-${report.state}`}>
+      <div className="cockpit-health-main">
+        <strong>
+          {report.state === "ok" ? <CheckCircle2 size={15} aria-hidden="true" /> : <CircleAlert size={15} aria-hidden="true" />}
+          Cockpit: {stateLabel}
+        </strong>
+        <span>{report.message}</span>
+        <small>
+          {apiLabel} / Runner {runnerLabel} / {supervisorLabel}
+          {report.unimportedResults > 0 ? ` / ${report.unimportedResults} unimported` : ""}
+        </small>
+      </div>
+      <div className="cockpit-health-actions">
+        <button className="secondary-button mini" onClick={onRefresh} disabled={report.state === "checking" || repairing}>
+          <RefreshCw size={14} aria-hidden="true" />
+          {refreshLabel}
+        </button>
+        <button className="secondary-button mini" onClick={onRecover} disabled={recovering || report.state === "broken"}>
+          <Archive size={14} aria-hidden="true" />
+          {recoverLabel}
+        </button>
+        <button className="secondary-button mini" onClick={onRepair} disabled={repairing || !report.repairAvailable}>
+          <Settings size={14} aria-hidden="true" />
+          {repairLabel}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CodexFailureCard({
+  notice,
+  language,
+  onRetryImport
+}: {
+  notice: CodexFailureNotice;
+  language: Language;
+  onRetryImport?: (notice: CodexFailureNotice) => void;
+}) {
+  const copy = uiCopy[language];
+  const failure = codexFailureDisplay(notice.diagnostic.kind, copy, notice.diagnostic);
+  const canRetryImport = notice.diagnostic.kind === "import_failed" && Boolean(onRetryImport);
+  return (
+    <article className={`codex-failure-card ${notice.diagnostic.kind}`}>
+      <div className="codex-failure-icon">
+        <AlertTriangle size={17} aria-hidden="true" />
+      </div>
+      <span>
+        <strong>{failure.title}</strong>
+        <small>{formatTime(notice.createdAt)} • {notice.jobId}</small>
+        <small>{notice.label}</small>
+        <em>{failure.message}</em>
+        <small>{copy.codexFailureRetryHint}: {failure.suggestion}</small>
+        {canRetryImport && (
+          <button className="secondary-button mini" onClick={() => onRetryImport?.(notice)}>
+            {copy.codexFailureRetryImport}
+          </button>
+        )}
+      </span>
+    </article>
+  );
+}
+
+function codexFailureDisplay(kind: CodexFailureKind, copy: Record<string, string>, diagnostic?: CodexJobDiagnostic) {
+  if (kind === "policy_or_safety") {
+    return {
+      title: copy.codexFailureTitle,
+      message: copy.codexFailurePolicyMessage,
+      suggestion: copy.codexFailurePolicySuggestion
+    };
+  }
+  if (kind === "imagegen_unavailable") {
+    return {
+      title: copy.codexFailureImagegenUnavailableTitle,
+      message: copy.codexFailureImagegenUnavailableMessage,
+      suggestion: copy.codexFailureImagegenUnavailableSuggestion
+    };
+  }
+  if (kind === "usage_limit") {
+    return {
+      title: copy.codexFailureUsageLimitTitle || diagnostic?.title || copy.codexFailureRunnerFailedTitle,
+      message: copy.codexFailureUsageLimitMessage || diagnostic?.userMessage || copy.codexFailureRunnerFailedMessage,
+      suggestion: copy.codexFailureUsageLimitSuggestion || diagnostic?.suggestion || copy.codexFailureRunnerFailedSuggestion
+    };
+  }
+  if (kind === "runner_failed") {
+    return {
+      title: copy.codexFailureRunnerFailedTitle,
+      message: copy.codexFailureRunnerFailedMessage,
+      suggestion: copy.codexFailureRunnerFailedSuggestion
+    };
+  }
+  if (kind === "import_failed") {
+    return {
+      title: diagnostic?.title || copy.codexFailureImportFailedTitle,
+      message: diagnostic?.userMessage || copy.codexFailureImportFailedMessage,
+      suggestion: diagnostic?.suggestion || copy.codexFailureImportFailedSuggestion
+    };
+  }
+  if (kind === "no_image_returned") {
+    return {
+      title: copy.codexFailureNoImageTitle,
+      message: copy.codexFailureNoImageMessage,
+      suggestion: copy.codexFailureNoImageSuggestion
+    };
+  }
+  return {
+    title: copy.codexFailureTitle,
+    message: copy.codexFailureUnknownMessage,
+    suggestion: copy.codexFailureUnknownSuggestion
+  };
+}
+
+function PrimaryActionIcon({ providerId, isBusy }: { providerId: ProviderId; isBusy: boolean }) {
+  if (isBusy) return <Loader2 className="spin" size={17} aria-hidden="true" />;
+  if (providerId === "local-file") return <Upload size={17} aria-hidden="true" />;
+  if (providerId === "local-inbox") return <Archive size={17} aria-hidden="true" />;
+  return <ImagePlus size={17} aria-hidden="true" />;
+}
+
+function primaryActionLabel(
+  providerId: ProviderId,
+  workflowMode: WorkflowMode | null,
+  copy: Record<string, string>,
+  isWaitingForCodexResult = false
+) {
+  if (providerId === "local-generator" && workflowMode === "sprite-generate") return copy.generateLocalSprite;
+  if (providerId === "local-generator") return copy.generateLocalImage;
+  if (providerId === "codex-handoff" && isWaitingForCodexResult) return copy.waitingForCodexResult;
+  if (providerId === "codex-handoff" && workflowMode === "image-generate") return copy.generateLocalImage;
+  if (providerId === "codex-handoff" && workflowMode === "image-edit") return copy.editImage;
+  if (providerId === "codex-handoff") return copy.createCodexJob;
+  if (providerId === "local-inbox") return copy.importLatest;
+  return copy.importFile;
+}
+
+function codexJobQueueLabels(language: Language) {
+  return codexJobQueueCopy[language];
+}
+
+const codexJobQueueCopyBase = {
+  title: "Codex Jobs",
+  activeSlots: "Active",
+  running: "Running",
+  queued: "Queued",
+  evaluating: "Evaluating",
+  progressLabel: "Codex job progress",
+  elapsed: "Elapsed",
+  phaseQueued: "Queued",
+  phaseStarting: "Starting",
+  phaseGenerating: "Generating",
+  phaseChecking: "Checking output",
+  phaseExtended: "Still working",
+  waitingForSlot: "Waiting for an open slot",
+  waitingForTournament: "Runner slot released; comparing tournament candidates",
+  queueAction: "Queue Codex Job",
+  queuedStatus: "Codex job queued"
+};
+
+const codexJobQueueCopy = {
+  en: {
+    title: "Codex Jobs",
+    activeSlots: "Active",
+    running: "Running",
+    queued: "Queued",
+    evaluating: "Evaluating",
+    progressLabel: "Codex job progress",
+    elapsed: "Elapsed",
+    phaseQueued: "Queued",
+    phaseStarting: "Starting",
+    phaseGenerating: "Generating",
+    phaseChecking: "Checking output",
+    phaseExtended: "Still working",
+    waitingForSlot: "Waiting for an open slot",
+    waitingForTournament: "Runner slot released; comparing tournament candidates",
+    queueAction: "Queue Codex Job",
+    queuedStatus: "Codex job queued"
+  },
+  ja: {
+    title: "Codexジョブ",
+    activeSlots: "実行枠",
+    running: "実行中",
+    queued: "待機中",
+    evaluating: "評価中",
+    progressLabel: "Codexジョブ進行目安",
+    elapsed: "経過",
+    phaseQueued: "待機中",
+    phaseStarting: "起動中",
+    phaseGenerating: "生成中",
+    phaseChecking: "出力確認中",
+    phaseExtended: "生成継続中",
+    waitingForSlot: "空き枠待ち",
+    waitingForTournament: "実行枠を解放し、候補比較を待っています",
+    queueAction: "キューに追加",
+    queuedStatus: "Codexキューに追加しました"
+  },
+  "zh-CN": withCodexJobQueueCopy({ title: "Codex 作业", activeSlots: "执行槽", running: "运行中", queued: "排队中", waitingForSlot: "等待空槽", queueAction: "加入队列", queuedStatus: "Codex 作业已排队" }),
+  "zh-TW": withCodexJobQueueCopy({ title: "Codex 作業", activeSlots: "執行槽", running: "執行中", queued: "排隊中", waitingForSlot: "等待空位", queueAction: "加入佇列", queuedStatus: "Codex 作業已加入佇列" }),
+  ko: withCodexJobQueueCopy({ title: "Codex 작업", activeSlots: "실행 슬롯", running: "실행 중", queued: "대기 중", waitingForSlot: "빈 슬롯 대기", queueAction: "대기열에 추가", queuedStatus: "Codex 작업을 대기열에 추가했습니다" }),
+  ru: withCodexJobQueueCopy({ title: "Задания Codex", activeSlots: "Слоты", running: "Выполняется", queued: "В очереди", waitingForSlot: "Ожидание свободного слота", queueAction: "Поставить в очередь", queuedStatus: "Задание Codex в очереди" }),
+  es: withCodexJobQueueCopy({ title: "Trabajos Codex", activeSlots: "Activos", running: "En ejecución", queued: "En cola", waitingForSlot: "Esperando un hueco", queueAction: "Poner en cola", queuedStatus: "Trabajo Codex en cola" }),
+  "pt-BR": withCodexJobQueueCopy({ title: "Jobs Codex", activeSlots: "Ativos", running: "Executando", queued: "Na fila", waitingForSlot: "Aguardando vaga", queueAction: "Adicionar à fila", queuedStatus: "Job Codex na fila" }),
+  de: withCodexJobQueueCopy({ title: "Codex-Jobs", activeSlots: "Aktiv", running: "Läuft", queued: "Wartet", waitingForSlot: "Warten auf freien Slot", queueAction: "Job einreihen", queuedStatus: "Codex-Job eingereiht" }),
+  fr: withCodexJobQueueCopy({ title: "Tâches Codex", activeSlots: "Actives", running: "En cours", queued: "En file", waitingForSlot: "En attente d'un créneau", queueAction: "Mettre en file", queuedStatus: "Tâche Codex en file" }),
+  id: withCodexJobQueueCopy({ title: "Job Codex", activeSlots: "Aktif", running: "Berjalan", queued: "Antre", waitingForSlot: "Menunggu slot kosong", queueAction: "Masukkan antrean", queuedStatus: "Job Codex masuk antrean" }),
+  tr: withCodexJobQueueCopy({ title: "Codex işleri", activeSlots: "Aktif", running: "Çalışıyor", queued: "Sırada", waitingForSlot: "Boş slot bekleniyor", queueAction: "Sıraya ekle", queuedStatus: "Codex işi sıraya eklendi" }),
+  vi: withCodexJobQueueCopy({ title: "Job Codex", activeSlots: "Đang chạy", running: "Đang chạy", queued: "Đang chờ", waitingForSlot: "Chờ ô trống", queueAction: "Thêm vào hàng chờ", queuedStatus: "Job Codex đã vào hàng chờ" }),
+  pl: withCodexJobQueueCopy({ title: "Zadania Codex", activeSlots: "Aktywne", running: "Działa", queued: "W kolejce", waitingForSlot: "Czeka na slot", queueAction: "Dodaj do kolejki", queuedStatus: "Zadanie Codex w kolejce" }),
+  it: withCodexJobQueueCopy({ title: "Job Codex", activeSlots: "Attivi", running: "In esecuzione", queued: "In coda", waitingForSlot: "In attesa di uno slot", queueAction: "Metti in coda", queuedStatus: "Job Codex in coda" })
+} satisfies Record<Language, typeof codexJobQueueCopyBase>;
+
+function withCodexJobQueueCopy(overrides: Partial<typeof codexJobQueueCopyBase>) {
+  return { ...codexJobQueueCopyBase, ...overrides };
+}
+
+function codexJobLabel(mode: WorkflowMode | null, prompt: string, actionName?: string) {
+  const shortPrompt = prompt.trim().replace(/\s+/g, " ").slice(0, 54);
+  if (mode === "sprite-generate") return `Animation: ${actionName ?? "motion"}${shortPrompt ? ` / ${shortPrompt}` : ""}`;
+  if (mode === "effect-animation") return `Effect: ${actionName ?? "VFX"}${shortPrompt ? ` / ${shortPrompt}` : ""}`;
+  if (mode === "image-generate") return shortPrompt ? `Pixel Art: ${shortPrompt}` : "Pixel Art Generation";
+  if (mode === "image-edit") return shortPrompt ? `Image Edit: ${shortPrompt}` : "Image Edit";
+  if (mode === "sprite-edit") return shortPrompt ? `Sprite Edit: ${shortPrompt}` : "Sprite Edit";
+  return shortPrompt || "Codex Job";
+}
+
+function buildImageEditCodexPrompt({
+  prompt,
+  sourceName,
+  annotations
+}: {
+  prompt: string;
+  sourceName: string;
+  annotations: Annotation[];
+}) {
+  const basePrompt = prompt.trim() || "Edit the selected image according to the numbered region comments.";
+  const regionLines = annotations.length > 0
+    ? annotations.map(formatAnnotationInstruction).join("\n")
+    : "- No numbered regions were selected. Apply only the general edit prompt and job notes.";
+
+  return [
+    basePrompt,
+    "",
+    `Source image: ${sourceName || "selected image asset"}.`,
+    "Use the selected source image as the edit base.",
+    "Apply only the requested edits while preserving the rest of the image.",
+    "Preserve the original canvas size and aspect ratio.",
+    "Keep the full character visible, including head, hair, hands, equipment, and both feet.",
+    "Do not zoom in, crop, or reframe the image into a portrait/detail shot.",
+    "Treat the base image as the exact source to edit, not inspiration for a new variant.",
+    "Preserve transparency when present; if transparency cannot be preserved, use a flat chroma fallback background.",
+    "Return the edited image as a real PNG or WebP with the job id filename prefix.",
+    "",
+    "Numbered edit regions:",
+    regionLines
+  ].join("\n");
+}
+
+function buildImageEditCodexNotes({
+  userNotes,
+  annotations
+}: {
+  userNotes: string;
+  annotations: Annotation[];
+}) {
+  const regionNotes = annotations.length > 0
+    ? annotations.map(formatAnnotationInstruction).join("\n")
+    : "- No numbered regions were selected.";
+  return [
+    userNotes.trim(),
+    "",
+    "Image edit region comments:",
+    regionNotes,
+    "",
+    "Keep unrelated pixels unchanged when possible. Only change requested regions unless the general edit prompt explicitly requires a global adjustment.",
+    "Preserve the original canvas size and aspect ratio. Do not zoom in, crop, or reframe the image into a portrait/detail shot.",
+    "Keep the full character visible, including head, hair, hands, equipment, and both feet.",
+    "Treat the base image as the exact source to edit, not inspiration for a new variant.",
+    "Preserve transparency when present; if transparency cannot be preserved, use a flat chroma fallback background.",
+    "Do not add labels, watermarks, or UI text unless a region comment explicitly asks for text."
+  ]
+    .filter((line, index) => index > 0 || line.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function formatAnnotationInstruction(annotation: Annotation) {
+  const rect = annotationRect(annotation);
+  const number = annotation.number ?? 0;
+  const comment = annotation.comment?.trim() || "(no comment yet)";
+  const imageCoordinates = formatAnnotationImageCoordinates(annotation);
+  return `- #${number}: ${comment} [canvas rect x=${Math.round(rect.x)}, y=${Math.round(rect.y)}, w=${Math.round(rect.width)}, h=${Math.round(rect.height)}${imageCoordinates}]`;
+}
+
+function annotationRect(annotation: Annotation) {
+  const [start, end = start] = annotation.points;
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  return { x, y, width, height };
+}
+
+function annotationWithSourceImageCoordinates(annotation: Annotation, sourceImage: HistoryItem): Annotation {
+  const imageSize = parseHistoryImageSize(sourceImage.size);
+  if (!imageSize) return annotation;
+  return { ...annotation, ...annotationImageCoordinates(annotation, imageSize) };
+}
+
+function parseHistoryImageSize(size: string): ImageSizeCoordinates | null {
+  const match = size.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width, height };
+}
+
+function formatAnnotationImageCoordinates(annotation: Annotation) {
+  const fields: string[] = [];
+  if (annotation.imageRectNormalized) {
+    fields.push(`source image normalized x=${formatCoordinate(annotation.imageRectNormalized.x)}, y=${formatCoordinate(annotation.imageRectNormalized.y)}, w=${formatCoordinate(annotation.imageRectNormalized.width)}, h=${formatCoordinate(annotation.imageRectNormalized.height)}`);
+  }
+  if (annotation.imageRectPixels) {
+    fields.push(`source image pixels x=${formatCoordinate(annotation.imageRectPixels.x)}, y=${formatCoordinate(annotation.imageRectPixels.y)}, w=${formatCoordinate(annotation.imageRectPixels.width)}, h=${formatCoordinate(annotation.imageRectPixels.height)}`);
+  }
+  if (annotation.displayedImageRect) {
+    fields.push(`displayed image rect x=${formatCoordinate(annotation.displayedImageRect.x)}, y=${formatCoordinate(annotation.displayedImageRect.y)}, w=${formatCoordinate(annotation.displayedImageRect.width)}, h=${formatCoordinate(annotation.displayedImageRect.height)}`);
+  }
+  if (annotation.sourceImageNaturalSize) {
+    fields.push(`source image size ${Math.round(annotation.sourceImageNaturalSize.width)}x${Math.round(annotation.sourceImageNaturalSize.height)}`);
+  }
+  if (typeof annotation.imageRectClamped === "boolean") {
+    fields.push(`clampedToImage=${annotation.imageRectClamped ? "yes" : "no"}`);
+  }
+  return fields.length > 0 ? `; ${fields.join("; ")}` : "";
+}
+
+function formatCoordinate(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function renumberAnnotations(annotations: Annotation[]) {
+  return annotations.map((annotation, index) => ({ ...annotation, number: index + 1 }));
+}
+
+function buildAnimationDirectionPreviewActions(
+  action: SpriteAction,
+  actionFrames: SpriteFrame[],
+  directions?: readonly string[],
+  framesPerDirection: number = ANIMATION_FRAME_COUNT
+) {
+  const safeFramesPerDirection = MOTION_FRAME_COUNTS.includes(framesPerDirection as MotionFrameCount) ? framesPerDirection : ANIMATION_FRAME_COUNT;
+  const directionCount =
+    actionFrames.length >= safeFramesPerDirection * ANIMATION_DIRECTION_COUNT
+      ? ANIMATION_DIRECTION_COUNT
+      : Math.max(1, Math.ceil(actionFrames.length / safeFramesPerDirection));
+  const directionIds = directions && directions.length === directionCount ? directions : ANIMATION_DIRECTIONS;
+
+  return Array.from({ length: directionCount }, (_, index) => {
+    const directionId = directionIds[index] ?? `direction-${index + 1}`;
+    const rowFrames = actionFrames.slice(index * safeFramesPerDirection, (index + 1) * safeFramesPerDirection);
+    return {
+      directionId,
+      action: {
+        ...action,
+        name: `${action.name}_${directionId.replace(/\s+/g, "-")}`,
+        frameIds: rowFrames.map((frame) => frame.id)
+      }
+    };
+  }).filter((preview) => preview.action.frameIds.length > 0);
+}
+
+function buildHatchPetStatePreviewActions(action: SpriteAction, actionFrames: SpriteFrame[]) {
+  return HATCH_PET_STATE_ROWS.map((state, rowIndex) => {
+    const rowStart = rowIndex * HATCH_PET_GRID.columns;
+    const rowFrames = actionFrames.slice(rowStart, rowStart + state.frames);
+    return {
+      directionId: state.id,
+      action: {
+        ...action,
+        name: `${action.name}_${state.id}`,
+        fps: state.id === "idle" || state.id === "waiting" || state.id === "review" ? 6 : 8,
+        frameIds: rowFrames.map((frame) => frame.id)
+      }
+    };
+  }).filter((preview) => preview.action.frameIds.length > 0);
+}
+
+function buildDirectionalHatchPetPreviewActions(action: SpriteAction, actionFrames: SpriteFrame[]) {
+  const framesPerDirection = HATCH_PET_GRID.columns * HATCH_PET_GRID.rows;
+  return ANIMATION_DIRECTIONS.map((directionId, directionIndex) => {
+    const directionStart = directionIndex * framesPerDirection;
+    const stateStart = directionStart;
+    const rowFrames = actionFrames.slice(stateStart, stateStart + DIRECTIONAL_HATCH_PET_PRIMARY_STATE.frames);
+    return {
+      directionId,
+      action: {
+        ...action,
+        name: `${action.name}_${directionId.replace(/\s+/g, "-")}_${DIRECTIONAL_HATCH_PET_PRIMARY_STATE.id}`,
+        fps: 6,
+        frameIds: rowFrames.map((frame) => frame.id)
+      }
+    };
+  }).filter((preview) => preview.action.frameIds.length > 0);
+}
+
+function animationDirectionLabel(directionId: string, language: Language) {
+  const labels = uiCopy[language] as Record<string, string>;
+  const direction = canonicalAnimationDirection(directionId) ?? directionId;
+  if (direction === "front") return labels.previewFront;
+  if (direction === "back") return labels.previewBack;
+  if (direction === "back three-quarter") return labels.previewBackThreeQuarter;
+  if (direction === "front three-quarter") return labels.previewFrontThreeQuarter;
+  if (direction === "side") return labels.previewSide;
+  return directionId;
+}
+
+export function isAnimationResultHistoryItem(item?: Pick<HistoryItem, "name" | "outboxImportKey" | "source" | "effectAnimation">): boolean {
+  if (!item) return false;
+  if (isEffectAnimationHistoryItem(item)) return false;
+  const name = normalizeOutboxResultNameForFiltering(item.name);
+  const importKey = item.outboxImportKey?.toLowerCase() ?? "";
+  return (
+    name.endsWith("-direction-split-animation-sheet.png") ||
+    importKey.startsWith("direction-split:") ||
+    importKey.startsWith("animation-sheet:") ||
+    importKey.startsWith("bronze-candidate:")
+  );
+}
+
+export function isEffectAnimationHistoryItem(item?: Pick<HistoryItem, "name" | "outboxImportKey" | "effectAnimation">): boolean {
+  if (!item) return false;
+  const importKey = item.outboxImportKey?.toLowerCase() ?? "";
+  return item.effectAnimation?.kind === "effect-animation" || importKey.startsWith("effect-animation:");
+}
+
+export function isAnimationSource(item?: HistoryItem): item is HistoryItem {
+  return Boolean(item && item.source !== "sample" && !isAnimationResultHistoryItem(item) && !isEffectAnimationHistoryItem(item));
+}
+
+function animationResultNotSourceMessage(item: Pick<HistoryItem, "name">, language: Language) {
+  if (language === "ja") {
+    return `生成済みアニメーション結果は次の素体sourceにできません。元の素体画像を選び直してください: ${item.name}`;
+  }
+  return `Generated animation results cannot be used as the next body source. Select the original body image again: ${item.name}`;
+}
+
+async function chooseAnimationChromaKey(sourceDataUrl: string) {
+  const character = await createTransparentAnimationSource(sourceDataUrl);
+  const context = character.getContext("2d", { willReadFrequently: true });
+  if (!context) {
+    return { key: animationChromaKeys.green, reason: "Could not inspect source colors; defaulted to green." };
+  }
+
+  const imageData = context.getImageData(0, 0, character.width, character.height);
+  const data = imageData.data;
+  let opaque = 0;
+  let greenPixels = 0;
+
+  for (let offset = 0; offset < data.length; offset += 4) {
+    if (data[offset + 3] <= 24) continue;
+    opaque += 1;
+    if (isCharacterGreenPixel(data, offset)) greenPixels += 1;
+  }
+
+  const ratio = opaque > 0 ? greenPixels / opaque : 0;
+  if (greenPixels >= 160 && ratio >= 0.008) {
+    return {
+      key: animationChromaKeys.magenta,
+      reason: `Detected green in the extracted character (${Math.round(ratio * 1000) / 10}% of opaque pixels), so magenta was selected.`
+    };
+  }
+
+  return {
+    key: animationChromaKeys.green,
+    reason: "No meaningful green was detected in the extracted character, so green was selected."
+  };
+}
+
+function buildAnimationCodexPrompt({
+  sourceName,
+  motionPrompt,
+  actionName,
+  chromaKey,
+  cell,
+  directions = ANIMATION_DIRECTIONS,
+  frameCount = ANIMATION_FRAME_COUNT,
+  directionImageGrid = DIRECTION_SPLIT_ANIMATION_GRID,
+  bodyTopology = "biped"
+}: {
+  sourceName: string;
+  motionPrompt: string;
+  actionName: string;
+  chromaKey: AnimationChromaKey;
+  cell: SpriteAction["cell"];
+  directions?: readonly string[];
+  frameCount?: MotionFrameCount;
+  directionImageGrid?: GridSettings;
+  bodyTopology?: BodyTopologyId;
+}) {
+  const motion = motionPrompt.trim() || actionName;
+  const directionCountWord = directions.length === 1 ? "one" : String(directions.length);
+  const topologyProfile = getBodyTopologyProfile(bodyTopology);
+  const contactLabel = topologyProfile.groundContactParts.length > 0
+    ? topologyProfile.groundContactParts.join(" or ")
+    : topologyProfile.contactQaDimension;
+  return [
+    "このキャラクターをデフォルメして、方向別アニメーション素材として画像生成してほしい。",
+    `Use the uploaded source image "${sourceName}" as the character reference.`,
+    `Extract only the single character and create a direction-split pixel-art animation set of that same character ${motion}.`,
+    `Do not return one combined ${directions.length}x${frameCount} sheet for the standard animation workflow. Return ${directionCountWord} separate direction image${directions.length === 1 ? "" : "s"}, and Image Cockpit will compose the final ${frameCount}x${directions.length} sheet after import.`,
+    `Each direction image must be exactly ${cell.width * directionImageGrid.columns}x${cell.height * directionImageGrid.rows}px: ${directionImageGrid.columns} columns x ${directionImageGrid.rows} rows, no gutters, no extra outer margin, exactly ${frameCount} populated cells.`,
+    `Required directions and file suffixes: ${directions.map((direction) => `${direction}=${animationDirectionSlug(direction)}`).join(", ")}. Do not generate directions that are not listed.`,
+    `Each cell must be exactly ${cell.width}x${cell.height} pixels. Fill frames in row-major order until all ${frameCount} frames are populated.`,
+    `Every cell must contain exactly one complete ${bodyTopology} character, centered inside that cell, with the full head, body, topology-specific support parts, tail, wings, held item, compact effect, and silhouette visible when present.`,
+    `Keep at least 24 pixels of empty chroma-key padding inside every cell around the complete silhouette. Never enlarge the character, prop, or effect to fill the cell.`,
+    `Keep the character root and ${contactLabel} measurement coherent across all ${frameCount} frames; use ${topologyProfile.contactQaDimension} QA instead of inventing humanoid feet.`,
+    "Do not crop the head, body-contact arc, paws, legs, tail, wings, held item, weapon, projectile, or effects. Do not let any part cross cell borders.",
+    "Use consistent character scale, baseline, foot contact point, silhouette size, palette, outfit, and pixel density across all direction images.",
+    "Hard consistency requirement across all requested direction images: keep the same chibi body proportions, same head-to-body ratio, same head size, same limb thickness, same outfit colors, same clothing layers, and same prop design. Do not redesign any direction or make one direction older, younger, more realistic, differently dressed, or scaled differently than the others.",
+    ...(bodyTopology === "biped"
+      ? animationScaleConsistencyContractLines(directions)
+      : ["Topology scale consistency contract: preserve the same head, torso, body length, limb or support-part thickness, tail or wing scale, palette, pixel density, and prop size across all directions and poses; never auto-fit a lower or wider pose to fill the cell."]),
+    `Prefer a transparent background in every cell. If true transparency is not available during generation, use a flat ${chromaKey.label} background (${chromaKey.hex}) in every cell; do not use black, white, gradients, scenery, shadows, UI, text, logos, watermarks, letters, or numbers.`,
+    `If you add a temporary guide grid, use a temporary 1-pixel pure cyan #00FFFF guide grid only on the exact ${directionImageGrid.columns}x${directionImageGrid.rows} cell boundaries for each direction image; no labels, numbers, text, UI, or decorative borders.`,
+    `Quality gate before returning: inspect all ${directions.length * frameCount} cells and regenerate if any cell is cropped, has missing topology-specific support/contact parts, has a cut-off head, contains duplicated anatomy, has a different character, or uses a non-flat background.`,
+    `Return exactly these direction files using the real job id prefix: ${directionSplitAnimationFileSet("<job-id>", directions).join(", ")}.`,
+    `Also return <job-id>-manifest.json with schema "${DIRECTION_SPLIT_ANIMATION_SCHEMA}".`
+  ].join(" ");
+}
+
+function buildAnimationCodexNotes({
+  userNotes,
+  chromaKey,
+  chromaReason,
+  grid,
+  cell,
+  directions = ANIMATION_DIRECTIONS,
+  frameCount = ANIMATION_FRAME_COUNT,
+  directionImageGrid = DIRECTION_SPLIT_ANIMATION_GRID,
+  bodyTopology = "biped"
+}: {
+  userNotes: string;
+  chromaKey: AnimationChromaKey;
+  chromaReason: string;
+  grid: GridSettings;
+  cell: SpriteAction["cell"];
+  directions?: readonly string[];
+  frameCount?: MotionFrameCount;
+  directionImageGrid?: GridSettings;
+  bodyTopology?: BodyTopologyId;
+}) {
+  const topologyProfile = getBodyTopologyProfile(bodyTopology);
+  const scaleReference = animationScaleReferenceLabel(directions);
+  return [
+    userNotes.trim(),
+    `Animation sprite workflow: generate ${directions.length} source-image-driven direction image${directions.length === 1 ? "" : "s"} through Codex imagegen / built-in image_gen, then Image Cockpit will remove the ${chromaKey.label} background and compose the final sheet.`,
+    `Chroma key decision: ${chromaKey.name} ${chromaKey.hex}. ${chromaReason}`,
+    `Final app sheet layout after import: ${grid.columns} columns x ${grid.rows} rows, ${cell.width}x${cell.height} per cell.`,
+    `Raw returned direction layout: ${directionImageGrid.columns} columns x ${directionImageGrid.rows} rows per direction image, ${cell.width}x${cell.height} per cell, ${frameCount} populated frames.`,
+    `Required direction files: ${directionSplitAnimationFileSet("<job-id>", directions).join(", ")}.`,
+    `Manifest schema: ${DIRECTION_SPLIT_ANIMATION_SCHEMA}; include directions, files, grid, cell, and framesPerDirection=${frameCount}.`,
+    `Body topology contract: ${bodyTopology}; contact QA=${topologyProfile.contactQaDimension}; footlineApplicable=${topologyProfile.footlineApplicable ? "yes" : "no"}.`,
+    "Cell QA is mandatory: one complete character per cell, consistent root, topology-appropriate contact or hover measure, stable scale, at least 24px inner padding, no cropping, no duplicated anatomy, and no parts or effects crossing cell borders.",
+    "Scale consistency QA is mandatory: compare every direction and frame against the " + scaleReference + ", and reject any result where a direction or lower pose was auto-enlarged to fill the cell.",
+    ...(bodyTopology === "biped"
+      ? animationScaleConsistencyContractLines(directions)
+      : ["Topology scale QA is mandatory: compare head, torso, body length, support-part thickness, tail or wing scale, and prop size against the source; lower or wider poses must not be auto-enlarged."]),
+    "The generated sheet should keep the chroma key background simple and flat so the app can remove it reliably.",
+    `Temporary guide grid: pure cyan #00FFFF on exact ${directionImageGrid.columns}x${directionImageGrid.rows} direction-image cell boundaries only. Image Cockpit removes those guide pixels before slicing/export.`
+  ].filter(Boolean).join("\n");
+}
+
+function buildHatchPetCodexPrompt({
+  sourceName,
+  motionPrompt,
+  chromaKey
+}: {
+  sourceName: string;
+  motionPrompt: string;
+  chromaKey: AnimationChromaKey;
+}) {
+  const concept = motionPrompt.trim() || "make this uploaded character into a compact Codex pet with calm idle, movement, waiting, working, failed, and review states";
+  return [
+    `Use the uploaded source image "${sourceName}" as the canonical character reference.`,
+    "Try the installed hatch-pet workflow for a Codex-compatible custom pet atlas.",
+    "If the hatch-pet skill is available, use its deterministic scripts for run preparation, atlas geometry, validation, contact sheet, and preview generation.",
+    "Use Codex imagegen / built-in image_gen only through the hatch-pet or imagegen workflow for visual generation; do not call external APIs directly.",
+    `Pet concept and motion guidance: ${concept}.`,
+    "Create the same character across the full Codex pet state contract: idle, running-right, running-left, waving, jumping, failed, waiting, running, review.",
+    `Final atlas must be 8 columns x 9 rows, 1536x1872 pixels total, ${HATCH_PET_CELL.width}x${HATCH_PET_CELL.height} per cell, transparent background, transparent unused cells.`,
+    `Use ${chromaKey.label} (${chromaKey.hex}) only as a temporary removable row-generation background when needed; the final atlas should be transparent.`,
+    "Keep a canonical base identity first, then generate each row from that identity so face, body shape, palette, outfit, prop design, and pixel density stay consistent.",
+    "Avoid text, logos, UI, scenery, shadows, speed lines, detached effects, cropped parts, repeated guide marks, white backgrounds, black backgrounds, and nontransparent residue.",
+    "Before returning, inspect the contact sheet and row previews. Reject identity drift, cropped bodies, missing feet, wrong state semantics, static idle, and size popping.",
+    "Return the final spritesheet PNG or WebP to the outbox using the job id filename prefix. If pet.json is produced, return it as a sidecar too."
+  ].join(" ");
+}
+
+function buildHatchPetCodexNotes({
+  userNotes,
+  chromaKey,
+  chromaReason
+}: {
+  userNotes: string;
+  chromaKey: AnimationChromaKey;
+  chromaReason: string;
+}) {
+  return [
+    userNotes.trim(),
+    "Experimental hatch-pet sprite workflow: create a Codex pet atlas from the selected source image, using the local hatch-pet skill/scripts when available.",
+    "Reference process: first lock a canonical base identity, then generate row strips, validate frames, compose the atlas, and visually QA the contact sheet/previews.",
+    `Expected atlas: ${HATCH_PET_GRID.columns} columns x ${HATCH_PET_GRID.rows} rows, ${HATCH_PET_CELL.width}x${HATCH_PET_CELL.height} per cell, 1536x1872 total.`,
+    `Rows and intended frame counts: ${HATCH_PET_STATE_ROWS.map((row) => `${row.id}=${row.frames}`).join(", ")}.`,
+    `Temporary chroma-key decision: ${chromaKey.name} ${chromaKey.hex}. ${chromaReason}`,
+    "Final output should be transparent PNG/WebP, with unused cells fully transparent and no hidden colored residue.",
+    "Return at least the final spritesheet image to the outbox with the job id filename prefix; include pet.json as a sidecar when available."
+  ].filter(Boolean).join("\n");
+}
+
+function buildDirectionalHatchPetCodexPrompt({
+  sourceName,
+  motionPrompt,
+  chromaKey
+}: {
+  sourceName: string;
+  motionPrompt: string;
+  chromaKey: AnimationChromaKey;
+}) {
+  const concept = motionPrompt.trim() || "make this uploaded character into a five-direction Codex pet atlas set with clear idle-ready movement";
+  return [
+    `Use the uploaded source image "${sourceName}" as the canonical character reference.`,
+    "Create a 5-direction hatch-pet set: one separate Codex pet atlas for each direction.",
+    `Required directions and filename suffixes: ${ANIMATION_DIRECTIONS.map((direction, index) => `direction-${String(index + 1).padStart(2, "0")}-${direction.replace(/\s+/g, "-")}`).join(", ")}.`,
+    "For each direction, try the installed hatch-pet workflow/scripts when available: canonical identity lock, row-strip generation, atlas composition, validation, contact sheet, and preview generation.",
+    "Do not return only one giant combined sheet. Return five final spritesheet PNG/WebP files, each using the job id filename prefix plus its direction suffix.",
+    `Pet concept and motion guidance: ${concept}.`,
+    "Each direction atlas must contain the same Codex pet state contract: idle, running-right, running-left, waving, jumping, failed, waiting, running, review.",
+    `Each atlas must be 8 columns x 9 rows, 1536x1872 pixels total, ${HATCH_PET_CELL.width}x${HATCH_PET_CELL.height} per cell, transparent background, transparent unused cells.`,
+    `Use ${chromaKey.label} (${chromaKey.hex}) only as a temporary removable row-generation background when needed; final atlases should be transparent.`,
+    "Keep identity consistent across all five directions: face, body shape, palette, outfit, prop design, outline thickness, and pixel density must match.",
+    "Avoid text, logos, UI, scenery, shadows, speed lines, detached effects, cropped parts, repeated guide marks, white backgrounds, black backgrounds, and nontransparent residue.",
+    "Before returning, inspect all five contact sheets and row previews. Reject direction drift, identity drift, cropped bodies, missing feet, wrong state semantics, static idle, and size popping."
+  ].join(" ");
+}
+
+function buildDirectionalHatchPetCodexNotes({
+  userNotes,
+  chromaKey,
+  chromaReason
+}: {
+  userNotes: string;
+  chromaKey: AnimationChromaKey;
+  chromaReason: string;
+}) {
+  return [
+    userNotes.trim(),
+    "Directional hatch-pet workflow: create five separate hatch-pet atlases from the selected source image, one per direction, instead of a single 5-direction game sheet.",
+    `Required direction order: ${ANIMATION_DIRECTIONS.join(", ")}.`,
+    `Each returned atlas: ${HATCH_PET_GRID.columns} columns x ${HATCH_PET_GRID.rows} rows, ${HATCH_PET_CELL.width}x${HATCH_PET_CELL.height} per cell, 1536x1872 total.`,
+    `Rows and intended frame counts per atlas: ${HATCH_PET_STATE_ROWS.map((row) => `${row.id}=${row.frames}`).join(", ")}.`,
+    `The app will combine those five images into an internal ${DIRECTIONAL_HATCH_PET_GRID.columns} x ${DIRECTIONAL_HATCH_PET_GRID.rows} atlas for preview/export after import.`,
+    `Temporary chroma-key decision: ${chromaKey.name} ${chromaKey.hex}. ${chromaReason}`,
+    "Final outputs should be transparent PNG/WebP files, with unused cells fully transparent and no hidden colored residue.",
+    "Return exactly five final spritesheet images to the outbox with the job id filename prefix and direction suffixes; include pet.json sidecars only as optional extras."
+  ].filter(Boolean).join("\n");
+}
+
+async function createTransparentSpriteSheetDataUrl(dataUrl: string, chromaKey: AnimationChromaKey, grid: GridSettings = DIRECTION_SPLIT_ANIMATION_GRID) {
+  const image = await loadImage(dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, image.naturalWidth || image.width);
+  canvas.height = Math.max(1, image.naturalHeight || image.height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not create transparent sprite sheet canvas.");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  removeConnectedBackground(context, canvas.width, canvas.height);
+  removeChromaKeyPixels(context, canvas.width, canvas.height, chromaKey);
+  removeAnimationGuideGridPixels(context, canvas.width, canvas.height, grid);
+  return canvas.toDataURL("image/png");
+}
+
+async function composeDirectionSplitAnimationSheet(
+  importedResults: CodexOutboxImportResponse[],
+  chromaKey: AnimationChromaKey,
+  cell: SpriteAction["cell"],
+  actionName?: string,
+  directions: readonly string[] = ANIMATION_DIRECTIONS,
+  referenceDataUrl?: string,
+  motionRecipe?: MotionRecipeReference,
+  frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT
+) {
+  const preparedCells: DirectionSplitPreparedCell[] = [];
+  const warnings: string[] = [];
+  const failures: string[] = [];
+  const topologyProfile = getBodyTopologyProfile(motionRecipe?.bodyTopology ?? "biped");
+  const directionImageGrid = directionSplitAnimationGrid(frameCount);
+  const expectedWidth = cell.width * directionImageGrid.columns;
+  const expectedHeight = cell.height * directionImageGrid.rows;
+
+  for (let directionIndex = 0; directionIndex < directions.length; directionIndex += 1) {
+    const result = importedResults[directionIndex];
+    const direction = directions[directionIndex];
+    if (!result) {
+      failures.push(`${direction}: missing direction image`);
+      continue;
+    }
+
+    const transparentDataUrl = await createTransparentSpriteSheetDataUrl(result.dataUrl, chromaKey, directionImageGrid);
+    const image = await loadImage(transparentDataUrl);
+    let sourceImage: HTMLImageElement | HTMLCanvasElement = image;
+    if (image.width !== expectedWidth || image.height !== expectedHeight) {
+      if (isDirectionSplitSourceAspectCompatible(image.width, image.height, expectedWidth, expectedHeight)) {
+        sourceImage = normalizeDirectionSplitSourceCanvas(image, expectedWidth, expectedHeight);
+        warnings.push(`${direction}: normalized source image from ${image.width}x${image.height} to ${expectedWidth}x${expectedHeight}`);
+      } else {
+        failures.push(`${direction}: expected ${expectedWidth}x${expectedHeight}, got ${image.width}x${image.height}`);
+      }
+    }
+
+    const cells = calculateGridCells(sourceImage.width, sourceImage.height, directionImageGrid);
+    const canvas = document.createElement("canvas");
+    canvas.width = cell.width;
+    canvas.height = cell.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      failures.push(`${direction}: could not create direction cell canvas`);
+      continue;
+    }
+    context.imageSmoothingEnabled = false;
+
+    cells.slice(0, frameCount).forEach((gridCell) => {
+      context.clearRect(0, 0, cell.width, cell.height);
+      context.drawImage(sourceImage, gridCell.x, gridCell.y, gridCell.width, gridCell.height, 0, 0, cell.width, cell.height);
+      preparedCells.push(prepareDirectionSplitCell(canvas, direction, directionIndex, gridCell.index, chromaKey.name));
+    });
+  }
+
+  const normalizedCells = normalizeDirectionSplitCells(preparedCells, cell, topologyProfile);
+  const qa = validateDirectionSplitAnimationCells(normalizedCells, cell, directionSplitMotionProfileForAction(actionName), directions, frameCount, topologyProfile);
+  warnings.push(...normalizedCells.flatMap((frame) => frame.warnings), ...qa.warnings);
+  failures.push(...normalizedCells.flatMap((frame) => frame.failures), ...qa.failures);
+
+  const referenceFrame = referenceDataUrl ? await createAnimationQualityReferenceFrame(referenceDataUrl).catch(() => undefined) : undefined;
+  const animationQuality = buildAnimationQualityReport({
+    action: actionName,
+    contract: motionRecipe
+      ? compileMotionRecipe({
+          recipe: resolveMotionRecipe({ recipeId: motionRecipe.id, recipeVersion: motionRecipe.version, actionName }).recipe,
+          directions,
+          topology: motionRecipe.bodyTopology,
+          frameCount,
+          variant: motionRecipe.modifiers
+        }).qaContract
+      : undefined,
+    rawFrames: preparedCells.map((frame) => animationQualityFrameFromCanvas(frame.sourceCanvas, frame.direction, frame.frameIndex, frame.bounds)),
+    normalizedFrames: normalizedCells.map((frame) => animationQualityFrameFromCanvas(frame.canvas, frame.direction, frame.frameIndex, frame.bounds)),
+    corrections: normalizedCells.map((frame) => frame.correction),
+    referenceFrame
+  });
+
+  if (failures.length > 0) {
+    throw new DirectionSplitQualityError(`Direction split QA failed: ${failures.slice(0, 10).join("; ")}`, animationQuality);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = cell.width * frameCount;
+  canvas.height = cell.height * directions.length;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not compose direction split animation sheet.");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = false;
+
+  normalizedCells.forEach((frame) => {
+    context.drawImage(frame.canvas, frame.frameIndex * cell.width, frame.directionIndex * cell.height);
+  });
+
+  return {
+    dataUrl: canvas.toDataURL("image/png"),
+    warnings,
+    animationQuality
+  };
+}
+
+function animationQualityFrameFromCanvas(
+  canvas: HTMLCanvasElement,
+  direction: string,
+  frameIndex: number,
+  bounds: OpaqueBounds | null
+): AnimationQualityFrameInput {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const rgba = context
+    ? context.getImageData(0, 0, canvas.width, canvas.height).data
+    : new Uint8ClampedArray(canvas.width * canvas.height * 4);
+  return { direction, frameIndex, width: canvas.width, height: canvas.height, rgba, bounds };
+}
+
+async function createAnimationQualityReferenceFrame(dataUrl: string): Promise<AnimationQualityFrameInput> {
+  const canvas = await createTransparentAnimationSource(dataUrl);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not inspect animation quality reference pixels.");
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  return {
+    direction: "reference",
+    frameIndex: 0,
+    width: canvas.width,
+    height: canvas.height,
+    rgba: imageData.data,
+    bounds: findOpaqueBounds(imageData, canvas.width, canvas.height)
+  };
+}
+
+function prepareDirectionSplitCell(
+  canvas: HTMLCanvasElement,
+  direction: string,
+  directionIndex: number,
+  frameIndex: number,
+  residueChromaKey: FrameResidueChromaKey
+): DirectionSplitPreparedCell {
+  const width = canvas.width;
+  const height = canvas.height;
+  const sourceContext = canvas.getContext("2d", { willReadFrequently: true });
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = width;
+  sourceCanvas.height = height;
+  const copyContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const failures: string[] = [];
+  const warnings: string[] = [];
+  const label = directionSplitCellLabel(direction, frameIndex);
+
+  if (!sourceContext || !copyContext) {
+    return { direction, directionIndex, frameIndex, sourceCanvas, bounds: null, warnings, failures: [`${label}: could not inspect pixels`] };
+  }
+
+  const imageData = sourceContext.getImageData(0, 0, width, height);
+  removeFrameEdgeResiduePixels(imageData, width, height, residueChromaKey);
+  const { labels, components } = labelOpaqueComponents(imageData, width, height, residueChromaKey);
+  const primary = selectPrimaryOpaqueComponent(components, width, height);
+  if (!primary || primary.count < 64) {
+    copyContext.putImageData(imageData, 0, 0);
+    return { direction, directionIndex, frameIndex, sourceCanvas, bounds: null, warnings, failures: [`${label}: no primary character component found`] };
+  }
+  const primaryChromaResidueRatio = primary.chromaResidueCount / Math.max(1, primary.count);
+  if (primary.chromaResidueCount >= 48 && primaryChromaResidueRatio >= 0.08) {
+    failures.push(`${label}: Chroma key removal failed (${Math.round(primaryChromaResidueRatio * 100)}% residue in character component)`);
+  } else if (primary.chromaResidueCount >= 24 && primaryChromaResidueRatio >= 0.04) {
+    warnings.push(`${label}: chroma residue ${Math.round(primaryChromaResidueRatio * 100)}%`);
+  }
+
+  const keepComponents = new Uint8Array(components.length);
+  components.forEach((component) => {
+    if (component.id === primary.id) {
+      keepComponents[component.id] = 1;
+      return;
+    }
+    if (isLikelyFrameGarbageComponent(component, primary, width, height)) return;
+
+    const distance = Math.round(componentCenterDistance(component, primary));
+    if (distance > DIRECTION_SPLIT_DETACHED_FAIL_DISTANCE) {
+      failures.push(`${label}: detached component ${distance}px from body`);
+    } else if (distance > DIRECTION_SPLIT_DETACHED_WARN_DISTANCE) {
+      warnings.push(`${label}: detached component ${distance}px from body`);
+    }
+
+    if (shouldKeepFrameComponent(component, primary, width, height)) keepComponents[component.id] = 1;
+  });
+
+  const cleaned = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
+  const data = cleaned.data;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const offset = index * 4;
+      const componentId = labels[index];
+      if (data[offset + 3] <= FRAME_ALPHA_THRESHOLD || componentId < 0 || keepComponents[componentId] !== 1) {
+        data[offset + 3] = 0;
+      }
+    }
+  }
+
+  const bounds = findOpaqueBounds(cleaned, width, height);
+  if (!bounds || bounds.count < 64) failures.push(`${label}: no character pixels remained after cleanup`);
+  if (bounds) {
+    const hole = largestInteriorTransparentHole(cleaned, width, height, bounds);
+    const boundsArea = Math.max(1, (bounds.maxX - bounds.minX + 1) * (bounds.maxY - bounds.minY + 1));
+    const holeRatio = hole.count / boundsArea;
+    if (hole.count >= 1536 && holeRatio >= 0.08) {
+      failures.push(`${label}: Character transparency damage detected (${Math.round(holeRatio * 100)}% interior alpha hole)`);
+    } else if (hole.count >= 96 && holeRatio >= 0.025) {
+      warnings.push(`${label}: possible interior alpha hole ${Math.round(holeRatio * 100)}%`);
+    }
+  }
+  copyContext.putImageData(cleaned, 0, 0);
+  return { direction, directionIndex, frameIndex, sourceCanvas, bounds, warnings, failures };
+}
+
+function normalizeDirectionSplitCells(
+  preparedCells: DirectionSplitPreparedCell[],
+  cell: SpriteAction["cell"],
+  topologyProfile = getBodyTopologyProfile("biped")
+): DirectionSplitNormalizedCell[] {
+  const validHeights = preparedCells
+    .map((frame) => frame.bounds ? frame.bounds.maxY - frame.bounds.minY + 1 : 0)
+    .filter((height) => height > 0);
+  const targetHeight = clampNumber(
+    Math.round(medianNumber(validHeights) || cell.height * 0.72),
+    Math.round(cell.height * 0.45),
+    Math.round(cell.height * 0.86)
+  );
+  const targetFootY = animationNormalizationFootline(cell.height);
+
+  return preparedCells.map((frame) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = cell.width;
+    canvas.height = cell.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context || !frame.bounds) {
+      return {
+        ...frame,
+        canvas,
+        bounds: null,
+        correction: {
+          direction: frame.direction,
+          frameIndex: frame.frameIndex,
+          scale: 1,
+          translateX: 0,
+          translateY: 0,
+          rawBounds: frame.bounds,
+          normalizedBounds: null
+        }
+      };
+    }
+
+    const cropWidth = frame.bounds.maxX - frame.bounds.minX + 1;
+    const cropHeight = frame.bounds.maxY - frame.bounds.minY + 1;
+    const scale = Math.min(
+      targetHeight / Math.max(1, cropHeight),
+      (cell.width * 0.86) / Math.max(1, cropWidth),
+      (cell.height * 0.86) / Math.max(1, cropHeight)
+    );
+    const targetWidth = Math.max(1, Math.round(cropWidth * scale));
+    const normalizedHeight = Math.max(1, Math.round(cropHeight * scale));
+    const targetX = clampNumber(Math.round(cell.width / 2 - targetWidth / 2), 0, Math.max(0, cell.width - targetWidth));
+    const targetY = topologyProfile.contactQaDimension === "hover-height" || topologyProfile.contactQaDimension === "wing-beat"
+      ? clampNumber(Math.round(cell.height * 0.5 - normalizedHeight / 2), 0, Math.max(0, cell.height - normalizedHeight))
+      : clampNumber(targetFootY - normalizedHeight, 0, Math.max(0, cell.height - normalizedHeight));
+
+    context.clearRect(0, 0, cell.width, cell.height);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(
+      frame.sourceCanvas,
+      frame.bounds.minX,
+      frame.bounds.minY,
+      cropWidth,
+      cropHeight,
+      targetX,
+      targetY,
+      targetWidth,
+      normalizedHeight
+    );
+
+    const imageData = context.getImageData(0, 0, cell.width, cell.height);
+    const bounds = findOpaqueBounds(imageData, cell.width, cell.height);
+    return {
+      ...frame,
+      canvas,
+      bounds,
+      correction: {
+        direction: frame.direction,
+        frameIndex: frame.frameIndex,
+        scale,
+        translateX: targetX - frame.bounds.minX * scale,
+        translateY: targetY - frame.bounds.minY * scale,
+        rawBounds: frame.bounds,
+        normalizedBounds: bounds
+      }
+    };
+  });
+}
+
+function directionSplitMotionProfileForAction(actionName?: string): DirectionSplitMotionProfile {
+  const normalized = actionName?.trim().toLowerCase() ?? "";
+  if (normalized === "idle" || normalized === "idle-breathing") return "idle-breathing";
+  if (normalized === "walk" || normalized === "walk-cycle") return "walk-cycle";
+  if (normalized === "talk" || normalized === "talk-react" || normalized === "cast" || normalized === "spell-cast") return "subtle";
+  return "standard";
+}
+
+function validateDirectionSplitAnimationCells(
+  cells: DirectionSplitNormalizedCell[],
+  cell: SpriteAction["cell"],
+  motionProfile: DirectionSplitMotionProfile = "standard",
+  directions: readonly string[] = ANIMATION_DIRECTIONS,
+  frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT,
+  topologyProfile = getBodyTopologyProfile("biped")
+) {
+  const warnings: string[] = [];
+  const failures: string[] = [];
+  const motionThresholds = DIRECTION_SPLIT_MOTION_THRESHOLDS[motionProfile];
+  const idleMotionRows: Array<{ direction: string; averageMotion: number; maxMotion: number }> = [];
+
+  directions.forEach((direction, directionIndex) => {
+    const rowCells = cells
+      .filter((frame) => frame.directionIndex === directionIndex)
+      .sort((left, right) => left.frameIndex - right.frameIndex);
+    if (rowCells.length !== frameCount) {
+      failures.push(`${direction}: expected ${frameCount} cells, got ${rowCells.length}`);
+      return;
+    }
+
+    const metrics = rowCells
+      .map((frame) => frame.bounds ? {
+        frame,
+        width: frame.bounds.maxX - frame.bounds.minX + 1,
+        height: frame.bounds.maxY - frame.bounds.minY + 1,
+        centerX: (frame.bounds.minX + frame.bounds.maxX) / 2,
+        centerY: (frame.bounds.minY + frame.bounds.maxY) / 2,
+        bottomY: frame.bounds.maxY,
+        topMargin: frame.bounds.minY
+      } : null)
+      .filter((metric): metric is NonNullable<typeof metric> => Boolean(metric));
+    if (metrics.length !== rowCells.length) {
+      rowCells.forEach((frame) => {
+        if (!frame.bounds) failures.push(`${directionSplitCellLabel(direction, frame.frameIndex)}: blank normalized cell`);
+      });
+      return;
+    }
+
+    const centerDrift = rangeNumber(metrics.map((metric) => metric.centerX));
+    if (centerDrift > DIRECTION_SPLIT_CENTER_FAIL_DRIFT) {
+      failures.push(`${direction}: center drift ${Math.round(centerDrift)}px`);
+    } else if (centerDrift > DIRECTION_SPLIT_CENTER_WARN_DRIFT) {
+      warnings.push(`${direction}: center drift ${Math.round(centerDrift)}px`);
+    }
+
+    const contactDrift = rangeNumber(metrics.map((metric) =>
+      topologyProfile.contactQaDimension === "hover-height" || topologyProfile.contactQaDimension === "wing-beat"
+        ? metric.centerY
+        : metric.bottomY
+    ));
+    if (contactDrift > DIRECTION_SPLIT_BOTTOM_FAIL_DRIFT) {
+      failures.push(`${direction}: ${topologyProfile.contactQaDimension} drift ${Math.round(contactDrift)}px`);
+    } else if (contactDrift > DIRECTION_SPLIT_BOTTOM_WARN_DRIFT) {
+      warnings.push(`${direction}: ${topologyProfile.contactQaDimension} drift ${Math.round(contactDrift)}px`);
+    }
+
+    const widthVariation = variationRatio(metrics.map((metric) => metric.width));
+    if (widthVariation > 0.3) {
+      warnings.push(`${direction}: bbox width variation ${Math.round(widthVariation * 100)}%`);
+    }
+
+    const heightVariation = variationRatio(metrics.map((metric) => metric.height));
+    if (heightVariation > 0.22) {
+      warnings.push(`${direction}: bbox height variation ${Math.round(heightVariation * 100)}%`);
+    }
+
+    metrics.forEach((metric) => {
+      if (metric.topMargin < 4) failures.push(`${directionSplitCellLabel(direction, metric.frame.frameIndex)}: top margin ${metric.topMargin}px`);
+      else if (metric.topMargin < 10) warnings.push(`${directionSplitCellLabel(direction, metric.frame.frameIndex)}: top margin ${metric.topMargin}px`);
+      if (metric.bottomY > cell.height - 3) failures.push(`${directionSplitCellLabel(direction, metric.frame.frameIndex)}: feet touch cell bottom`);
+    });
+
+    const frameMotion = rowCells
+      .slice(1)
+      .map((frame, index) => frameDifferenceRatio(rowCells[index].canvas, frame.canvas, cell.width, cell.height));
+    const averageMotion = averageNumber(frameMotion);
+    const maxMotion = frameMotion.length > 0 ? Math.max(...frameMotion) : 0;
+    if (motionProfile === "idle-breathing") {
+      idleMotionRows.push({ direction, averageMotion, maxMotion });
+      if (averageMotion < DIRECTION_SPLIT_IDLE_MOTION_ABSENT_AVERAGE && maxMotion < DIRECTION_SPLIT_IDLE_MOTION_ABSENT_MAX) {
+        failures.push(`${direction}: ${motionThresholds.label} absent (${formatMotionPercent(averageMotion)} average frame change)`);
+      } else if (averageMotion < motionThresholds.warnAverage) {
+        warnings.push(`${direction}: low ${motionThresholds.label} (${formatMotionPercent(averageMotion)} average frame change)`);
+      }
+    } else if (averageMotion < motionThresholds.failAverage && maxMotion < motionThresholds.failMax) {
+      failures.push(`${direction}: ${motionThresholds.label} too small (${formatMotionPercent(averageMotion)} average frame change)`);
+    } else if (averageMotion < motionThresholds.warnAverage) {
+      warnings.push(`${direction}: low ${motionThresholds.label} (${formatMotionPercent(averageMotion)} average frame change)`);
+    }
+  });
+
+  if (motionProfile === "idle-breathing" && idleMotionRows.length === directions.length) {
+    const readableRows = idleMotionRows.filter((row) => row.averageMotion >= motionThresholds.failAverage || row.maxMotion >= motionThresholds.failMax).length;
+    const averageIdleMotion = averageNumber(idleMotionRows.map((row) => row.averageMotion));
+    const maxIdleMotion = Math.max(...idleMotionRows.map((row) => row.maxMotion));
+    if (readableRows < Math.min(DIRECTION_SPLIT_IDLE_MIN_READABLE_MOTION_ROWS, directions.length)) {
+      failures.push(
+        `idle breathing motion too static across directions (${readableRows}/${directions.length} readable rows, ${formatMotionPercent(averageIdleMotion)} average frame change)`
+      );
+    } else if (averageIdleMotion < motionThresholds.warnAverage && maxIdleMotion < motionThresholds.failMax) {
+      warnings.push(`idle breathing motion is subtle overall (${formatMotionPercent(averageIdleMotion)} average frame change)`);
+    }
+  }
+
+  return { warnings, failures };
+}
+
+function directionSplitCellLabel(direction: string, frameIndex: number) {
+  return `${direction} cell ${frameIndex + 1}`;
+}
+
+function largestInteriorTransparentHole(imageData: ImageData, width: number, height: number, bounds: OpaqueBounds) {
+  const data = imageData.data;
+  const visited = new Uint8Array(width * height);
+  const stack: number[] = [];
+  let largest = 0;
+
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+      const start = y * width + x;
+      if (visited[start] || data[start * 4 + 3] > FRAME_ALPHA_THRESHOLD) continue;
+      visited[start] = 1;
+      stack.length = 0;
+      stack.push(start);
+      let count = 0;
+      let touchesBounds = false;
+
+      while (stack.length > 0) {
+        const index = stack.pop();
+        if (index === undefined) break;
+        const cx = index % width;
+        const cy = Math.floor(index / width);
+        count += 1;
+        if (cx <= bounds.minX || cx >= bounds.maxX || cy <= bounds.minY || cy >= bounds.maxY) touchesBounds = true;
+
+        const neighbors = [
+          [cx - 1, cy],
+          [cx + 1, cy],
+          [cx, cy - 1],
+          [cx, cy + 1]
+        ] as const;
+        for (const [nx, ny] of neighbors) {
+          if (nx < bounds.minX || nx > bounds.maxX || ny < bounds.minY || ny > bounds.maxY) continue;
+          const next = ny * width + nx;
+          if (visited[next]) continue;
+          if (data[next * 4 + 3] > FRAME_ALPHA_THRESHOLD) continue;
+          visited[next] = 1;
+          stack.push(next);
+        }
+      }
+
+      if (!touchesBounds) largest = Math.max(largest, count);
+    }
+  }
+
+  return { count: largest };
+}
+
+function componentCenterDistance(left: FrameComponentMetrics, right: FrameComponentMetrics) {
+  return Math.hypot(left.centerX - right.centerX, left.centerY - right.centerY);
+}
+
+function medianNumber(values: number[]) {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function rangeNumber(values: number[]) {
+  if (values.length === 0) return 0;
+  return Math.max(...values) - Math.min(...values);
+}
+
+function averageNumber(values: number[]) {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function variationRatio(values: number[]) {
+  const median = medianNumber(values);
+  return median > 0 ? rangeNumber(values) / median : 0;
+}
+
+function frameDifferenceRatio(left: HTMLCanvasElement, right: HTMLCanvasElement, width: number, height: number) {
+  const leftContext = left.getContext("2d", { willReadFrequently: true });
+  const rightContext = right.getContext("2d", { willReadFrequently: true });
+  if (!leftContext || !rightContext) return 0;
+  const leftData = leftContext.getImageData(0, 0, width, height).data;
+  const rightData = rightContext.getImageData(0, 0, width, height).data;
+  let total = 0;
+  for (let offset = 0; offset < leftData.length; offset += 4) {
+    total +=
+      Math.abs(leftData[offset] - rightData[offset]) +
+      Math.abs(leftData[offset + 1] - rightData[offset + 1]) +
+      Math.abs(leftData[offset + 2] - rightData[offset + 2]) +
+      Math.abs(leftData[offset + 3] - rightData[offset + 3]);
+  }
+  return total / Math.max(1, width * height * 4 * 255);
+}
+
+function formatMotionPercent(value: number) {
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+type AnimationDrawable = (HTMLCanvasElement | HTMLImageElement) & { width: number; height: number };
+
+async function renderAnimationSheet(
+  sourceDataUrl: string,
+  cell: SpriteAction["cell"],
+  actionName: string,
+  frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT
+) {
+  const source = await createTransparentAnimationSource(sourceDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = cell.width * frameCount;
+  canvas.height = cell.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not create animation canvas.");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = false;
+
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    drawAnimationFrame(context, source, cell, actionName, frame, frameCount);
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
+function drawAnimationFrame(
+  context: CanvasRenderingContext2D,
+  source: AnimationDrawable,
+  cell: SpriteAction["cell"],
+  actionName: string,
+  frame: number,
+  frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT
+) {
+  const phase = (frame / frameCount) * Math.PI * 2;
+  const x = frame * cell.width;
+  const scale = Math.min((cell.width * 0.74) / source.width, (cell.height * 0.76) / source.height);
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
+  const preset = animationPreset(actionName, phase, frame, frameCount);
+  const centerX = x + cell.width / 2 + preset.x;
+  const centerY = cell.height / 2 + preset.y;
+
+  context.save();
+  context.translate(centerX, centerY);
+  context.rotate(preset.rotate);
+  context.scale(preset.scaleX, preset.scaleY);
+  context.drawImage(source, -width / 2, -height / 2, width, height);
+  context.restore();
+}
+
+async function createTransparentAnimationSource(sourceDataUrl: string) {
+  const source = await loadImage(sourceDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, source.naturalWidth || source.width);
+  canvas.height = Math.max(1, source.naturalHeight || source.height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not create transparent source canvas.");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  removeConnectedBackground(context, canvas.width, canvas.height);
+  return trimTransparentCanvas(canvas);
+}
+
+function removeConnectedBackground(context: CanvasRenderingContext2D, width: number, height: number) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const keyColors = [
+    readPixelColor(data, 0),
+    readPixelColor(data, width - 1),
+    readPixelColor(data, (height - 1) * width),
+    readPixelColor(data, height * width - 1)
+  ].filter((color) => color.a > 8);
+  const visited = new Uint8Array(width * height);
+  const stack: number[] = [];
+
+  const enqueue = (index: number) => {
+    if (index < 0 || index >= visited.length || visited[index]) return;
+    visited[index] = 1;
+    stack.push(index);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x);
+    enqueue((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y += 1) {
+    enqueue(y * width);
+    enqueue(y * width + width - 1);
+  }
+
+  while (stack.length > 0) {
+    const index = stack.pop();
+    if (index === undefined) break;
+    const offset = index * 4;
+    if (!isRemovableBackgroundPixel(data, offset, keyColors)) continue;
+    data[offset + 3] = 0;
+
+    const x = index % width;
+    if (x > 0) enqueue(index - 1);
+    if (x < width - 1) enqueue(index + 1);
+    if (index >= width) enqueue(index - width);
+    if (index < width * (height - 1)) enqueue(index + width);
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function trimTransparentCanvas(source: HTMLCanvasElement) {
+  const context = source.getContext("2d", { willReadFrequently: true });
+  if (!context) return source;
+  const imageData = context.getImageData(0, 0, source.width, source.height);
+  const data = imageData.data;
+  let minX = source.width;
+  let minY = source.height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      const alpha = data[(y * source.width + x) * 4 + 3];
+      if (alpha <= 12) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return source;
+
+  const padding = Math.max(2, Math.round(Math.max(maxX - minX, maxY - minY) * 0.03));
+  const sx = Math.max(0, minX - padding);
+  const sy = Math.max(0, minY - padding);
+  const sw = Math.min(source.width - sx, maxX - minX + 1 + padding * 2);
+  const sh = Math.min(source.height - sy, maxY - minY + 1 + padding * 2);
+  const trimmed = document.createElement("canvas");
+  trimmed.width = sw;
+  trimmed.height = sh;
+  const trimmedContext = trimmed.getContext("2d");
+  if (!trimmedContext) return source;
+  trimmedContext.imageSmoothingEnabled = false;
+  trimmedContext.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+  return trimmed;
+}
+
+function readPixelColor(data: Uint8ClampedArray, index: number) {
+  const offset = index * 4;
+  return { r: data[offset], g: data[offset + 1], b: data[offset + 2], a: data[offset + 3] };
+}
+
+function isRemovableBackgroundPixel(data: Uint8ClampedArray, offset: number, keyColors: Array<ReturnType<typeof readPixelColor>>) {
+  const alpha = data[offset + 3];
+  if (alpha < 12) return true;
+  if (isChromaPixel(data, offset)) return true;
+  return keyColors.some((color) => Math.abs(alpha - color.a) < 90 && colorDistanceSq(data, offset, color) <= 62 * 62);
+}
+
+function isChromaPixel(data: Uint8ClampedArray, offset: number) {
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  const a = data[offset + 3];
+  if (a < 12) return true;
+  const green = g > 105 && g > r * 1.3 && g > b * 1.3;
+  const blue = b > 120 && b > r * 1.25 && b > g * 1.08;
+  const magenta = r > 130 && b > 110 && g < Math.min(r, b) * 0.7;
+  return green || blue || magenta;
+}
+
+export function isCharacterGreenPixel(data: Uint8ClampedArray, offset: number) {
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  const saturatedGreen = g > 95 && g > r * 1.14 && g > b * 1.14;
+  const naturalGreen = g > 68 && g >= r + 8 && g >= b + 16 && r < 170 && b < 140;
+  const oliveGreen = g >= 58 && g >= r + 4 && g >= b + 18 && r < 170 && b < 115;
+  return saturatedGreen || naturalGreen || oliveGreen;
+}
+
+function removeChromaKeyPixels(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  chromaKey: AnimationChromaKey
+) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const tolerance = chromaKey.name === "green" ? 96 : 88;
+
+  for (let offset = 0; offset < data.length; offset += 4) {
+    if (data[offset + 3] < 12) continue;
+    const dr = data[offset] - chromaKey.rgb.r;
+    const dg = data[offset + 1] - chromaKey.rgb.g;
+    const db = data[offset + 2] - chromaKey.rgb.b;
+    const closeToKey = dr * dr + dg * dg + db * db <= tolerance * tolerance;
+    const semanticKey = isStrictChromaResiduePixel(data, offset, chromaKey.name);
+    if (closeToKey || semanticKey) data[offset + 3] = 0;
+  }
+
+  removeFrameEdgeResiduePixels(imageData, width, height, chromaKey.name);
+  context.putImageData(imageData, 0, 0);
+}
+
+function removeAnimationGuideGridPixels(context: CanvasRenderingContext2D, width: number, height: number, grid: GridSettings = ANIMATION_SHEET_GRID) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const radius = Math.max(2, Math.ceil(Math.max(width / grid.columns, height / grid.rows) / 96));
+
+  for (let offset = 0; offset < data.length; offset += 4) {
+    if (data[offset + 3] < 12) continue;
+    const pixelIndex = offset / 4;
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    const isGuideLine = isNearAnimationGuideLine(x, y, width, height, radius, grid);
+    if (isCyanGuidePixel(data, offset) || (isGuideLine && isGuideResiduePixel(data, offset))) {
+      data[offset] = 0;
+      data[offset + 1] = 0;
+      data[offset + 2] = 0;
+      data[offset + 3] = 0;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function isNearAnimationGuideLine(x: number, y: number, width: number, height: number, radius: number, grid: GridSettings = ANIMATION_SHEET_GRID) {
+  for (let column = 0; column <= grid.columns; column += 1) {
+    if (Math.abs(x - Math.round((width * column) / grid.columns)) <= radius) return true;
+  }
+  for (let row = 0; row <= grid.rows; row += 1) {
+    if (Math.abs(y - Math.round((height * row) / grid.rows)) <= radius) return true;
+  }
+  return false;
+}
+
+function isCyanGuidePixel(data: Uint8ClampedArray, offset: number) {
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  return g >= 145 && b >= 145 && r <= 125 && Math.abs(g - b) <= 75 && g >= r + 45 && b >= r + 45;
+}
+
+function isGuideResiduePixel(data: Uint8ClampedArray, offset: number) {
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  return g >= 95 && r <= 145 && (g >= r + 35 || b >= r + 35);
+}
+
+function colorDistanceSq(data: Uint8ClampedArray, offset: number, color: ReturnType<typeof readPixelColor>) {
+  const dr = data[offset] - color.r;
+  const dg = data[offset + 1] - color.g;
+  const db = data[offset + 2] - color.b;
+  return dr * dr + dg * dg + db * db;
+}
+
+function animationPreset(actionName: string, phase: number, frame: number, frameCount: MotionFrameCount = ANIMATION_FRAME_COUNT) {
+  if (actionName === "walk") {
+    return {
+      x: Math.sin(phase) * 4,
+      y: Math.abs(Math.sin(phase)) * -5,
+      rotate: Math.sin(phase) * 0.05,
+      scaleX: frame % 2 === 0 ? 1 : 0.96,
+      scaleY: frame % 2 === 0 ? 1 : 1.04,
+      accent: ""
+    };
+  }
+  if (actionName === "run") {
+    return {
+      x: Math.sin(phase) * 7,
+      y: Math.abs(Math.sin(phase)) * -8,
+      rotate: -0.08 + Math.sin(phase) * 0.08,
+      scaleX: frame % 2 === 0 ? 1.05 : 0.93,
+      scaleY: frame % 2 === 0 ? 0.97 : 1.07,
+      accent: ""
+    };
+  }
+  if (actionName === "cast") {
+    return {
+      x: 0,
+      y: -3 - Math.sin(phase) * 4,
+      rotate: Math.sin(phase) * 0.03,
+      scaleX: 1 + Math.sin(phase) * 0.03,
+      scaleY: 1 + Math.cos(phase) * 0.03,
+      accent: "#f2d778"
+    };
+  }
+  if (actionName === "attack") {
+    const thrust = frame < frameCount / 2 ? frame : frameCount - frame;
+    return {
+      x: thrust * 2.5,
+      y: Math.sin(phase) * -2,
+      rotate: -0.08 + thrust * 0.018,
+      scaleX: 1 + thrust * 0.018,
+      scaleY: 1 - thrust * 0.01,
+      accent: "#ff7a59"
+    };
+  }
+  if (actionName === "hurt") {
+    const recoil = Math.sin(Math.min(phase, Math.PI));
+    return {
+      x: -Math.max(0, recoil) * 6,
+      y: Math.abs(Math.sin(phase)) * -3,
+      rotate: -0.16 * Math.max(0, recoil),
+      scaleX: 1 - Math.max(0, recoil) * 0.04,
+      scaleY: 1 + Math.max(0, recoil) * 0.04,
+      accent: "#ffca5f"
+    };
+  }
+  if (actionName === "death") {
+    const progress = Math.min(1, frame / Math.max(1, frameCount - Math.max(1, Math.round(frameCount * 0.375))));
+    return {
+      x: progress * 5,
+      y: progress * 18,
+      rotate: progress * 0.42,
+      scaleX: 1 + progress * 0.12,
+      scaleY: 1 - progress * 0.16,
+      accent: ""
+    };
+  }
+  if (actionName === "jump") {
+    const jump = Math.sin(Math.PI * Math.min(1, frame / Math.max(1, frameCount - 1)));
+    return {
+      x: 0,
+      y: -jump * 24,
+      rotate: Math.sin(phase) * 0.04,
+      scaleX: 1 - jump * 0.05,
+      scaleY: 1 + jump * 0.05,
+      accent: ""
+    };
+  }
+  if (actionName === "guard") {
+    const brace = Math.min(1, frame / Math.max(1, Math.round(frameCount * 0.375)));
+    return {
+      x: -brace * 3 + Math.sin(phase) * 1.5,
+      y: -brace * 2,
+      rotate: -brace * 0.08,
+      scaleX: 1 + brace * 0.04,
+      scaleY: 1 - brace * 0.02,
+      accent: "#8ad7ff"
+    };
+  }
+  if (actionName === "cheer") {
+    return {
+      x: Math.sin(phase) * 2,
+      y: Math.abs(Math.sin(phase)) * -9,
+      rotate: Math.sin(phase) * 0.08,
+      scaleX: 1 + Math.abs(Math.sin(phase)) * 0.03,
+      scaleY: 1 + Math.cos(phase) * 0.03,
+      accent: "#ffd166"
+    };
+  }
+  if (actionName === "interact") {
+    const reach = Math.sin(Math.PI * Math.min(1, frame / Math.max(1, frameCount - 1)));
+    return {
+      x: reach * 4,
+      y: reach * 6,
+      rotate: reach * 0.14,
+      scaleX: 1 + reach * 0.03,
+      scaleY: 1 - reach * 0.05,
+      accent: "#9ee493"
+    };
+  }
+  if (actionName === "ranged") {
+    const release = Math.min(1, Math.max(0, (frame - Math.max(1, Math.round(frameCount * 0.125))) / Math.max(1, Math.round(frameCount * 0.5))));
+    return {
+      x: release * 5,
+      y: Math.sin(phase) * -2,
+      rotate: -0.1 + release * 0.08,
+      scaleX: 1 + release * 0.02,
+      scaleY: 1 - release * 0.02,
+      accent: "#8bd3ff"
+    };
+  }
+  if (actionName === "skill") {
+    const burst = Math.sin(Math.PI * Math.min(1, frame / Math.max(1, frameCount - 1)));
+    return {
+      x: 0,
+      y: -burst * 7,
+      rotate: Math.sin(phase) * 0.07,
+      scaleX: 1 + burst * 0.06,
+      scaleY: 1 + burst * 0.02,
+      accent: "#b5f48d"
+    };
+  }
+  if (actionName === "knockback") {
+    const recoil = Math.sin(Math.PI * Math.min(1, frame / Math.max(1, frameCount - 1)));
+    return {
+      x: -recoil * 10,
+      y: -Math.max(0, Math.sin(phase)) * 5,
+      rotate: -recoil * 0.22,
+      scaleX: 1 - recoil * 0.05,
+      scaleY: 1 + recoil * 0.04,
+      accent: "#ffba66"
+    };
+  }
+  if (actionName === "item") {
+    const use = Math.sin(Math.PI * Math.min(1, frame / Math.max(1, frameCount - 1)));
+    return {
+      x: use * 2,
+      y: -use * 4,
+      rotate: use * 0.06,
+      scaleX: 1 + use * 0.02,
+      scaleY: 1 + use * 0.03,
+      accent: "#f7e27c"
+    };
+  }
+  if (actionName === "talk") {
+    return {
+      x: Math.sin(phase) * 1.8,
+      y: Math.sin(phase * 2) * -2,
+      rotate: Math.sin(phase) * 0.035,
+      scaleX: 1 + Math.sin(phase) * 0.015,
+      scaleY: 1 - Math.sin(phase) * 0.012,
+      accent: ""
+    };
+  }
+  return {
+    x: 0,
+    y: Math.sin(phase) * -4,
+    rotate: Math.sin(phase) * 0.025,
+    scaleX: 1 + Math.sin(phase) * 0.02,
+    scaleY: 1 - Math.sin(phase) * 0.02,
+    accent: ""
+  };
+}
+
+function workflowUsesSelectedImage(mode: WorkflowMode | null) {
+  return mode === "image-edit" || mode === "sprite-generate";
+}
+
+function workflowUsesSpriteContext(mode: WorkflowMode | null) {
+  return mode === "sprite-generate" || mode === "sprite-edit" || mode === "effect-animation";
+}
+
+async function loadCodexRunnerPreflight() {
+  const response = await fetch("/api/codex/runner");
+  if (!response.ok) throw new Error(await response.text());
+  const data = (await response.json()) as CodexRunnerPreflightResponse;
+  return data.runner;
+}
+
+function runnerPreflightLabel(runner: CodexRunnerPreflight | null, copy: Record<string, string>) {
+  if (!runner) return copy.runnerChecking;
+  if (runner.state === "ready" && runner.mode === "mock") return copy.runnerMock;
+  if (runner.state === "ready") return copy.runnerReady;
+  if (runner.state === "disabled") return copy.runnerDisabled;
+  return runner.errorCode ? `${copy.runnerUnavailable}: ${runner.errorCode}` : copy.runnerUnavailable;
+}
+
+async function fetchJsonWithTimeout<T>(url: string, init: RequestInit = {}, timeoutMs = 2500): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) throw new Error(await response.text());
+    return (await response.json()) as T;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function loadDevSupervisorHealth() {
+  try {
+    const health = await fetchJsonWithTimeout<ImageCockpitDevSupervisorHealth>("/api/dev/health");
+    if (isDevSupervisorHealth(health)) return health;
+  } catch {
+    // Fall back to the direct loopback supervisor when Vite's /api proxy is misdirected.
+  }
+  const health = await fetchJsonWithTimeout<ImageCockpitDevSupervisorHealth>(`${devSupervisorBaseUrl()}/api/dev/health`);
+  if (!isDevSupervisorHealth(health)) throw new Error("Dev supervisor health did not return Image Cockpit supervisor metadata.");
+  return health;
+}
+
+async function postDevSupervisorRepair() {
+  try {
+    const result = await fetchJsonWithTimeout<{ ok?: boolean }>("/api/dev/repair", { method: "POST" }, 8000);
+    if (result.ok) return result;
+  } catch {
+    // Fall back to direct loopback when the UI is alive but /api points at the wrong server.
+  }
+  const result = await fetchJsonWithTimeout<{ ok?: boolean }>(`${devSupervisorBaseUrl()}/api/dev/repair`, { method: "POST" }, 12000);
+  if (!result.ok) throw new Error("Dev supervisor repair did not complete.");
+  return result;
+}
+
+function devSupervisorBaseUrl() {
+  const rawPort = Number(import.meta.env.VITE_IMAGE_COCKPIT_SUPERVISOR_PORT ?? DEFAULT_SUPERVISOR_PORT);
+  const port = Number.isFinite(rawPort) && rawPort > 0 ? rawPort : DEFAULT_SUPERVISOR_PORT;
+  return `http://127.0.0.1:${port}`;
+}
+
+function isDevSupervisorHealth(value: unknown): value is ImageCockpitDevSupervisorHealth {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as ImageCockpitDevSupervisorHealth).app === "image-cockpit" &&
+      (value as ImageCockpitDevSupervisorHealth).role === "supervisor"
+  );
+}
+
+async function loadCodexRunnerStatus(jobId: string) {
+  try {
+    const response = await fetch(`/api/codex/jobs/${encodeURIComponent(jobId)}/status`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as CodexJobStatusResponse;
+    return data.status;
+  } catch {
+    return null;
+  }
+}
+
+async function loadCodexJobLog(jobId: string) {
+  const response = await fetch(`/api/codex/jobs/${encodeURIComponent(jobId)}/log?bytes=${CODEX_LOG_TAIL_BYTES}`);
+  if (!response.ok) throw new Error(await response.text());
+  return (await response.json()) as CodexJobLogResponse;
+}
+
+function createCodexJobLogItem(
+  job: Pick<CodexJobQueueItem, "id" | "label" | "createdAt" | "state">,
+  log?: Partial<CodexJobLogResponse & CodexJobLogItem>,
+  state: CodexJobLogItem["state"] = job.state,
+  error?: string
+): CodexJobLogItem {
+  return {
+    jobId: job.id,
+    label: job.label,
+    state,
+    createdAt: job.createdAt,
+    text: log?.text ?? "",
+    exists: Boolean(log?.exists),
+    truncated: Boolean(log?.truncated),
+    size: log?.size ?? 0,
+    modifiedAt: log?.modifiedAt ?? "",
+    readAt: log?.readAt ?? new Date().toISOString(),
+    error
+  };
+}
+
+function mergeCodexJobLogs(current: CodexJobLogItem[], incoming: CodexJobLogItem[]) {
+  const merged = new Map(current.map((item) => [item.jobId, item]));
+  incoming.forEach((item) => {
+    const previous = merged.get(item.jobId);
+    merged.set(item.jobId, { ...previous, ...item });
+  });
+  return Array.from(merged.values())
+    .sort((left, right) => Date.parse(right.readAt || right.createdAt) - Date.parse(left.readAt || left.createdAt))
+    .slice(0, CODEX_LOG_HISTORY_LIMIT);
+}
+
+export function shouldWaitForCodexRunner(status?: CodexRunnerStatus) {
+  if (!status) return true;
+  return status.state === "running";
+}
+
+export function isTransientAnimationTournamentEvaluationError(error?: string) {
+  return /waiting for stable verified artifacts|artifacts? (?:are )?still stabilizing/i.test(error ?? "");
+}
+
+export function shouldWaitForAnimationTournamentArtifacts(
+  selection: Pick<DirectionSplitSelection, "waitingForVerifiedArtifacts" | "missingDirections">
+) {
+  return selection.waitingForVerifiedArtifacts && selection.missingDirections.length === 0;
+}
+
+export function resolveAnimationTournamentCandidateDirections(
+  requestedDirections: readonly string[],
+  repairDirections?: readonly string[]
+) {
+  return normalizeAnimationDirections(repairDirections?.length ? repairDirections : requestedDirections);
+}
+
+function runnerStatusMessage(status: CodexRunnerStatus | undefined, copy: Record<string, string>) {
+  if (!status || status.state === "running") return copy.statusCodexJobPending;
+  if (status.diagnostic) {
+    const failure = codexFailureDisplay(status.diagnostic.kind, copy, status.diagnostic);
+    return `${failure.title}: ${failure.message}`;
+  }
+  if (status.state === "disabled" || status.state === "unavailable" || status.state === "unknown") {
+    return `${copy.statusCodexRunnerUnavailable}: ${status.message}`;
+  }
+  if (status.state === "failed") return `${copy.statusCodexRunnerFailed}: ${status.message}`;
+  return copy.statusCodexRunnerCompletedNoImage;
+}
+
+function NumberField({
+  label,
+  value,
+  min = 1,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="field number-field">
+      <span>{label}</span>
+      <input type="number" min={min} value={value} onChange={(event) => onChange(Math.max(min, Number(event.target.value)))} />
+    </label>
+  );
+}
+
+function QcLine({ ok, label, value }: { ok: boolean; label: string; value: string }) {
+  return (
+    <div className="qc-line">
+      {ok ? <CheckCircle2 size={15} aria-hidden="true" /> : <AlertTriangle size={15} aria-hidden="true" />}
+      <span>{label}</span>
+      <small>{value}</small>
+    </div>
+  );
+}
+
+function WorkflowTabs({
+  activeMode,
+  language,
+  onSelect
+}: {
+  activeMode: WorkflowMode;
+  language: Language;
+  onSelect: (mode: WorkflowMode) => void;
+}) {
+  return (
+    <nav className="workflow-tabs" aria-label="Primary workflows">
+      {workflowOptions.map((option) => {
+        const optionCopy = workflowCopy[language][option.id];
+        return (
+          <button
+            key={option.id}
+            className={activeMode === option.id ? "active" : ""}
+            aria-current={activeMode === option.id ? "page" : undefined}
+            onClick={() => onSelect(option.id)}
+          >
+            <WorkflowIcon mode={option.id} />
+            <span>{optionCopy.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function PromptExamplesModal({
+  language,
+  onClose,
+  onCopy,
+  onUseQuick,
+  onUse
+}: {
+  language: Language;
+  onClose: () => void;
+  onCopy: (example: PromptExample) => Promise<void>;
+  onUseQuick: (prompt: string) => void;
+  onUse: (example: PromptExample) => void;
+}) {
+  const copy = uiCopy[language];
+  const layerCopy = promptExampleLayerCopy[language];
+  const [activeCategory, setActiveCategory] = useState("all");
+  const [detailPresetId, setDetailPresetId] = useState<QuickPromptPresetId | "all" | null>(null);
+  const modalRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const returnFocusTargetRef = useRef<QuickPromptPresetId | "all" | null>(null);
+  const selectedQuickPreset = detailPresetId && detailPresetId !== "all"
+    ? quickPromptPresets.find((preset) => preset.id === detailPresetId) ?? null
+    : null;
+  const detailPromptExamples = selectedQuickPreset
+    ? relatedPromptExamplesForQuickPreset(selectedQuickPreset)
+    : promptExamples;
+  const categoryOptions = useMemo(() => {
+    const categoryMap = new Map<string, { id: string; label: string; count: number }>();
+    promptExamples.forEach((example) => {
+      const id = localizedText(example.category, "en");
+      const current = categoryMap.get(id);
+      if (current) {
+        current.count += 1;
+        return;
+      }
+      categoryMap.set(id, { id, label: localizedText(example.category, language), count: 1 });
+    });
+    return [
+      { id: "all", label: language === "ja" ? "すべて" : "All", count: promptExamples.length },
+      ...Array.from(categoryMap.values())
+    ];
+  }, [language]);
+  const visiblePromptExamples =
+    detailPresetId !== "all" || activeCategory === "all"
+      ? detailPromptExamples
+      : detailPromptExamples.filter((example) => localizedText(example.category, "en") === activeCategory);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'));
+      if (openDialogs.length > 0 && openDialogs[openDialogs.length - 1] !== modalRef.current) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (detailPresetId !== null) {
+      backButtonRef.current?.focus();
+      return;
+    }
+    const returnTarget = returnFocusTargetRef.current;
+    if (!returnTarget) return;
+    window.requestAnimationFrame(() => {
+      const selector = returnTarget === "all"
+        ? ".quick-view-all-button"
+        : `[data-quick-preset-id="${returnTarget}"] .quick-details-button`;
+      modalRef.current?.querySelector<HTMLButtonElement>(selector)?.focus();
+    });
+  }, [detailPresetId]);
+
+  function showRelatedExamples(presetId: QuickPromptPresetId) {
+    returnFocusTargetRef.current = presetId;
+    setActiveCategory("all");
+    setDetailPresetId(presetId);
+  }
+
+  function showAllExamples() {
+    returnFocusTargetRef.current = "all";
+    setActiveCategory("all");
+    setDetailPresetId("all");
+  }
+
+  const headingTitle = detailPresetId === null
+    ? layerCopy.quickTitle
+    : detailPresetId === "all"
+      ? layerCopy.allTitle
+      : layerCopy.relatedTitle.replace("{title}", localizedText(selectedQuickPreset!.title, language));
+  const headingIntro = detailPresetId === null
+    ? layerCopy.quickIntro
+    : detailPresetId === "all"
+      ? layerCopy.allIntro
+      : layerCopy.relatedIntro;
+
+  return (
+    <div className="prompt-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        ref={modalRef}
+        className="prompt-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="prompt-examples-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading">
+          <div>
+            <small className="prompt-library-kicker">{copy.promptExamplesTitle}</small>
+            <strong id="prompt-examples-title">{headingTitle}</strong>
+            <span>{headingIntro}</span>
+          </div>
+          <button ref={closeButtonRef} className="icon-button" title={copy.closePromptExamples} aria-label={copy.closePromptExamples} onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {detailPresetId === null ? (
+          <>
+            <div className="quick-prompt-grid" aria-label={layerCopy.quickTitle}>
+              {quickPromptPresets.map((preset) => (
+                <article key={preset.id} className="quick-prompt-card" data-quick-preset-id={preset.id}>
+                  <div className="quick-prompt-card-heading">
+                    <span className="quick-prompt-icon" aria-hidden="true">
+                      <Sparkles size={20} />
+                    </span>
+                    <div>
+                      <small>{localizedText(preset.group, language)}</small>
+                      <h2>{localizedText(preset.title, language)}</h2>
+                    </div>
+                  </div>
+                  <p className="quick-prompt-text">{localizedText(preset.prompt, language)}</p>
+                  <small className="prompt-card-note">{localizedText(preset.summary, language)}</small>
+                  <div className="prompt-actions quick-prompt-actions">
+                    <button
+                      className="quick-details-button"
+                      aria-label={`${layerCopy.viewExamples}: ${localizedText(preset.title, language)}`}
+                      onClick={() => showRelatedExamples(preset.id)}
+                    >
+                      <Layers3 size={15} aria-hidden="true" />
+                      {layerCopy.viewExamples}
+                    </button>
+                    <button
+                      className="primary-button"
+                      aria-label={`${layerCopy.startWithThis}: ${localizedText(preset.title, language)}`}
+                      onClick={() => onUseQuick(localizedText(preset.prompt, language))}
+                    >
+                      <ImagePlus size={15} aria-hidden="true" />
+                      {layerCopy.startWithThis}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="prompt-library-footer">
+              <button className="quick-view-all-button" aria-label={layerCopy.viewAllExamples} onClick={showAllExamples}>
+                <Layers3 size={16} aria-hidden="true" />
+                {layerCopy.viewAllExamples}
+                <small>{promptExamples.length}</small>
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="prompt-detail-toolbar">
+              <button ref={backButtonRef} onClick={() => setDetailPresetId(null)}>
+                <ArrowLeft size={16} aria-hidden="true" />
+                {layerCopy.backToQuick}
+              </button>
+              {detailPresetId !== "all" && (
+                <button className="quick-view-all-button" aria-label={layerCopy.viewAllExamples} onClick={showAllExamples}>
+                  {layerCopy.viewAllExamples}
+                  <small>{promptExamples.length}</small>
+                </button>
+              )}
+              <span className="prompt-detail-count">
+                {visiblePromptExamples.length} {layerCopy.exampleCountSuffix}
+              </span>
+            </div>
+
+            {detailPresetId === "all" && (
+              <div className="prompt-category-tabs" role="tablist" aria-label="Prompt example categories">
+                {categoryOptions.map((category) => (
+                  <button
+                    key={category.id}
+                    className={activeCategory === category.id ? "active" : ""}
+                    role="tab"
+                    aria-selected={activeCategory === category.id}
+                    onClick={() => setActiveCategory(category.id)}
+                  >
+                    <span>{category.label}</span>
+                    <small>{category.count}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="prompt-grid">
+              {visiblePromptExamples.map((example) => (
+                <article key={example.id} className="prompt-card">
+                  <div className="prompt-card-preview">
+                    <img src={example.previewImage} alt={`${localizedText(example.title, language)} example`} />
+                  </div>
+                  <div className="prompt-card-meta">
+                    <small>{localizedText(example.category, language)}</small>
+                  </div>
+                  <h2>{localizedText(example.title, language)}</h2>
+                  <small className="prompt-card-note">{localizedText(example.summary, language)}</small>
+                  <div className="prompt-actions">
+                    <button onClick={() => void onCopy(example)}>
+                      <Copy size={15} aria-hidden="true" />
+                      {copy.copyPrompt}
+                    </button>
+                    <button className="primary-button" onClick={() => onUse(example)}>
+                      <ImagePlus size={15} aria-hidden="true" />
+                      {copy.usePrompt}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function AnimationUtilityModal({
+  id,
+  title,
+  description,
+  onClose,
+  children
+}: {
+  id: string;
+  title: string;
+  description: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const modalRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]'));
+      if (openDialogs.length > 0 && openDialogs[openDialogs.length - 1] !== modalRef.current) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(modalRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  return (
+    <div className="prompt-modal-backdrop animation-utility-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        ref={modalRef}
+        className="prompt-modal animation-utility-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-description`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading animation-utility-heading">
+          <div>
+            <strong id={`${id}-title`}>{title}</strong>
+            <span id={`${id}-description`}>{description}</span>
+          </div>
+          <button ref={closeButtonRef} className="icon-button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={22} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="animation-utility-body">
+          {children}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AnimationPresetExamplesModal({
+  language,
+  favoriteIds,
+  recentIds,
+  onClose,
+  onUse,
+  onToggleFavorite
+}: {
+  language: Language;
+  favoriteIds: string[];
+  recentIds: string[];
+  onClose: () => void;
+  onUse: (example: AnimationPresetExample) => void;
+  onToggleFavorite: (id: string) => void;
+}) {
+  const copy = uiCopy[language];
+  const modalRef = useRef<HTMLElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<MotionRecipe["family"] | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "verified" | "experimental">("all");
+  const [topologyFilter, setTopologyFilter] = useState<BodyTopologyId | "all">("all");
+  const [loopFilter, setLoopFilter] = useState<"all" | "loop" | "one-shot">("all");
+  const [weaponFilter, setWeaponFilter] = useState<"all" | "weapon" | "no-weapon">("all");
+  const [movementFilter, setMovementFilter] = useState<"all" | "movement" | "stationary">("all");
+  const [frameFilter, setFrameFilter] = useState<"all" | `${MotionFrameCount}`>("all");
+  const [collectionFilter, setCollectionFilter] = useState<"all" | "recent" | "favorites">("all");
+  useEffect(() => {
+    searchRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(modalRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+  const filteredExamples = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return animationPresetExamples.filter((example) => {
+      const searchable = [example.id, example.title.en, example.title.ja, example.summary.en, example.summary.ja, ...example.tags].join(" ").toLowerCase();
+      if (query && !searchable.includes(query)) return false;
+      if (categoryFilter !== "all" && example.family !== categoryFilter) return false;
+      if (statusFilter === "verified" && example.experimental) return false;
+      if (statusFilter === "experimental" && !example.experimental) return false;
+      if (topologyFilter !== "all" && !example.supportedTopologies.includes(topologyFilter)) return false;
+      if (loopFilter === "loop" && example.loopMode === "one-shot") return false;
+      if (loopFilter === "one-shot" && example.loopMode !== "one-shot") return false;
+      const supportsWeapon = example.allowedModifiers.includes("weaponClass");
+      if (weaponFilter === "weapon" && !supportsWeapon) return false;
+      if (weaponFilter === "no-weapon" && supportsWeapon) return false;
+      const movement = example.family === "locomotion" || example.tags.includes("movement") || example.tags.includes("travel");
+      if (movementFilter === "movement" && !movement) return false;
+      if (movementFilter === "stationary" && movement) return false;
+      if (frameFilter !== "all" && !example.allowedFrameCounts.includes(Number(frameFilter) as MotionFrameCount)) return false;
+      if (collectionFilter === "recent" && !recentIds.includes(example.id)) return false;
+      if (collectionFilter === "favorites" && !favoriteIds.includes(example.id)) return false;
+      return true;
+    }).sort((left, right) => {
+      const leftRecent = recentIds.indexOf(left.id);
+      const rightRecent = recentIds.indexOf(right.id);
+      if (leftRecent >= 0 || rightRecent >= 0) return (leftRecent < 0 ? 999 : leftRecent) - (rightRecent < 0 ? 999 : rightRecent);
+      return Number(left.experimental) - Number(right.experimental);
+    });
+  }, [categoryFilter, collectionFilter, favoriteIds, frameFilter, loopFilter, movementFilter, recentIds, search, statusFilter, topologyFilter, weaponFilter]);
+  return (
+    <div className="prompt-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        ref={modalRef}
+        className="prompt-modal animation-preset-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="animation-preset-examples-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading">
+          <div>
+            <strong id="animation-preset-examples-title">{copy.animationPresetExamplesTitle}</strong>
+            <span>{copy.animationPresetExamplesIntro}</span>
+          </div>
+          <button className="icon-button" title={copy.closePromptExamples} aria-label={copy.closePromptExamples} onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="motion-preset-filters">
+          <label className="motion-preset-search">
+            <span>{language === "ja" ? "検索" : "Search"}</span>
+            <input ref={searchRef} autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="dash, combat, movement..." />
+          </label>
+          <label>
+            <span>Category</span>
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as typeof categoryFilter)}>
+              <option value="all">All</option>
+              {(["core", "locomotion", "combat", "magic", "social", "utility"] as MotionRecipe["family"][]).map((family) => <option key={family} value={family}>{family}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <option value="all">All</option><option value="verified">Verified</option><option value="experimental">Experimental</option>
+            </select>
+          </label>
+          <label>
+            <span>Topology</span>
+            <select value={topologyFilter} onChange={(event) => setTopologyFilter(event.target.value as BodyTopologyId | "all")}>
+              <option value="all">All</option>
+              {BODY_TOPOLOGY_PROFILES.map((profile) => <option key={profile.id} value={profile.id}>{localizedText(profile.displayName, language)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Loop</span>
+            <select value={loopFilter} onChange={(event) => setLoopFilter(event.target.value as typeof loopFilter)}>
+              <option value="all">All</option><option value="loop">Loop</option><option value="one-shot">One-shot</option>
+            </select>
+          </label>
+          <label>
+            <span>Weapon</span>
+            <select value={weaponFilter} onChange={(event) => setWeaponFilter(event.target.value as typeof weaponFilter)}>
+              <option value="all">All</option><option value="weapon">Weapon</option><option value="no-weapon">No weapon</option>
+            </select>
+          </label>
+          <label>
+            <span>Movement</span>
+            <select value={movementFilter} onChange={(event) => setMovementFilter(event.target.value as typeof movementFilter)}>
+              <option value="all">All</option><option value="movement">Movement</option><option value="stationary">Stationary</option>
+            </select>
+          </label>
+          <label>
+            <span>Frames</span>
+            <select value={frameFilter} onChange={(event) => setFrameFilter(event.target.value as typeof frameFilter)}>
+              <option value="all">All</option>{MOTION_FRAME_COUNTS.map((count) => <option key={count} value={count}>{count}f{isExperimentalMotionFrameCount(count) ? " · Experimental" : ""}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Collection</span>
+            <select value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value as typeof collectionFilter)}>
+              <option value="all">All</option><option value="recent">Recent</option><option value="favorites">Favorites</option>
+            </select>
+          </label>
+          <strong>{filteredExamples.length} / {animationPresetExamples.length}</strong>
+        </div>
+
+        <div className="prompt-grid animation-preset-grid">
+          {filteredExamples.map((example) => (
+            <article key={example.id} className={`prompt-card animation-preset-card ${example.experimental ? "experimental" : "verified"}`}>
+              <div className="prompt-card-preview animation-sample-preview">
+                <div className={`animation-sample-sprite ${example.previewClassName}`} aria-label={`${localizedText(example.title, language)} sample animation`} />
+              </div>
+              <div className="prompt-card-meta">
+                <small>{localizedText(example.category, language)}</small>
+                <small>{example.experimental ? "Experimental" : "Verified"}</small>
+                <button
+                  type="button"
+                  className="motion-favorite-button"
+                  aria-label={favoriteIds.includes(example.id) ? "Remove favorite" : "Add favorite"}
+                  onClick={() => onToggleFavorite(example.id)}
+                >
+                  {favoriteIds.includes(example.id) ? "★" : "☆"}
+                </button>
+              </div>
+              <h2>{localizedText(example.title, language)}</h2>
+              <small className="prompt-card-note">{localizedText(example.summary, language)}</small>
+              <small className="prompt-card-note">{example.supportedTopologies.join(" / ")} · {example.allowedFrameCounts.filter((count) => !isExperimentalMotionFrameCount(count)).join("/")}f{example.allowedFrameCounts.some(isExperimentalMotionFrameCount) ? ` · ${example.allowedFrameCounts.filter(isExperimentalMotionFrameCount).join("/")}f Experimental` : ""}</small>
+              <div className="prompt-actions single-action">
+                <button className="primary-button" onClick={() => onUse(example)}>
+                  <CheckCircle2 size={15} aria-hidden="true" />
+                  {copy.useAnimationPreset}
+                </button>
+              </div>
+            </article>
+          ))}
+          {filteredExamples.length === 0 && <p className="animation-library-empty">No Motion Recipes match these filters.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DownloadOptionsModal({
+  language,
+  selectedName,
+  isAnimation,
+  isEffect,
+  body,
+  status,
+  imageReady,
+  animationReady,
+  effectReady,
+  onClose,
+  onDownloadImage,
+  onExportGif,
+  onExportWebp,
+  onExportApng,
+  onExportSpriteSheet,
+  onEditTimeline,
+  onExportAnimationPack,
+  onExportEffectGif,
+  onExportEffectApng,
+  onExportEffectSheet,
+  onExportEffectFramesZip,
+  onExportEffectMetadata,
+  onExportEffectPack
+}: {
+  language: Language;
+  selectedName: string;
+  isAnimation: boolean;
+  isEffect: boolean;
+  body: string;
+  status: string;
+  imageReady: boolean;
+  animationReady: boolean;
+  effectReady: boolean;
+  onClose: () => void;
+  onDownloadImage: () => void;
+  onExportGif: () => void;
+  onExportWebp: () => void;
+  onExportApng: () => void;
+  onExportSpriteSheet: () => void;
+  onEditTimeline: () => void;
+  onExportAnimationPack: () => void;
+  onExportEffectGif: () => void;
+  onExportEffectApng: () => void;
+  onExportEffectSheet: () => void;
+  onExportEffectFramesZip: () => void;
+  onExportEffectMetadata: () => void;
+  onExportEffectPack: () => void;
+}) {
+  const copy = uiCopy[language];
+  return (
+    <div className="prompt-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="prompt-modal download-options-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="download-options-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading">
+          <div>
+            <strong id="download-options-title">{copy.downloadModalTitle}</strong>
+            <span>{copy.downloadModalIntro}</span>
+          </div>
+          <button className="icon-button" title={copy.closeDownloadModal} aria-label={copy.closeDownloadModal} onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="download-options-summary">
+          <strong>{selectedName}</strong>
+          <span>{body}</span>
+          <small>{status}</small>
+        </div>
+
+        <div className="download-grid result-download-grid download-options-grid">
+          {isEffect ? (
+            <>
+              <button onClick={onExportEffectGif} disabled={!effectReady}>
+                <Film size={16} aria-hidden="true" />
+                {language === "ja" ? "Effect GIF" : "Effect GIF"}
+              </button>
+              <button onClick={onExportEffectApng} disabled={!effectReady}>
+                <Film size={16} aria-hidden="true" />
+                {language === "ja" ? "Effect APNG" : "Effect APNG"}
+              </button>
+              <button onClick={onExportEffectSheet} disabled={!effectReady}>
+                <FileImage size={16} aria-hidden="true" />
+                {language === "ja" ? "Sheet PNG" : "Sheet PNG"}
+              </button>
+              <button onClick={onExportEffectFramesZip} disabled={!effectReady}>
+                <FileArchive size={16} aria-hidden="true" />
+                {language === "ja" ? "Frames ZIP" : "Frames ZIP"}
+              </button>
+              <button onClick={onExportEffectMetadata} disabled={!effectReady}>
+                <FileJson size={16} aria-hidden="true" />
+                {language === "ja" ? "Metadata JSON" : "Metadata JSON"}
+              </button>
+              <button onClick={onExportEffectPack} disabled={!effectReady}>
+                <FileArchive size={16} aria-hidden="true" />
+                {language === "ja" ? "Effect Pack ZIP" : "Effect Pack ZIP"}
+              </button>
+            </>
+          ) : isAnimation ? (
+            <>
+              <button onClick={onExportGif} disabled={!animationReady}>
+                <Film size={16} aria-hidden="true" />
+                {copy.animatedGif}
+              </button>
+              <button onClick={onExportWebp} disabled={!animationReady}>
+                <FileArchive size={16} aria-hidden="true" />
+                {copy.animatedWebP}
+              </button>
+              <button onClick={onExportApng} disabled={!animationReady}>
+                <Film size={16} aria-hidden="true" />
+                {copy.animatedApng}
+              </button>
+              <button onClick={onExportSpriteSheet} disabled={!animationReady}>
+                <FileImage size={16} aria-hidden="true" />
+                {copy.spriteSheetDownload}
+              </button>
+              <button className="primary-button" onClick={onEditTimeline} disabled={!animationReady}>
+                <Grid3X3 size={16} aria-hidden="true" />
+                {language === "ja" ? "Review / Edit Timeline" : "Review / Edit Timeline"}
+              </button>
+              <button onClick={onExportAnimationPack} disabled={!animationReady}>
+                <FileArchive size={16} aria-hidden="true" />
+                {copy.exportAnimationPack}
+              </button>
+            </>
+          ) : (
+            <button onClick={onDownloadImage} disabled={!imageReady}>
+              <FileImage size={16} aria-hidden="true" />
+              {copy.downloadPng}
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AnimationTimelineEditorModal({
+  language,
+  session,
+  onClose,
+  onSave,
+  onExport,
+  onExportEngine,
+  onRoundTrip
+}: {
+  language: Language;
+  session: AnimationTimelineEditorSession;
+  onClose: () => void;
+  onSave: (pack: AnimationPackV2) => void;
+  onExport: (pack: AnimationPackV2) => void;
+  onExportEngine: (filename: string, data: Record<string, unknown>) => void;
+  onRoundTrip: (pack: AnimationPackV2) => Promise<string>;
+}) {
+  const [draft, setDraft] = useState(() => validateAnimationPackV2(session.initialPack));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => serializeAnimationPackV2(session.initialPack));
+  const [past, setPast] = useState<AnimationPackV2[]>([]);
+  const [future, setFuture] = useState<AnimationPackV2[]>([]);
+  const [direction, setDirection] = useState(session.initialPack.directions[0]);
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [playbackDirection, setPlaybackDirection] = useState<1 | -1>(1);
+  const [speed, setSpeed] = useState(1);
+  const [roundTripStatus, setRoundTripStatus] = useState("");
+  const dirty = serializeAnimationPackV2(draft) !== savedSnapshot;
+  const directionFrames = session.frameDataUrls[direction] ?? [];
+  const sourceFrameIndex = draft.frameOrder[frameIndex] ?? 0;
+  const currentFrameUrl = directionFrames[sourceFrameIndex] ?? directionFrames[0] ?? "";
+  const engineExports = useMemo(() => buildAnimationPackV2EngineExports(draft), [draft]);
+  const warnings = animationDirectionSyncWarnings(draft);
+  const selectedEvents = draft.events.filter((event) => event.frameIndex === frameIndex);
+  const selectedPoints = [
+    ...draft.pivots.map((point) => ({ kind: "Pivot", point })),
+    ...draft.anchors.map((point) => ({ kind: "Anchor", point })),
+    ...draft.sockets.map((point) => ({ kind: "Socket", point }))
+  ].filter((item) => item.point.frameIndex === frameIndex);
+  const selectedRects = [...draft.hitboxes, ...draft.hurtboxes].filter((rect) => rect.frameIndex === frameIndex);
+
+  function commit(next: AnimationPackV2) {
+    setPast((current) => [...current.slice(-49), draft]);
+    setDraft(validateAnimationPackV2(next));
+    setFuture([]);
+    setFrameIndex((current) => Math.min(current, next.frameOrder.length - 1));
+    setRoundTripStatus("");
+  }
+
+  function step(delta: number) {
+    setFrameIndex((current) => {
+      const next = current + delta;
+      if (draft.loopMode === "one-shot") return Math.max(0, Math.min(draft.frameOrder.length - 1, next));
+      return (next + draft.frameOrder.length) % draft.frameOrder.length;
+    });
+  }
+
+  function undo() {
+    const previous = past.at(-1);
+    if (!previous) return;
+    setPast((current) => current.slice(0, -1));
+    setFuture((current) => [draft, ...current].slice(0, 50));
+    setDraft(previous);
+    setFrameIndex((current) => Math.min(current, previous.frameOrder.length - 1));
+  }
+
+  function redo() {
+    const next = future[0];
+    if (!next) return;
+    setFuture((current) => current.slice(1));
+    setPast((current) => [...current.slice(-49), draft]);
+    setDraft(next);
+    setFrameIndex((current) => Math.min(current, next.frameOrder.length - 1));
+  }
+
+  function updatePoint(point: AnimationPackV2Point, field: "x" | "y", value: number) {
+    if (!Number.isFinite(value)) return;
+    const next = JSON.parse(JSON.stringify(draft)) as AnimationPackV2;
+    const collections = [next.pivots, next.anchors, next.sockets];
+    const target = collections.flat().find((candidate) => candidate.id === point.id);
+    if (!target) return;
+    target[field] = Math.max(0, Math.min(1, value));
+    target.origin = "user";
+    commit(next);
+  }
+
+  function updateRect(rect: AnimationPackV2Rect, field: "x" | "y" | "width" | "height", value: number) {
+    if (!Number.isFinite(value)) return;
+    const next = JSON.parse(JSON.stringify(draft)) as AnimationPackV2;
+    const target = [...next.hitboxes, ...next.hurtboxes].find((candidate) => candidate.id === rect.id);
+    if (!target) return;
+    target[field] = Math.max(0, Math.min(1, value));
+    target.origin = "user";
+    commit(next);
+  }
+
+  useEffect(() => {
+    if (!playing) return;
+    const timeout = window.setTimeout(() => {
+      setFrameIndex((current) => {
+        if (draft.loopMode === "ping-pong") {
+          if (playbackDirection === 1 && current >= draft.frameOrder.length - 1) {
+            setPlaybackDirection(-1);
+            return Math.max(0, current - 1);
+          }
+          if (playbackDirection === -1 && current <= 0) {
+            setPlaybackDirection(1);
+            return Math.min(draft.frameOrder.length - 1, current + 1);
+          }
+          return current + playbackDirection;
+        }
+        if (current < draft.frameOrder.length - 1) return current + 1;
+        if (draft.loopMode === "one-shot") {
+          setPlaying(false);
+          return current;
+        }
+        return 0;
+      });
+    }, Math.max(16, draft.frameDurations[frameIndex] / speed));
+    return () => window.clearTimeout(timeout);
+  }, [draft.frameDurations, draft.frameOrder.length, draft.loopMode, frameIndex, playbackDirection, playing, speed]);
+
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select")) return;
+      if (event.key === " ") {
+        event.preventDefault();
+        setPlaying((current) => !current);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        step(-1);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        step(1);
+      } else if (event.key === "[" || event.key === "]") {
+        const impact = draft.events.find((candidate) => candidate.type === "impact");
+        if (!impact) return;
+        event.preventDefault();
+        commit(moveAnimationEvent(draft, impact.id, Math.max(0, Math.min(draft.frameOrder.length - 1, impact.frameIndex + (event.key === "[" ? -1 : 1)))));
+      }
+    };
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  });
+
+  return (
+    <div className="prompt-modal-backdrop timeline-editor-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="prompt-modal animation-timeline-editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="animation-timeline-editor-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading timeline-editor-heading">
+          <div>
+            <strong id="animation-timeline-editor-title">{language === "ja" ? "Animation Timeline Review / Edit" : "Animation Timeline Review / Edit"}</strong>
+            <span>{language === "ja" ? "PNGは再生成せず、再生順・時間・ゲーム用メタデータだけを編集します" : "Edit timing and game metadata without regenerating PNG frames."}</span>
+          </div>
+          <div className="timeline-heading-actions">
+            <span className={`timeline-dirty-badge ${dirty ? "is-dirty" : ""}`}>{dirty ? (language === "ja" ? "未保存" : "Unsaved") : (language === "ja" ? "保存済み" : "Saved")}</span>
+            <span className="metadata-only-badge">Metadata only</span>
+            <button className="icon-button" aria-label="Close timeline editor" onClick={onClose}><X size={18} aria-hidden="true" /></button>
+          </div>
+        </div>
+
+        <div className="timeline-editor-layout">
+          <section className="timeline-preview-panel">
+            <div className="timeline-preview-toolbar">
+              <label>
+                <span>{language === "ja" ? "方向" : "Direction"}</span>
+                <select value={direction} onChange={(event) => { setDirection(event.target.value); setFrameIndex(0); setPlaybackDirection(1); }}>
+                  {draft.directions.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+              </label>
+              <button onClick={() => step(-1)} aria-label="Previous frame">◀</button>
+              <button className="primary-button" onClick={() => setPlaying((current) => !current)} aria-label={playing ? "Pause animation" : "Play animation"}>{playing ? "Pause" : "Play"}</button>
+              <button onClick={() => step(1)} aria-label="Next frame">▶</button>
+              <label>
+                <span>{language === "ja" ? "速度" : "Speed"}</span>
+                <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
+                  {[0.5, 1, 1.5, 2].map((value) => <option key={value} value={value}>{value}x</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="timeline-preview-stage" data-testid="timeline-preview-stage">
+              {currentFrameUrl ? <img src={currentFrameUrl} alt={`${direction} frame ${frameIndex + 1}`} /> : <span>{language === "ja" ? "フレームなし" : "No frame"}</span>}
+              <div className="timeline-preview-meta">
+                <strong>{frameIndex + 1}/{draft.frameOrder.length}</strong>
+                <span>source {sourceFrameIndex + 1}</span>
+                <span>{draft.frameDurations[frameIndex]}ms · {speed}x</span>
+              </div>
+            </div>
+            <div className="loop-seam-preview">
+              <figure><img src={directionFrames[draft.frameOrder[0]] ?? ""} alt="First loop frame" /><figcaption>Loop start</figcaption></figure>
+              <span>↔</span>
+              <figure><img src={directionFrames[draft.frameOrder.at(-1) ?? 0] ?? ""} alt="Last loop frame" /><figcaption>Loop seam</figcaption></figure>
+            </div>
+          </section>
+
+          <section className="timeline-controls-panel">
+            <div className="timeline-operation-row">
+              <button onClick={undo} disabled={past.length === 0}>Undo</button>
+              <button onClick={redo} disabled={future.length === 0}>Redo</button>
+              <button onClick={() => commit(validateAnimationPackV2(session.recipeDefault))}>{language === "ja" ? "Recipe初期値へ" : "Recipe defaults"}</button>
+              <button onClick={() => commit(holdAnimationFrame(draft, frameIndex, 100))}>Hold +100ms</button>
+              <button onClick={() => commit(duplicateAnimationFrame(draft, frameIndex))}>{language === "ja" ? "複製" : "Duplicate"}</button>
+              <button onClick={() => commit(reverseAnimationTimeline(draft))}>{language === "ja" ? "反転" : "Reverse"}</button>
+              <label className="timeline-loop-field">
+                <span>Loop</span>
+                <select value={draft.loopMode} onChange={(event) => { setPlaybackDirection(1); commit(setAnimationLoopMode(draft, event.target.value as AnimationPackV2["loopMode"])); }}>
+                  <option value="loop">Loop</option>
+                  <option value="one-shot">One-shot</option>
+                  <option value="ping-pong">Ping-pong</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="timeline-strip" aria-label="Animation timeline">
+              {draft.frameOrder.map((sourceIndex, index) => (
+                <button
+                  key={`${sourceIndex}-${index}`}
+                  className={`timeline-frame-card ${frameIndex === index ? "is-selected" : ""}`}
+                    onClick={() => { setPlaying(false); setFrameIndex(index); setPlaybackDirection(1); }}
+                  aria-label={`Timeline frame ${index + 1}`}
+                >
+                  <span className="timeline-frame-number">{index + 1}</span>
+                  {directionFrames[sourceIndex] && <img src={directionFrames[sourceIndex]} alt="" />}
+                  <input
+                    aria-label={`Frame ${index + 1} duration`}
+                    type="number"
+                    min={1}
+                    value={draft.frameDurations[index]}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value) && value > 0) commit(setAnimationFrameDuration(draft, index, value));
+                    }}
+                  />
+                  <small>ms</small>
+                  <span className="timeline-event-dots">{draft.events.filter((event) => event.frameIndex === index).map((event) => <i key={event.id} title={`${event.name} (${event.origin})`} />)}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="timeline-metadata-grid">
+              <section>
+                <div className="timeline-section-heading"><strong>Events</strong><small>{language === "ja" ? "Recipe / User由来" : "Recipe / User origin"}</small></div>
+                <div className="timeline-event-list">
+                  {draft.events.map((event) => (
+                    <label key={event.id} className={event.frameIndex === frameIndex ? "is-active" : ""}>
+                      <span>{event.name}<small>{event.origin}</small></span>
+                      <input
+                        aria-label={`${event.name} event frame`}
+                        type="number"
+                        min={1}
+                        max={draft.frameOrder.length}
+                        value={event.frameIndex + 1}
+                        onChange={(changeEvent) => {
+                          const value = Number(changeEvent.target.value);
+                          if (Number.isInteger(value) && value >= 1 && value <= draft.frameOrder.length) commit(moveAnimationEvent(draft, event.id, value - 1));
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <div className="timeline-section-heading"><strong>{language === "ja" ? "ゲーム座標" : "Game coordinates"}</strong><small>{language === "ja" ? `選択フレーム ${frameIndex + 1}` : `Selected frame ${frameIndex + 1}`}</small></div>
+                <div className="timeline-add-row">
+                  <button onClick={() => commit(addPackPoint(draft, "pivot", frameIndex))}>+ Pivot</button>
+                  <button onClick={() => commit(addPackPoint(draft, "anchor", frameIndex))}>+ Anchor</button>
+                  <button onClick={() => commit(addPackPoint(draft, "socket", frameIndex))}>+ Socket</button>
+                  <button onClick={() => commit(addPackRect(draft, "hitbox", frameIndex))}>+ Hitbox</button>
+                  <button onClick={() => commit(addPackRect(draft, "hurtbox", frameIndex))}>+ Hurtbox</button>
+                </div>
+                <div className="timeline-coordinate-list">
+                  {selectedPoints.map(({ kind, point }) => (
+                    <div key={`${kind}-${point.id}`}><span>{kind}: {point.name}<small>{point.origin}</small></span><label>X<input type="number" min={0} max={1} step={0.05} value={point.x} onChange={(event) => updatePoint(point, "x", Number(event.target.value))} /></label><label>Y<input type="number" min={0} max={1} step={0.05} value={point.y} onChange={(event) => updatePoint(point, "y", Number(event.target.value))} /></label></div>
+                  ))}
+                  {selectedRects.map((rect) => (
+                    <div key={rect.id}><span>{rect.name}<small>{rect.origin}</small></span>{(["x", "y", "width", "height"] as const).map((field) => <label key={field}>{field[0].toUpperCase()}<input type="number" min={0} max={1} step={0.05} value={rect[field]} onChange={(event) => updateRect(rect, field, Number(event.target.value))} /></label>)}</div>
+                  ))}
+                  {selectedEvents.length === 0 && selectedPoints.length === 0 && selectedRects.length === 0 && <small>{language === "ja" ? "このフレームの追加メタデータはありません" : "No extra metadata on this frame."}</small>}
+                </div>
+              </section>
+            </div>
+          </section>
+        </div>
+
+        {warnings.length > 0 && <div className="timeline-warning-list">{warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
+        <div className="timeline-export-row">
+          {engineExports.map((output) => <button key={output.filename} onClick={() => onExportEngine(output.filename, output.data)}>{output.filename.split("/").at(-1)}</button>)}
+          <button onClick={() => { setRoundTripStatus(language === "ja" ? "検証中…" : "Checking…"); void onRoundTrip(draft).then(setRoundTripStatus).catch((error: unknown) => setRoundTripStatus(error instanceof Error ? error.message : "Round-trip failed")); }}>Pack v2 Round-trip</button>
+          {roundTripStatus && <span>{roundTripStatus}</span>}
+        </div>
+        <div className="prompt-actions animation-pack-actions timeline-editor-actions">
+          <button onClick={onClose}>{language === "ja" ? "閉じる" : "Close"}</button>
+          <button onClick={() => onExport(draft)}><FileArchive size={15} aria-hidden="true" />Pack v2 ZIP</button>
+          <button className="primary-button" onClick={() => { onSave(draft); setSavedSnapshot(serializeAnimationPackV2(draft)); }}>{language === "ja" ? "タイムラインを保存" : "Save timeline"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AnimationPackExportModal({
+  language,
+  draft,
+  onChange,
+  onClose,
+  onExport
+}: {
+  language: Language;
+  draft: AnimationPackExportDraft;
+  onChange: (draft: AnimationPackExportDraft) => void;
+  onClose: () => void;
+  onExport: () => void;
+}) {
+  const copy = uiCopy[language];
+  const updateDraft = (patch: Partial<AnimationPackExportDraft>) => onChange({ ...draft, ...patch });
+  return (
+    <div className="prompt-modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="prompt-modal animation-pack-export-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="animation-pack-export-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prompt-library-heading">
+          <div>
+            <strong id="animation-pack-export-title">{copy.animationPackExportTitle}</strong>
+            <span>{copy.animationPackExportIntro}</span>
+          </div>
+          <button className="icon-button" title={copy.closePromptExamples} aria-label={copy.closePromptExamples} onClick={onClose}>
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="animation-pack-form">
+          <label className="field">
+            <span>{copy.animationPackTitleLabel}</span>
+            <input value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>{copy.animationPackTagsLabel}</span>
+            <input value={draft.tags} onChange={(event) => updateDraft({ tags: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>{copy.animationPackLicenseLabel}</span>
+            <input value={draft.license} onChange={(event) => updateDraft({ license: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>{copy.animationPackSourceLabel}</span>
+            <textarea value={draft.sourceNote} onChange={(event) => updateDraft({ sourceNote: event.target.value })} rows={2} maxLength={360} />
+          </label>
+          <label className="check-row inline">
+            <input
+              type="checkbox"
+              checked={draft.includePromptSummary}
+              onChange={(event) => updateDraft({ includePromptSummary: event.target.checked })}
+            />
+            {copy.animationPackPromptToggle}
+          </label>
+          {draft.includePromptSummary && (
+            <label className="field">
+              <span>{copy.animationPackPromptSummaryLabel}</span>
+              <textarea value={draft.promptSummary} onChange={(event) => updateDraft({ promptSummary: event.target.value })} rows={3} maxLength={500} />
+            </label>
+          )}
+          <p className="animation-pack-rights-hint">{copy.animationPackRightsHint}</p>
+        </div>
+
+        <div className="prompt-actions animation-pack-actions">
+          <button onClick={onClose}>{copy.cancel}</button>
+          <button className="primary-button" onClick={onExport}>
+            <FileArchive size={15} aria-hidden="true" />
+            {copy.saveExport}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function animationLibraryPreviewClassName(item: AnimationLibraryItem) {
+  if (item.action === "idle") return "sample-idle-sheet sample-idle";
+  if (item.action === "run") return "sample-run-sheet sample-run";
+  if (item.action === "walk") return "sample-walk-sheet sample-walk";
+  return "sample-walk-sheet sample-walk";
+}
+
+function WorkflowIcon({ mode }: { mode: WorkflowMode }) {
+  if (mode === "image-generate") return <ImagePlus size={22} aria-hidden="true" />;
+  if (mode === "image-edit") return <Brush size={22} aria-hidden="true" />;
+  if (mode === "sprite-generate") return <Scissors size={22} aria-hidden="true" />;
+  if (mode === "effect-animation") return <Zap size={22} aria-hidden="true" />;
+  return <Grid3X3 size={22} aria-hidden="true" />;
+}
+
+async function splitImageIntoFrames(
+  dataUrl: string,
+  baseName: string,
+  grid: GridSettings,
+  sourceId?: string,
+  targetCell?: { width: number; height: number },
+  options: FrameSplitOptions = {}
+): Promise<SpriteFrame[]> {
+  const image = await loadImage(dataUrl);
+  const cells = calculateGridCells(image.width, image.height, grid);
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return [];
+  return cells.map((cell) => {
+    const width = targetCell?.width ?? cell.width;
+    const height = targetCell?.height ?? cell.height;
+    canvas.width = width;
+    canvas.height = height;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(image, cell.x, cell.y, cell.width, cell.height, 0, 0, width, height);
+    if (options.normalizeOpaqueBounds) normalizeFrameOpaqueBounds(context, width, height, options.residueChromaKey);
+    return {
+      id: createId("frame"),
+      name: `${baseName}_${String(cell.index).padStart(3, "0")}.png`,
+      dataUrl: canvas.toDataURL("image/png"),
+      width,
+      height,
+      sourceId,
+      index: cell.index
+    };
+  });
+}
+
+interface OpaqueBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  count: number;
+}
+
+type OpaqueComponent = FrameComponentMetrics;
+
+const FRAME_ALPHA_THRESHOLD = 12;
+
+function normalizeFrameOpaqueBounds(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  residueChromaKey: FrameResidueChromaKey = "both"
+) {
+  const imageData = context.getImageData(0, 0, width, height);
+  removeFrameEdgeResiduePixels(imageData, width, height, residueChromaKey);
+  const { labels, components } = labelOpaqueComponents(imageData, width, height, residueChromaKey);
+  const primary = selectPrimaryOpaqueComponent(components, width, height);
+  if (!primary || primary.count < 64) return;
+
+  const keepComponents = new Uint8Array(components.length);
+  components.forEach((component) => {
+    if (shouldKeepFrameComponent(component, primary, width, height)) keepComponents[component.id] = 1;
+  });
+
+  const cleaned = new ImageData(new Uint8ClampedArray(imageData.data), width, height);
+  const data = cleaned.data;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const offset = (y * width + x) * 4;
+      const label = labels[index];
+      if (data[offset + 3] <= FRAME_ALPHA_THRESHOLD || label < 0 || keepComponents[label] !== 1) {
+        data[offset + 3] = 0;
+      }
+    }
+  }
+
+  const bounds = findOpaqueBounds(cleaned, width, height);
+  if (!bounds || bounds.count < 64) return;
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = width;
+  sourceCanvas.height = height;
+  const sourceContext = sourceCanvas.getContext("2d");
+  if (!sourceContext) return;
+  sourceContext.putImageData(cleaned, 0, 0);
+
+  const cropWidth = bounds.maxX - bounds.minX + 1;
+  const cropHeight = bounds.maxY - bounds.minY + 1;
+  const targetX = clampNumber(Math.round(width / 2 - cropWidth / 2), 0, Math.max(0, width - cropWidth));
+  const targetFootY = animationNormalizationFootline(height);
+  const targetY = clampNumber(targetFootY - cropHeight, 0, Math.max(0, height - cropHeight));
+
+  context.clearRect(0, 0, width, height);
+  context.drawImage(sourceCanvas, bounds.minX, bounds.minY, cropWidth, cropHeight, targetX, targetY, cropWidth, cropHeight);
+}
+
+function findOpaqueBounds(imageData: ImageData, width: number, height: number): OpaqueBounds | null {
+  const data = imageData.data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let count = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha <= FRAME_ALPHA_THRESHOLD) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      count += 1;
+    }
+  }
+
+  return count > 0 ? { minX, minY, maxX, maxY, count } : null;
+}
+
+function labelOpaqueComponents(
+  imageData: ImageData,
+  width: number,
+  height: number,
+  residueChromaKey: FrameResidueChromaKey = "both"
+) {
+  const data = imageData.data;
+  const visited = new Uint8Array(width * height);
+  const labels = new Int32Array(width * height);
+  labels.fill(-1);
+  const stack = new Int32Array(width * height);
+  const components: OpaqueComponent[] = [];
+
+  for (let start = 0; start < width * height; start += 1) {
+    if (visited[start] || data[start * 4 + 3] <= FRAME_ALPHA_THRESHOLD) continue;
+
+    const id = components.length;
+    let stackLength = 0;
+    stack[stackLength] = start;
+    stackLength += 1;
+    visited[start] = 1;
+    labels[start] = id;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    let count = 0;
+    let sumX = 0;
+    let sumY = 0;
+    let chromaResidueCount = 0;
+    let softAlphaCount = 0;
+
+    while (stackLength > 0) {
+      stackLength -= 1;
+      const index = stack[stackLength];
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const offset = index * 4;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      count += 1;
+      sumX += x;
+      sumY += y;
+      if (isFrameChromaResiduePixel(data, offset, residueChromaKey)) chromaResidueCount += 1;
+      if (data[offset + 3] < 96) softAlphaCount += 1;
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          const nextX = x + dx;
+          const nextY = y + dy;
+          if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) continue;
+          const nextIndex = nextY * width + nextX;
+          if (visited[nextIndex] || data[nextIndex * 4 + 3] <= FRAME_ALPHA_THRESHOLD) continue;
+          visited[nextIndex] = 1;
+          labels[nextIndex] = id;
+          stack[stackLength] = nextIndex;
+          stackLength += 1;
+        }
+      }
+    }
+
+    components.push({
+      id,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      count,
+      centerX: sumX / count,
+      centerY: sumY / count,
+      chromaResidueCount,
+      softAlphaCount
+    });
+  }
+
+  return { labels, components };
+}
+
+function selectPrimaryOpaqueComponent(components: OpaqueComponent[], width: number, height: number): OpaqueComponent | null {
+  let best: OpaqueComponent | null = null;
+  let bestScore = -Infinity;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  components.forEach((component) => {
+    if (component.count < 16) return;
+    const distanceFromCellCenter = Math.hypot(component.centerX - centerX, component.centerY - centerY);
+    const score = component.count - distanceFromCellCenter * 1.25;
+    if (score > bestScore) {
+      bestScore = score;
+      best = component;
+    }
+  });
+
+  return best;
+}
+
+function shouldKeepFrameComponent(component: OpaqueComponent, primary: OpaqueComponent, width: number, height: number) {
+  if (component.id === primary.id) return true;
+  if (isLikelyFrameGarbageComponent(component, primary, width, height)) return false;
+  const horizontalGap = Math.max(0, Math.max(primary.minX - component.maxX, component.minX - primary.maxX));
+  const verticalGap = Math.max(0, Math.max(primary.minY - component.maxY, component.minY - primary.maxY));
+  const nearHorizontally = horizontalGap <= Math.round(width * 0.12);
+  const nearVertically = verticalGap <= Math.round(height * 0.08);
+  const notStrayBelow = component.centerY <= primary.maxY + Math.round(height * 0.08);
+  const notStrayAbove = component.centerY >= primary.minY - Math.round(height * 0.08);
+  return nearHorizontally && nearVertically && notStrayBelow && notStrayAbove;
+}
+
+export function isLikelyFrameGarbageComponent(
+  component: FrameComponentMetrics,
+  primary: FrameComponentMetrics,
+  width: number,
+  height: number
+) {
+  if (component.id === primary.id) return false;
+  const tinyThreshold = frameTinyComponentThreshold(width, height);
+  if (component.count < tinyThreshold) return true;
+
+  const componentWidth = component.maxX - component.minX + 1;
+  const componentHeight = component.maxY - component.minY + 1;
+  const chromaResidueRatio = component.chromaResidueCount / Math.max(1, component.count);
+  const softAlphaRatio = component.softAlphaCount / Math.max(1, component.count);
+  const mostlyChromaResidue = chromaResidueRatio >= 0.35 || (chromaResidueRatio >= 0.18 && softAlphaRatio >= 0.25);
+  const nearFootLine = component.centerY >= primary.maxY - Math.round(height * 0.08);
+  const compactFootSpeck =
+    componentWidth <= Math.round(width * 0.16) &&
+    componentHeight <= Math.round(height * 0.12) &&
+    component.count < tinyThreshold * 3;
+
+  return (
+    (mostlyChromaResidue && component.count < tinyThreshold * 8) ||
+    (nearFootLine && compactFootSpeck && (mostlyChromaResidue || component.count < tinyThreshold * 2))
+  );
+}
+
+function frameTinyComponentThreshold(width: number, height: number) {
+  return Math.max(12, Math.round(width * height * 0.00065));
+}
+
+export function isFrameChromaResiduePixel(
+  data: Uint8ClampedArray,
+  offset: number,
+  residueChromaKey: FrameResidueChromaKey = "both"
+) {
+  const alpha = data[offset + 3];
+  if (alpha <= FRAME_ALPHA_THRESHOLD) return false;
+  const r = data[offset];
+  const g = data[offset + 1];
+  const b = data[offset + 2];
+  const checkGreen = residueChromaKey === "green" || residueChromaKey === "both";
+  const checkMagenta = residueChromaKey === "magenta" || residueChromaKey === "both";
+  const greenResidue = isStrictChromaResidueColor(r, g, b, "green");
+  const magentaResidue = isStrictChromaResidueColor(r, g, b, "magenta");
+  return (checkGreen && greenResidue) || (checkMagenta && magentaResidue);
+}
+
+function isStrictChromaResiduePixel(data: Uint8ClampedArray, offset: number, chromaKey: AnimationChromaKeyName) {
+  return isStrictChromaResidueColor(data[offset], data[offset + 1], data[offset + 2], chromaKey);
+}
+
+function isStrictChromaResidueColor(r: number, g: number, b: number, chromaKey: AnimationChromaKeyName) {
+  if (chromaKey === "green") {
+    const pureDarkGreen = g >= 96 && r <= 56 && b <= 56 && g >= r + 45 && g >= b + 45;
+    const brightKeyGreen = g >= 150 && r <= 112 && b <= 112 && g >= r + 70 && g >= b + 70;
+    return pureDarkGreen || brightKeyGreen;
+  }
+  const pureDarkMagenta = r >= 96 && b >= 96 && g <= 56 && r >= g + 45 && b >= g + 45;
+  const brightKeyMagenta = r >= 150 && b >= 150 && g <= 112 && r >= g + 70 && b >= g + 70;
+  return pureDarkMagenta || brightKeyMagenta;
+}
+
+function removeFrameEdgeResiduePixels(
+  imageData: ImageData,
+  width: number,
+  height: number,
+  residueChromaKey: FrameResidueChromaKey = "both"
+) {
+  const data = imageData.data;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const source = new Uint8ClampedArray(data);
+    let removed = 0;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 4;
+        if (!isFrameChromaResiduePixel(source, offset, residueChromaKey)) continue;
+        if (!hasTransparentNeighbor(source, width, height, x, y)) continue;
+        data[offset + 3] = 0;
+        removed += 1;
+      }
+    }
+    if (removed === 0) break;
+  }
+  despillFrameEdgePixels(imageData, width, height, residueChromaKey);
+}
+
+function hasTransparentNeighbor(data: Uint8ClampedArray, width: number, height: number, x: number, y: number) {
+  return hasTransparentNeighborWithin(data, width, height, x, y, 1);
+}
+
+function hasTransparentNeighborWithin(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number
+) {
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const nextX = x + dx;
+      const nextY = y + dy;
+      if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) return true;
+      if (data[(nextY * width + nextX) * 4 + 3] <= FRAME_ALPHA_THRESHOLD) return true;
+    }
+  }
+  return false;
+}
+
+function despillFrameEdgePixels(
+  imageData: ImageData,
+  width: number,
+  height: number,
+  residueChromaKey: FrameResidueChromaKey = "both"
+) {
+  const source = new Uint8ClampedArray(imageData.data);
+  const data = imageData.data;
+  const checkGreen = residueChromaKey === "green" || residueChromaKey === "both";
+  const checkMagenta = residueChromaKey === "magenta" || residueChromaKey === "both";
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (source[offset + 3] <= FRAME_ALPHA_THRESHOLD) continue;
+      if (!hasTransparentNeighborWithin(source, width, height, x, y, 2)) continue;
+
+      const r = source[offset];
+      const g = source[offset + 1];
+      const b = source[offset + 2];
+      if (checkGreen && isStrictChromaResidueColor(r, g, b, "green")) {
+        data[offset + 1] = Math.min(g, Math.max(r, b));
+      }
+      if (checkMagenta && isStrictChromaResidueColor(r, g, b, "magenta")) {
+        const limit = Math.max(g, Math.round((r + b) / 4));
+        data[offset] = Math.min(r, limit);
+        data[offset + 2] = Math.min(b, limit);
+      }
+    }
+  }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function roundNumber(value: number, digits: number) {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function roundRect(rect: ImageRectCoordinates, digits: number): ImageRectCoordinates {
+  return {
+    x: roundNumber(rect.x, digits),
+    y: roundNumber(rect.y, digits),
+    width: roundNumber(rect.width, digits),
+    height: roundNumber(rect.height, digits)
+  };
+}
+
+function drawCheckerboard(context: CanvasRenderingContext2D, width: number, height: number, size: number) {
+  context.fillStyle = "#f8faf8";
+  context.fillRect(0, 0, width, height);
+  for (let y = 0; y < height; y += size) {
+    for (let x = 0; x < width; x += size) {
+      context.fillStyle = (x / size + y / size) % 2 === 0 ? "#eef1ee" : "#ffffff";
+      context.fillRect(x, y, size, size);
+    }
+  }
+}
+
+function drawEmptyCanvas(context: CanvasRenderingContext2D, message: string) {
+  context.fillStyle = "#4b5b50";
+  context.font = "600 18px Inter, system-ui, sans-serif";
+  context.fillText(message, 250, 250);
+}
+
+function drawGridOverlay(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  columns: number,
+  rows: number
+) {
+  context.save();
+  context.strokeStyle = "rgba(20, 160, 150, 0.58)";
+  context.lineWidth = 1;
+  for (let column = 0; column <= columns; column += 1) {
+    const px = x + (width / columns) * column;
+    context.beginPath();
+    context.moveTo(px, y);
+    context.lineTo(px, y + height);
+    context.stroke();
+  }
+  for (let row = 0; row <= rows; row += 1) {
+    const py = y + (height / rows) * row;
+    context.beginPath();
+    context.moveTo(x, py);
+    context.lineTo(x + width, py);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawCenterOverlay(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number) {
+  context.save();
+  context.strokeStyle = "rgba(31, 132, 118, 0.72)";
+  context.setLineDash([7, 7]);
+  context.beginPath();
+  context.moveTo(x + width / 2, y);
+  context.lineTo(x + width / 2, y + height);
+  context.moveTo(x, y + height / 2);
+  context.lineTo(x + width, y + height / 2);
+  context.stroke();
+  context.restore();
+}
+
+function drawAnnotation(context: CanvasRenderingContext2D, annotation: Annotation) {
+  const [start, end = start] = annotation.points;
+  context.save();
+  context.strokeStyle = annotation.color;
+  context.fillStyle = annotation.color;
+  context.lineWidth = annotation.width;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  if (annotation.tool === "brush") {
+    context.beginPath();
+    annotation.points.forEach((point, index) => {
+      if (index === 0) context.moveTo(point.x, point.y);
+      else context.lineTo(point.x, point.y);
+    });
+    context.stroke();
+  }
+  if (annotation.tool === "rect") {
+    const rect = annotationRect(annotation);
+    context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    const label = `#${annotation.number ?? ""}`;
+    context.font = "700 14px Inter, system-ui, sans-serif";
+    const labelWidth = Math.max(28, context.measureText(label).width + 14);
+    const labelX = Math.max(4, rect.x);
+    const labelY = Math.max(4, rect.y - 28);
+    context.fillStyle = annotation.color;
+    context.fillRect(labelX, labelY, labelWidth, 24);
+    context.fillStyle = "#ffffff";
+    context.fillText(label, labelX + 7, labelY + 17);
+  }
+  if (annotation.tool === "arrow") {
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const arrowSize = 14;
+    context.beginPath();
+    context.moveTo(end.x, end.y);
+    context.lineTo(end.x - arrowSize * Math.cos(angle - Math.PI / 6), end.y - arrowSize * Math.sin(angle - Math.PI / 6));
+    context.lineTo(end.x - arrowSize * Math.cos(angle + Math.PI / 6), end.y - arrowSize * Math.sin(angle + Math.PI / 6));
+    context.closePath();
+    context.fill();
+  }
+  context.restore();
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16)
+  };
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(
+    new Date(value)
+  );
+}
+
+function formatDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  if (minutes < 60) return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}:${String(remainingMinutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function formatDurationSinceAt(value: string, nowMs: number) {
+  const start = Date.parse(value);
+  if (!Number.isFinite(start)) return "-";
+  return formatDuration((nowMs - start) / 1000);
+}
+
+function formatDurationSince(value: string) {
+  return formatDurationSinceAt(value, Date.now());
+}
+
+function codexProgressEstimateMs(workflowMode?: WorkflowMode | null) {
+  return workflowMode ? CODEX_PROGRESS_ESTIMATE_MS[workflowMode] : CODEX_PROGRESS_ESTIMATE_MS.default;
+}
+
+function codexJobElapsedRatio(createdAt: string, nowMs: number, workflowMode?: WorkflowMode | null) {
+  const start = Date.parse(createdAt);
+  if (!Number.isFinite(start)) return 0;
+  const elapsedMs = Math.max(0, nowMs - start);
+  return elapsedMs / codexProgressEstimateMs(workflowMode);
+}
+
+export function estimateCodexJobProgress(createdAt: string, nowMs = Date.now(), workflowMode?: WorkflowMode | null) {
+  const ratio = codexJobElapsedRatio(createdAt, nowMs, workflowMode);
+  if (ratio <= 0) return 7;
+  if (ratio < 0.08) return 7 + ratio / 0.08 * 11;
+  if (ratio < 0.68) return 18 + (ratio - 0.08) / 0.6 * 54;
+  if (ratio < 1) return 72 + (ratio - 0.68) / 0.32 * 18;
+  const extended = 90 + Math.log2(Math.max(1, ratio)) * 4;
+  return Math.min(96, extended);
+}
+
+export function codexJobProgressPhase(
+  state: CodexJobQueueState,
+  createdAt: string,
+  nowMs = Date.now(),
+  workflowMode?: WorkflowMode | null
+): CodexJobProgressPhase {
+  if (state === "queued") return "queued";
+  const ratio = codexJobElapsedRatio(createdAt, nowMs, workflowMode);
+  if (ratio < 0.08) return "starting";
+  if (ratio < 0.68) return "generating";
+  if (ratio < 1) return "checking";
+  return "extended";
+}
+
+export function resolveInitialLanguage(stored: string | null, browserLanguages: readonly string[] = []): Language {
+  const storedLanguage = stored ? resolveLocaleToLanguage(stored) : null;
+  if (storedLanguage) return storedLanguage;
+
+  for (const browserLanguage of browserLanguages) {
+    const resolved = resolveLocaleToLanguage(browserLanguage);
+    if (resolved) return resolved;
+  }
+
+  return "en";
+}
+
+function resolveLocaleToLanguage(value: string): Language | null {
+  const normalized = value.trim().replace(/_/g, "-").toLowerCase();
+  if (!normalized) return null;
+
+  const exact = SUPPORTED_LANGUAGE_IDS.find((language) => language.toLowerCase() === normalized);
+  if (exact) return exact;
+
+  if (normalized === "zh-tw" || normalized.startsWith("zh-hant") || normalized.startsWith("zh-hk") || normalized.startsWith("zh-mo")) {
+    return "zh-TW";
+  }
+  if (normalized === "zh" || normalized.startsWith("zh-cn") || normalized.startsWith("zh-hans") || normalized.startsWith("zh-sg")) {
+    return "zh-CN";
+  }
+  if (normalized === "pt" || normalized.startsWith("pt-")) return "pt-BR";
+  if (normalized === "in" || normalized.startsWith("in-")) return "id";
+
+  const prefix = normalized.split("-")[0] ?? "";
+  return supportedLanguageSet.has(prefix) ? (prefix as Language) : null;
+}
+
+function loadLanguage(): Language {
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    const browserLanguages = window.navigator.languages?.length ? window.navigator.languages : [window.navigator.language];
+    return resolveInitialLanguage(stored, browserLanguages.filter(Boolean));
+  } catch {
+    return "en";
+  }
+}
+
+function formatImagesImportedStatus(count: number, language: Language) {
+  return imageImportedStatusCopy[language](count);
+}
+
+function formatFramesAddedStatus(count: number, actionName: string, language: Language) {
+  return framesAddedStatusCopy[language](count, actionName);
+}
+
+const imageImportedStatusCopy = {
+  en: (count: number) => `${count} image${count === 1 ? "" : "s"} imported`,
+  ja: (count: number) => `${count}件の画像を取り込みました`,
+  "zh-CN": (count: number) => `已导入 ${count} 张图像`,
+  "zh-TW": (count: number) => `已匯入 ${count} 張圖像`,
+  ko: (count: number) => `${count}개의 이미지를 가져왔습니다`,
+  ru: (count: number) => `Импортировано изображений: ${count}`,
+  es: (count: number) => `${count} imagen${count === 1 ? "" : "es"} importada${count === 1 ? "" : "s"}`,
+  "pt-BR": (count: number) => `${count} imagem${count === 1 ? "" : "ns"} importada${count === 1 ? "" : "s"}`,
+  de: (count: number) => `${count} Bild${count === 1 ? "" : "er"} importiert`,
+  fr: (count: number) => `${count} image${count === 1 ? "" : "s"} importée${count === 1 ? "" : "s"}`,
+  id: (count: number) => `${count} gambar diimpor`,
+  tr: (count: number) => `${count} görsel içe aktarıldı`,
+  vi: (count: number) => `Đã nhập ${count} ảnh`,
+  pl: (count: number) => `Zaimportowano obrazów: ${count}`,
+  it: (count: number) => `${count} immagin${count === 1 ? "e importata" : "i importate"}`
+} satisfies Record<Language, (count: number) => string>;
+
+const framesAddedStatusCopy = {
+  en: (count: number, actionName: string) => `${count} frame${count === 1 ? "" : "s"} added to ${actionName}`,
+  ja: (count: number, actionName: string) => `${actionName} に ${count}件のフレームを追加しました`,
+  "zh-CN": (count: number, actionName: string) => `已向 ${actionName} 添加 ${count} 帧`,
+  "zh-TW": (count: number, actionName: string) => `已向 ${actionName} 加入 ${count} 個影格`,
+  ko: (count: number, actionName: string) => `${actionName}에 ${count}개의 프레임을 추가했습니다`,
+  ru: (count: number, actionName: string) => `Кадров добавлено в ${actionName}: ${count}`,
+  es: (count: number, actionName: string) => `${count} fotograma${count === 1 ? "" : "s"} añadido${count === 1 ? "" : "s"} a ${actionName}`,
+  "pt-BR": (count: number, actionName: string) => `${count} quadro${count === 1 ? "" : "s"} adicionado${count === 1 ? "" : "s"} a ${actionName}`,
+  de: (count: number, actionName: string) => `${count} Frame${count === 1 ? "" : "s"} zu ${actionName} hinzugefügt`,
+  fr: (count: number, actionName: string) => `${count} image${count === 1 ? "" : "s"} ajoutée${count === 1 ? "" : "s"} à ${actionName}`,
+  id: (count: number, actionName: string) => `${count} frame ditambahkan ke ${actionName}`,
+  tr: (count: number, actionName: string) => `${actionName} için ${count} kare eklendi`,
+  vi: (count: number, actionName: string) => `Đã thêm ${count} khung vào ${actionName}`,
+  pl: (count: number, actionName: string) => `Dodano klatki do ${actionName}: ${count}`,
+  it: (count: number, actionName: string) => `${count} frame aggiunt${count === 1 ? "o" : "i"} a ${actionName}`
+} satisfies Record<Language, (count: number, actionName: string) => string>;
+
+function saveLanguage(language: Language) {
+  try {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // The selector still works for the current session if storage is unavailable.
+  }
+}
+
+function loadJobNotificationsEnabled() {
+  try {
+    return window.localStorage.getItem(JOB_NOTIFICATION_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function saveJobNotificationsEnabled(enabled: boolean) {
+  try {
+    window.localStorage.setItem(JOB_NOTIFICATION_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    // The toggle still applies for the current session if storage is unavailable.
+  }
+}
+
+async function fingerprintImageSource(dataUrl: string) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error("Could not read the selected animation source for fingerprinting.");
+  const digest = await crypto.subtle.digest("SHA-256", await response.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function loadPendingCodexJobs(): CodexJobQueueItem[] {
+  try {
+    const stored = window.localStorage.getItem(PENDING_CODEX_JOB_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    const jobs = Array.isArray(parsed) ? parsed : [parsed];
+    return jobs
+      .filter(isStoredPendingCodexJob)
+      .map((job) => ({
+        ...job,
+        state: job.state === "evaluating" ? "evaluating" as const : "running" as const,
+        label: job.label ?? codexJobLabel(job.workflowMode ?? null, "", job.actionName)
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function savePendingCodexJobs(jobs: CodexJobQueueItem[]) {
+  try {
+    const runningJobs: PendingCodexJob[] = jobs
+      .filter((job) => (job.state === "running" || job.state === "evaluating") && Boolean(job.path))
+      .map((job) => ({
+        id: job.id,
+        path: job.path ?? "",
+        outboxPath: job.outboxPath,
+        createdAt: job.createdAt,
+        state: job.state === "evaluating" ? "evaluating" : "running",
+        label: job.label,
+        workflowMode: job.workflowMode,
+        actionName: job.actionName,
+        grid: job.grid,
+        cell: job.cell,
+        chromaKey: job.chromaKey,
+        spriteVariant: job.spriteVariant,
+        directions: job.directions,
+        sourceImageId: job.sourceImageId,
+        sourceImageName: job.sourceImageName,
+        tournamentId: job.tournamentId,
+        tournamentCandidateIndex: job.tournamentCandidateIndex,
+        tournamentCandidateCount: job.tournamentCandidateCount,
+        generationProfile: job.generationProfile,
+        sourceFingerprint: job.sourceFingerprint,
+        repairDirections: job.repairDirections,
+        framesPerDirection: job.framesPerDirection,
+        motionRecipe: job.motionRecipe,
+        effectContext: job.effectContext
+      }));
+    if (runningJobs.length > 0) {
+      window.localStorage.setItem(PENDING_CODEX_JOB_STORAGE_KEY, JSON.stringify(runningJobs));
+      return;
+    }
+    window.localStorage.removeItem(PENDING_CODEX_JOB_STORAGE_KEY);
+  } catch {
+    // Pending state is best-effort; the current session still tracks active jobs.
+  }
+}
+
+function isStoredPendingCodexJob(value: unknown): value is PendingCodexJob {
+  if (!value || typeof value !== "object") return false;
+  const job = value as Partial<PendingCodexJob>;
+  return typeof job.id === "string" && typeof job.path === "string" && typeof job.createdAt === "string";
+}
+
+function providerLabel(provider: ProviderId, language: Language) {
+  return providerLabels[language][provider];
+}
+
+function providerMessage(provider: ProviderStatus, language: Language) {
+  return providerMessages[language][provider.id] ?? provider.message;
+}
+
+const providerLabels = {
+  en: { "local-file": "Local File", "local-generator": "Local Generator", "codex-handoff": "Codex Handoff", "local-inbox": "Local Inbox" },
+  ja: { "local-file": "ローカルファイル", "local-generator": "ローカル生成", "codex-handoff": "Codex受け渡し", "local-inbox": "ローカル受信箱" },
+  "zh-CN": { "local-file": "本地文件", "local-generator": "本地生成", "codex-handoff": "Codex 交接", "local-inbox": "本地收件箱" },
+  "zh-TW": { "local-file": "本地檔案", "local-generator": "本地生成", "codex-handoff": "Codex 交接", "local-inbox": "本地收件匣" },
+  ko: { "local-file": "로컬 파일", "local-generator": "로컬 생성", "codex-handoff": "Codex 전달", "local-inbox": "로컬 수신함" },
+  ru: { "local-file": "Локальный файл", "local-generator": "Локальная генерация", "codex-handoff": "Handoff Codex", "local-inbox": "Локальный inbox" },
+  es: { "local-file": "Archivo local", "local-generator": "Generador local", "codex-handoff": "Handoff Codex", "local-inbox": "Bandeja local" },
+  "pt-BR": { "local-file": "Arquivo local", "local-generator": "Gerador local", "codex-handoff": "Handoff Codex", "local-inbox": "Caixa local" },
+  de: { "local-file": "Lokale Datei", "local-generator": "Lokaler Generator", "codex-handoff": "Codex-Handoff", "local-inbox": "Lokaler Eingang" },
+  fr: { "local-file": "Fichier local", "local-generator": "Générateur local", "codex-handoff": "Handoff Codex", "local-inbox": "Boîte locale" },
+  id: { "local-file": "File lokal", "local-generator": "Generator lokal", "codex-handoff": "Handoff Codex", "local-inbox": "Kotak lokal" },
+  tr: { "local-file": "Yerel dosya", "local-generator": "Yerel üretici", "codex-handoff": "Codex handoff", "local-inbox": "Yerel gelen kutusu" },
+  vi: { "local-file": "Tệp cục bộ", "local-generator": "Trình tạo cục bộ", "codex-handoff": "Handoff Codex", "local-inbox": "Hộp cục bộ" },
+  pl: { "local-file": "Plik lokalny", "local-generator": "Generator lokalny", "codex-handoff": "Handoff Codex", "local-inbox": "Lokalna skrzynka" },
+  it: { "local-file": "File locale", "local-generator": "Generatore locale", "codex-handoff": "Handoff Codex", "local-inbox": "Inbox locale" }
+} satisfies Record<Language, Record<ProviderId, string>>;
+
+const providerMessages = {
+  en: { "local-file": "Use images from this machine", "local-generator": "Generate local PNG images", "codex-handoff": "Write local jobs for Codex to pick up", "local-inbox": "Import results returned by Codex" },
+  ja: { "local-file": "このマシン上の画像を使います", "local-generator": "このマシン上でPNGを生成します", "codex-handoff": "Codexが拾うローカルジョブを書き込みます", "local-inbox": "Codex outboxの最新画像を取り込みます" },
+  "zh-CN": { "local-file": "使用本机图像", "local-generator": "在本机生成 PNG", "codex-handoff": "写入供 Codex 处理的本地作业", "local-inbox": "导入 Codex 返回的结果" },
+  "zh-TW": { "local-file": "使用本機圖像", "local-generator": "在本機生成 PNG", "codex-handoff": "寫入供 Codex 處理的本地作業", "local-inbox": "匯入 Codex 返回的結果" },
+  ko: { "local-file": "이 컴퓨터의 이미지를 사용합니다", "local-generator": "로컬 PNG 이미지를 생성합니다", "codex-handoff": "Codex가 처리할 로컬 작업을 씁니다", "local-inbox": "Codex가 반환한 결과를 가져옵니다" },
+  ru: { "local-file": "Использует изображения с этого компьютера", "local-generator": "Создает локальные PNG", "codex-handoff": "Записывает локальные задания для Codex", "local-inbox": "Импортирует результаты Codex" },
+  es: { "local-file": "Usa imágenes de este equipo", "local-generator": "Genera PNG locales", "codex-handoff": "Escribe trabajos locales para Codex", "local-inbox": "Importa resultados devueltos por Codex" },
+  "pt-BR": { "local-file": "Usa imagens deste computador", "local-generator": "Gera PNGs locais", "codex-handoff": "Grava jobs locais para o Codex", "local-inbox": "Importa resultados retornados pelo Codex" },
+  de: { "local-file": "Bilder von diesem Gerät verwenden", "local-generator": "Lokale PNGs erzeugen", "codex-handoff": "Lokale Jobs für Codex schreiben", "local-inbox": "Von Codex zurückgegebene Ergebnisse importieren" },
+  fr: { "local-file": "Utilise les images de cette machine", "local-generator": "Génère des PNG locaux", "codex-handoff": "Écrit des tâches locales pour Codex", "local-inbox": "Importe les résultats renvoyés par Codex" },
+  id: { "local-file": "Gunakan gambar dari mesin ini", "local-generator": "Buat PNG lokal", "codex-handoff": "Tulis job lokal untuk Codex", "local-inbox": "Impor hasil dari Codex" },
+  tr: { "local-file": "Bu makinedeki görselleri kullanır", "local-generator": "Yerel PNG üretir", "codex-handoff": "Codex için yerel işler yazar", "local-inbox": "Codex sonuçlarını içe aktarır" },
+  vi: { "local-file": "Dùng ảnh trên máy này", "local-generator": "Tạo PNG cục bộ", "codex-handoff": "Ghi job cục bộ cho Codex", "local-inbox": "Nhập kết quả Codex trả về" },
+  pl: { "local-file": "Używa obrazów z tego komputera", "local-generator": "Tworzy lokalne PNG", "codex-handoff": "Zapisuje lokalne zadania dla Codex", "local-inbox": "Importuje wyniki z Codex" },
+  it: { "local-file": "Usa immagini da questa macchina", "local-generator": "Genera PNG locali", "codex-handoff": "Scrive job locali per Codex", "local-inbox": "Importa risultati restituiti da Codex" }
+} satisfies Record<Language, Record<ProviderId, string>>;
+
+export default App;

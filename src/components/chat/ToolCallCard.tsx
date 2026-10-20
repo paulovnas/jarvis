@@ -12,7 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Spinner } from "@/components/ui/spinner";
 import type { ToolCallItem } from "./types";
 import { QuestionHistory } from "./QuestionHistory";
-import { isTaskReminder } from "./tool-activity";
+import { toolSeverity } from "./tool-activity";
 import { computerInputTools } from "@/core/computer-use";
 import { Hint } from "@/components/ui/hint";
 
@@ -63,6 +63,10 @@ const tools = {
   vision: { label: "Análise de imagem", icon: Eye },
   generate_image: { label: "Geração de imagem", icon: ImagePlus },
   image_process: { label: "Processar imagem", icon: ImagePlus },
+  pixel_art_docs: { label: "Pixel art · Ferramentas e recursos", icon: BookOpen },
+  pixel_art_run: { label: "Pixel art · Executar operação", icon: ImagePlus },
+  pixel_art_status: { label: "Pixel art · Progresso e resultados", icon: Film },
+  pixel_art_cancel: { label: "Pixel art · Cancelar operação", icon: TriangleAlert },
   video_docs: { label: "Vídeo · Documentação", icon: BookOpen },
   video_tools: { label: "OpenMontage · Ferramentas", icon: Film },
   video_brag_assets: { label: "Brag · Trilhas e efeitos", icon: AudioLines },
@@ -173,7 +177,7 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
       : current.args?.title ?? current.args?.path ?? current.args?.output ?? current.args?.command ?? current.args?.query ?? current.args?.question ?? current.args?.url ?? current.args?.targetId ?? (current.name.startsWith("video_") ? current.args?.tool ?? current.args?.topic : undefined);
   const searchResult = current.name === "web_search" && current.output ? readWebSearchResult(current.output) : null;
   const visionResult = current.name === "vision" && current.output ? readVisionResult(current.output) : null;
-  const warning = isTaskReminder(current);
+  const warning = toolSeverity(current) === "warning";
   const status = warning ? "Atenção" : { pending: "Aguardando autorização", running: "Executando", completed: "Concluída", error: "Não concluída" }[current.status];
   const mutation = ["write", "edit", "apply_patch"].includes(current.name) || computerInputTools.includes(current.name);
   const requestDetails = () => {
@@ -198,7 +202,7 @@ export function ToolCallCard({ tool, detailContext }: { tool: ToolCallItem; deta
         {loadError && <div className="flex items-center justify-between gap-3"><p role="alert" className="text-destructive">{loadError}</p><Button variant="outline" size="sm" className="cursor-pointer" onClick={requestDetails}>Tentar novamente</Button></div>}
         {!deferred && current.args && <div><p className="mb-1">Parâmetros</p><pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-foreground">{JSON.stringify(current.args, null, 2)}</pre></div>}
         {searchResult ? <div className="flex max-h-80 flex-col gap-3 overflow-auto rounded-md bg-muted p-3 text-foreground">
-          <p className="text-xs text-muted-foreground">{searchResult.accountAlias} · {searchResult.model}</p>
+          <p className="text-xs text-muted-foreground">{searchResult.accountAlias} · {searchResult.model ?? searchResult.provider ?? "Web Search"}</p>
           <Suspense fallback={<Skeleton className="h-8 w-full" />}><ChatMarkdown content={searchResult.answer} /></Suspense>
           <p className="font-medium">Fontes</p>
           {searchResult.sources.map((source) => <Button key={source.url} variant="link" className="h-auto cursor-pointer justify-start whitespace-normal px-0 text-left text-xs" onClick={() => { void openUrl(source.url).catch(() => toast.error("Não foi possível abrir o link")); }}>{source.title}</Button>)}

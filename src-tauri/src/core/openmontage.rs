@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -311,13 +312,6 @@ pub(super) fn validate(generation: &Path, version: &str) -> Result<(), CoreError
             ));
         }
     }
-    if fs::read(generation.join(REPOSITORY).join(BRIDGE))?
-        != include_bytes!("openmontage_bridge.py")
-    {
-        return Err(error(
-            "A integração do OpenMontage mudou. Repare o componente no Core.",
-        ));
-    }
     if fs::read(generation.join(REPOSITORY).join("jarvis_board.py"))?
         != include_bytes!("openmontage/board-runner.py")
         || fs::read(generation.join("bin/jarvis-npx.cjs"))?
@@ -327,6 +321,30 @@ pub(super) fn validate(generation: &Path, version: &str) -> Result<(), CoreError
             "A integração visual do OpenMontage mudou. Repare o componente no Core.",
         ));
     }
+    // Only migrate the previous shipped native adapter, including its Windows line endings.
+    refresh_managed_bridge(generation, &[
+        "bd444f1cca34375eb8c7f5f044fc52e947ecbfa2c3a1335f6a2eb026f1235260",
+        "70ff0f318e2e3a7f67a07b5e541d9f7f35f5d085edb6f4ada7131b9ac34ee9d2",
+    ])
+}
+
+fn refresh_managed_bridge(generation: &Path, previous: &[&str]) -> Result<(), CoreError> {
+    contained(generation, &format!("{REPOSITORY}/{BRIDGE}"))?;
+    let path = generation.join(REPOSITORY).join(BRIDGE);
+    let saved = fs::read(&path)?;
+    let current = include_bytes!("openmontage_bridge.py");
+    if saved == current {
+        return Ok(());
+    }
+    let digest = format!("{:x}", Sha256::digest(&saved));
+    if !previous.contains(&digest.as_str()) {
+        return Err(error("A integração do OpenMontage mudou. Repare o componente no Core."));
+    }
+    let mut replacement = tempfile::NamedTempFile::new_in(generation.join(REPOSITORY))?;
+    replacement.write_all(current)?;
+    replacement.as_file().sync_all()?;
+    replacement.persist(path)
+        .map_err(|_| error("Não foi possível atualizar o adaptador gerenciado do OpenMontage."))?;
     Ok(())
 }
 

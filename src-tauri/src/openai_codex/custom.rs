@@ -15,6 +15,7 @@ pub(crate) enum Protocol {
     OpenaiCompletions,
     OpenaiResponses,
     AnthropicMessages,
+    Ollama,
 }
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -97,6 +98,9 @@ pub(crate) fn validate_alias(alias: &str) -> Result<(), ProviderError> {
 }
 impl Config {
     pub(crate) fn endpoint(&self) -> Result<reqwest::Url, ProviderError> {
+        if self.protocol == Protocol::Ollama {
+            return super::ollama::endpoint(&self.base_url, "chat");
+        }
         let mut url = reqwest::Url::parse(&self.base_url)
             .map_err(|_| invalid("Informe uma URL base válida."))?;
         let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
@@ -116,6 +120,7 @@ impl Config {
             Protocol::OpenaiCompletions => "/chat/completions",
             Protocol::OpenaiResponses => "/responses",
             Protocol::AnthropicMessages => "/messages",
+            Protocol::Ollama => unreachable!("native endpoint was handled above"),
         };
         let path = url.path().trim_end_matches('/').to_owned();
         if ["/chat/completions", "/responses", "/messages"]
@@ -190,11 +195,25 @@ impl Config {
                         | Reasoning::Toggle
                         | Reasoning::EnabledEffort
                 ),
+                Protocol::Ollama => matches!(
+                    model.reasoning,
+                    Reasoning::None | Reasoning::Toggle | Reasoning::Effort
+                ),
             };
             if !compatible {
                 return Err(invalid(
                     "O formato de raciocínio não é compatível com o endpoint.",
                 ));
+            }
+            if self.protocol == Protocol::Ollama
+                && model.reasoning == Reasoning::Toggle
+                && (!model.reasoning_levels.iter().any(|level| level == "on")
+                    || model
+                        .reasoning_levels
+                        .iter()
+                        .any(|level| !matches!(level.as_str(), "off" | "on")))
+            {
+                return Err(invalid("O raciocínio do Ollama usa os valores off/on ou níveis anunciados pelo modelo."));
             }
             let levels = &model.reasoning_levels;
             if levels.len() > 12
@@ -352,8 +371,13 @@ pub(super) fn save_provider_with_balance(
     kind: &str,
     balance_key: Option<Option<&str>>,
 ) -> Result<(), ProviderError> {
-    if !matches!(kind, "custom" | "charm-hyper" | "openrouter") {
+    if !matches!(kind, "custom" | "charm-hyper" | "openrouter" | "ollama") {
         return Err(ProviderError::internal());
+    }
+    if (kind == "ollama") != (config.protocol == Protocol::Ollama) {
+        return Err(invalid(
+            "Cadastre a conexão nativa do Ollama no provedor Ollama.",
+        ));
     }
     validate_alias(alias)?;
     let display_name = display_name
@@ -382,7 +406,7 @@ pub(super) fn save_provider_with_balance(
     if key.is_some_and(|key| key.len() > 8192 || !key.bytes().all(|byte| byte.is_ascii_graphic())) {
         return Err(invalid("A chave contém caracteres inválidos."));
     }
-    let old_credential = if editing {
+    let old_credential = if editing && kind != "ollama" {
         match store.load(alias) {
             Ok(credential) => Some(credential),
             Err(super::SecretStoreError::Missing) => None,
@@ -391,7 +415,7 @@ pub(super) fn save_provider_with_balance(
     } else {
         None
     };
-    if key.is_none() && old_credential.is_none() {
+    if key.is_none() && old_credential.is_none() && kind != "ollama" {
         return Err(invalid("Informe a chave de API."));
     }
     let account_id = previous
@@ -425,7 +449,7 @@ pub(super) fn save_provider_with_balance(
         .transaction()
         .map_err(|_| ProviderError::database())?;
     if !editing {
-        transaction.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id, show_usage) VALUES (?1, ?2, ?3, ?4)", params![alias, kind, account_id, kind != "custom"]).map_err(|_| ProviderError::database())?;
+        transaction.execute("INSERT INTO provider_accounts(alias, provider_kind, account_id, show_usage) VALUES (?1, ?2, ?3, ?4)", params![alias, kind, account_id, !matches!(kind, "custom" | "ollama")]).map_err(|_| ProviderError::database())?;
     }
     if let Some(name) = display_name {
         super::display_name::update(&transaction, alias, name)?;

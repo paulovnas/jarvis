@@ -675,9 +675,7 @@ fn phase(
 }
 
 async fn location(app: &tauri::AppHandle, id: &str) -> Result<(PathBuf, PathBuf), CoreError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     #[cfg(all(feature = "browser-probe", target_os = "linux"))]
     let home = crate::agent::browser::probe::linux_agent::home()
@@ -918,9 +916,7 @@ pub fn set_impeccable_live_options(
     conversation_id: String,
     options: agent::TurnOptions,
 ) -> Result<(), CoreError> {
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| error("Pasta pessoal indisponível."))?;
     let selection =
         serde_json::to_value(&options).map_err(|_| error("Modelo Live indisponível."))?;
@@ -3122,9 +3118,7 @@ pub fn shutdown_sync(app: &tauri::AppHandle) {
             (helpers, held)
         })
         .unwrap_or_default();
-    let saved = app
-        .path()
-        .home_dir()
+    let saved = crate::data_dir::app_home(&app)
         .ok()
         .map(|home| saved_helpers(&home, &held))
         .unwrap_or_default();

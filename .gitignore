@@ -7,6 +7,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 node_modules
 dist

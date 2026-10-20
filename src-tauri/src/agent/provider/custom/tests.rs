@@ -1,5 +1,263 @@
 use super::*;
 
+fn ollama_config() -> Config {
+    let mut raw = serde_json::to_value(config(Protocol::OpenaiCompletions)).unwrap();
+    raw["protocol"] = json!("ollama");
+    raw["baseUrl"] = json!("http://192.168.2.102:11434");
+    raw["models"][0]["reasoning"] = json!("toggle");
+    raw["models"][0]["reasoningLevels"] = json!(["off", "on"]);
+    raw["models"][0]["defaultReasoningLevel"] = json!("on");
+    serde_json::from_value(raw).unwrap()
+}
+
+#[test]
+fn ollama_discovered_context_fits_the_real_project_harness() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("AGENTS.md"),
+        "Preserve the project conventions and verify changes.\n".repeat(240),
+    )
+    .unwrap();
+    let instructions =
+        crate::agent::tools::instructions(project.path(), Mode::Build, ApprovalMode::Manual);
+    let tools = crate::agent::tools::definitions(Mode::Build);
+    let model = crate::openai_codex::ollama::model_details(
+        &json!({"capabilities":["completion","tools"],"model_info":{"model.context_length":40960}}),
+        "any-model",
+    )
+    .unwrap();
+    let mut config = ollama_config();
+    config.models = vec![model];
+    let mut options = options();
+    options.model = "any-model".into();
+    let input = vec![
+        json!({"role":"user","content":"Inspect the project and implement the requested fix."}),
+    ];
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options,
+        &instructions,
+        input.clone(),
+        tools.clone(),
+    )
+    .unwrap();
+    assert_eq!(body["options"]["num_ctx"], 32768);
+    config.models[0].context_window = 8192;
+    assert_eq!(
+        request::body(
+            &config,
+            &config.models[0],
+            &options,
+            &instructions,
+            input,
+            tools
+        )
+        .unwrap_err()
+        .code,
+        "context_overflow"
+    );
+}
+
+#[test]
+fn ollama_native_request_preserves_tools_thoughts_images_and_context_allocation() {
+    let config = ollama_config();
+    let mut input = vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"Inspect"},{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}),
+    ];
+    input.push(json!({"type":"reasoning","_custom":{"scope":request::scope(&config, &options()),"reasoning_content":"Inspect the file"}}));
+    input.push(json!({"type":"function_call","call_id":"c1","name":"read","arguments":"{\"path\":\"README.md\"}"}));
+    input.push(json!({"type":"function_call_output","call_id":"c1","output":"confirmed result"}));
+    let body = request::body(
+        &config,
+        &config.models[0],
+        &options(),
+        "Instructions",
+        input,
+        vec![tool()],
+    )
+    .unwrap();
+    assert_eq!(
+        body["messages"][0],
+        json!({"role":"system","content":"Instructions"})
+    );
+    assert_eq!(body["messages"][1]["images"], json!(["aGVsbG8="]));
+    assert_eq!(body["messages"][2]["thinking"], "Inspect the file");
+    assert_eq!(
+        body["messages"][2]["tool_calls"][0]["function"]["arguments"],
+        json!({"path":"README.md"})
+    );
+    assert_eq!(
+        body["messages"][3],
+        json!({"role":"tool","tool_name":"read","content":"confirmed result"})
+    );
+    assert_eq!(body["options"]["num_ctx"], config.models[0].context_window);
+    assert_eq!(body["options"]["num_predict"], 4000);
+    assert_eq!(body["think"], true);
+    assert!(body.get("max_tokens").is_none());
+    assert!(body.get("stream_options").is_none());
+    assert_eq!(body["tools"][0]["type"], "function");
+    let mut off = options();
+    off.reasoning = Some("off".into());
+    assert_eq!(
+        request::body(&config, &config.models[0], &off, "", history(), vec![]).unwrap()["think"],
+        false
+    );
+    let credential = CodexCredential::new("must-not-be-sent", "", 0, "", None, None);
+    let request = authenticated_request(&credential, &config, &body)
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(!request.headers().contains_key("authorization"));
+    assert_eq!(request.url().path(), "/api/chat");
+}
+
+#[tokio::test]
+async fn ollama_ndjson_streams_tool_calls_and_usage_and_rejects_unconfirmed_endings() {
+    use std::io::{Read, Write};
+    for (tail, expected) in [
+        (
+            "{\"done\":true,\"done_reason\":\"stop\",\"prompt_eval_count\":20,\"eval_count\":4}\n",
+            "ok",
+        ),
+        ("", "provider_protocol"),
+        (
+            "{\"done\":true,\"done_reason\":\"length\"}\n",
+            "provider_incomplete",
+        ),
+        (
+            "{\"error\":\"private prompt must not leak\"}\n",
+            "provider_request",
+        ),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let body = format!("{{\"message\":{{\"role\":\"assistant\",\"thinking\":\"Plan\"}},\"done\":false}}\n{{\"message\":{{\"role\":\"assistant\",\"tool_calls\":[{{\"function\":{{\"index\":0,\"name\":\"read\",\"arguments\":{{\"path\":\"README.md\"}}}}}}]}},\"done\":false}}\n{tail}");
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let _ = socket.read(&mut [0; 4096]);
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let config = ollama_config();
+        let (_cancel, signal) = watch::channel(false);
+        let mut deltas = vec![];
+        let result = receive(
+            reqwest::Client::new().post(url),
+            config.protocol,
+            &json!({}),
+            signal,
+            |delta| {
+                deltas.push(delta);
+                Ok(())
+            },
+        )
+        .await;
+        if expected == "ok" {
+            let result = result.unwrap();
+            assert_eq!(result.summary, "Plan");
+            assert_eq!(result.calls[0].name, "read");
+            assert_eq!(result.calls[0].args, json!({"path":"README.md"}));
+            assert_eq!(result.usage.unwrap().input_tokens, 20);
+            assert!(deltas
+                .iter()
+                .any(|delta| matches!(delta, Delta::Summary(text) if text == "Plan")));
+        } else {
+            let error = result.err().unwrap();
+            assert_eq!(error.code, expected);
+            assert!(!error.message.contains("private prompt"));
+        }
+        server.join().unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires an explicitly configured OLLAMA_TEST_URL and OLLAMA_TEST_MODELS"]
+async fn ollama_live_models_complete_text_and_a_confirmed_tool_round_trip() {
+    let base = std::env::var("OLLAMA_TEST_URL").expect("OLLAMA_TEST_URL");
+    let models = std::env::var("OLLAMA_TEST_MODELS").expect("OLLAMA_TEST_MODELS");
+    for id in models.split(',') {
+        let discovered = crate::openai_codex::ollama::lookup_ollama_model(base.clone(), id.into())
+            .await
+            .unwrap();
+        let mut config = Config {
+            base_url: base.clone(),
+            protocol: Protocol::Ollama,
+            auth_mode: AuthMode::Bearer,
+            token_field: TokenField::MaxTokens,
+            replay_unsigned_thinking: false,
+            models: vec![discovered.model],
+        };
+        config.models[0].max_output_tokens = 512;
+        let mut options = options();
+        options.model = id.into();
+        options.reasoning = Some("off".into());
+        let mut credential = CodexCredential::new("", "", i64::MAX, "ollama:live-test", None, None);
+        credential.custom = Some(config.clone());
+        let (_cancel, signal) = watch::channel(false);
+        let text = stream(
+            &credential,
+            &config,
+            "ollama-live",
+            &options,
+            "Answer briefly.",
+            vec![json!({"role":"user","content":"Reply exactly OK."})],
+            vec![],
+            signal.clone(),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert!(!text.text.trim().is_empty());
+        let tool = json!({"type":"function","name":"jarvis_probe","description":"Echo a harmless test value to verify tool calling.","parameters":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}});
+        let mut input = vec![
+            json!({"role":"user","content":"Call jarvis_probe exactly once with value native-ollama. After receiving its result, reply OK."}),
+        ];
+        let result = stream(
+            &credential,
+            &config,
+            "ollama-live-tool",
+            &options,
+            "Follow the user's tool request. Never invent a tool result.",
+            input.clone(),
+            vec![tool.clone()],
+            signal.clone(),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.calls.len(),
+            1,
+            "{id}: expected a real structured call"
+        );
+        assert_eq!(result.calls[0].name, "jarvis_probe");
+        assert_eq!(result.calls[0].args, json!({"value":"native-ollama"}));
+        input.extend(result.output);
+        input.push(json!({"type":"function_call_output","call_id":result.calls[0].id,"output":"{\"received\":\"native-ollama\"}"}));
+        let final_result = stream(
+            &credential,
+            &config,
+            "ollama-live-tool",
+            &options,
+            "The tool result is confirmed. Reply OK; do not call the tool again.",
+            input,
+            vec![tool],
+            signal,
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert!(final_result.calls.is_empty());
+        assert!(!final_result.text.trim().is_empty());
+        println!("Ollama {id}: native metadata, streamed text, structured call and confirmed tool-result replay passed.");
+    }
+}
+
 #[test]
 fn image_only_models_cannot_be_sent_to_a_chat_endpoint() {
     let mut value = config(Protocol::OpenaiCompletions);
@@ -169,6 +427,7 @@ fn ga4_observation_images_project_real_png_into_all_custom_protocol_requests() {
                 assert_eq!(image["source"]["media_type"], "image/png");
                 image["source"]["data"].as_str().unwrap()
             }
+            Protocol::Ollama => unreachable!(),
         };
         let pixels = image::load_from_memory(&STANDARD.decode(data).unwrap())
             .unwrap()
@@ -227,6 +486,7 @@ fn go_recovery_rejected_arguments_do_not_poison_replay_or_hide_confirmed_results
                     .flat_map(|item| item["content"].as_array().into_iter().flatten())
                     .filter(|item| item["type"] == "tool_use")
                     .collect(),
+                Protocol::Ollama => unreachable!(),
             };
             assert_eq!(
                 calls.len(),
@@ -242,6 +502,7 @@ fn go_recovery_rejected_arguments_do_not_poison_replay_or_hide_confirmed_results
                 )
                 .unwrap(),
                 Protocol::AnthropicMessages => calls[0]["input"].clone(),
+                Protocol::Ollama => unreachable!(),
             };
             assert_eq!(args, json!({"path":"README.md"}));
             let wire = body.to_string();
@@ -408,6 +669,7 @@ fn go_recovery_wire_schemas_preserve_runtime_selector_validation() {
             Protocol::OpenaiResponses => &body["tools"][0]["parameters"],
             Protocol::OpenaiCompletions => &body["tools"][0]["function"]["parameters"],
             Protocol::AnthropicMessages => &body["tools"][0]["input_schema"],
+            Protocol::Ollama => unreachable!(),
         };
         assert_eq!(schema, &click["parameters"]);
     }
@@ -1082,6 +1344,7 @@ fn native_optional_schemas_keep_responses_opt_out_without_leaking_it_to_other_pr
                 assert!(tool.get("strict").is_none());
                 (&tool["input_schema"], &tool["description"])
             }
+            Protocol::Ollama => unreachable!(),
         };
         assert_eq!(parameters, &native["parameters"]);
         assert_eq!(parameters["required"], json!(["topic"]));
@@ -1185,7 +1448,7 @@ fn strict_replay_keeps_historical_calls_paired_with_bounded_unique_ids() {
                         original[1 + ids.len() + index]["output"]
                     );
                 }
-                Protocol::AnthropicMessages => unreachable!(),
+                Protocol::AnthropicMessages | Protocol::Ollama => unreachable!(),
             }
         }
     }
@@ -1317,6 +1580,7 @@ fn protocols_translate_tools_history_images_and_output_limits_without_codex_fiel
                 assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "c1");
                 assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
             }
+            Protocol::Ollama => unreachable!(),
         }
         let credential = CodexCredential::new("private-key", "", i64::MAX, "custom:1", None, None);
         let request = authenticated_request(&credential, &config, &body)

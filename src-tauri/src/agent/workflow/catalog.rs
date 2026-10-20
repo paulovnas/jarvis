@@ -172,6 +172,7 @@ fn role_description(role: Role) -> &'static str {
         Role::Designer => "Implementa interfaces e interações dentro do sistema visual e valida o escopo de frontend.",
         Role::Video => "Ajuda a definir público, mensagem e roteiro. Dirige demonstrações com navegação, animação, narração e música e entrega o vídeo em MP4.",
         Role::ImageGenerator => "Cria e refina imagens e assets com o modelo configurado e a pipeline nativa do ComfyUI.",
+        Role::PixelArt => "Gera e edita pixel art, anima sprites e efeitos com todas as ferramentas do Image Cockpit.",
         Role::Builder => "Implementa o comportamento solicitado, executa verificações e corrige o próprio trabalho.",
         Role::Reviewer => "Revisa a implementação de forma independente e decide se há correções pendentes.",
         Role::Github => "Resolve operações Git e GitHub conforme a autorização do usuário e as opções de publicação do chat.",
@@ -182,7 +183,7 @@ fn role_description(role: Role) -> &'static str {
 fn role_capability(role: Role) -> Capability {
     match role {
         Role::Designer | Role::Video | Role::Builder | Role::Github => Capability::Commands,
-        Role::Writer | Role::ImageGenerator => Capability::WriteFiles,
+        Role::Writer | Role::ImageGenerator | Role::PixelArt => Capability::WriteFiles,
         Role::Planner | Role::Investigator | Role::Orchestrator | Role::Reviewer | Role::Custom => {
             Capability::ReadOnly
         }
@@ -220,6 +221,10 @@ fn role_appearance(role: Role) -> Appearance {
             icon: Icon::Sparkles,
             color: Color::Green,
         },
+        Role::PixelArt => Appearance {
+            icon: Icon::Palette,
+            color: Color::Green,
+        },
         Role::Builder => Appearance {
             icon: Icon::Code,
             color: Color::Blue,
@@ -246,7 +251,7 @@ pub(crate) fn builtin_agent(role: Role) -> Option<BuiltinAgentDefinition> {
         description: role_description(role),
         instructions: role.contract(),
         role,
-        usage: if matches!(role, Role::Github | Role::Video | Role::ImageGenerator) {
+        usage: if matches!(role, Role::Github | Role::Video | Role::ImageGenerator | Role::PixelArt) {
             AgentUsage::Mixed
         } else {
             AgentUsage::FlowOnly
@@ -266,6 +271,7 @@ pub(crate) fn builtin_agents() -> Vec<BuiltinAgentDefinition> {
         Role::Designer,
         Role::Video,
         Role::ImageGenerator,
+        Role::PixelArt,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -395,6 +401,7 @@ fn delegation_label(role: Role) -> &'static str {
         Role::Designer => "Implementar interface",
         Role::Video => "Gerar apresentação",
         Role::ImageGenerator => "Gerar imagem",
+        Role::PixelArt => "Criar pixel art",
         Role::Builder => "Implementar",
         Role::Reviewer => "Revisar",
         Role::Github => "Publicar",
@@ -845,7 +852,7 @@ pub async fn get_workflow_catalog(
     state: tauri::State<'_, AppState>,
 ) -> Result<CatalogView, AgentError> {
     let state = state.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let catalog = tauri::async_runtime::spawn_blocking(move || {
         state.with_connection(&home, |db| read_configured(db, &home))
     })
@@ -864,7 +871,7 @@ pub async fn mutate_workflow_catalog(
 ) -> Result<CatalogView, AgentError> {
     let state = state.inner().clone();
     let oauth = oauth.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         if let Mutation::SaveAgent { agent } = &mutation {
             if let Some(choice) = &agent.model {

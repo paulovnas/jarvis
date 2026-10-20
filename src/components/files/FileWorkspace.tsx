@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useId, useRef, type ReactNode } from "react";
-import { FileSearch, Globe, LockKeyhole, MessageSquare, Plus, RefreshCw, Send, X } from "lucide-react";
+import { FileSearch, Globe, Grid2X2, LockKeyhole, MessageSquare, Plus, RefreshCw, Send, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,6 +19,8 @@ import type { HttpRun } from "@/core/http-client";
 import { HttpPanel } from "@/components/http/HttpPanel";
 import { HttpCloseDialog } from "@/components/http/HttpCloseDialog";
 import { VideoSkeleton, VideoViewer } from "./VideoViewer";
+import type { PixelArtController } from "@/hooks/use-pixel-art";
+import { PixelArtSuite } from "@/components/pixel-art/PixelArtSuite";
 
 const CodeViewer = lazy(async () => {
   // Monaco resolves translated labels while its modules initialize. Finish the
@@ -37,54 +39,57 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
   render() { return this.state.failed ? <p role="alert" className="p-5 text-sm text-destructive">Não foi possível carregar o visualizador. Reabra o Jarvis para tentar novamente.</p> : this.props.children; }
 }
 
-export function FileWorkspace({ files, browser, http, liveTabId, onAnalyzeHttp, terminalLauncher, browserBanner, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; liveTabId?: string | null; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; browserBanner?: ReactNode; children: ReactNode }) {
+export function FileWorkspace({ files, browser, http, pixel, liveTabId, onAnalyzeHttp, terminalLauncher, browserBanner, children }: { files?: ProjectFilesController; browser?: BrowserController; http?: HttpClientController; pixel?: PixelArtController; liveTabId?: string | null; onAnalyzeHttp?: (run: HttpRun) => void; terminalLauncher?: ReactNode; browserBanner?: ReactNode; children: ReactNode }) {
   const { layout, updateLayout } = useDesktopLayout();
   const liveDescriptionId = useId();
   const sorting = useRef(false);
-  const orderKey = `tabs:${browser?.conversationId ?? http?.conversationId ?? files?.projectId ?? ""}`;
-  const tabs = orderedItems([...(files?.tabs.paths.map(path => `file:${path}`) ?? []), ...(browser?.snapshot.tabs.map(tab => `browser:${tab.id}`) ?? []), ...(http?.tabs.map(tab => `http:${tab.draft.id}`) ?? [])], layout.itemOrder[orderKey], id => id);
+  const orderKey = `tabs:${browser?.conversationId ?? http?.conversationId ?? pixel?.conversationId ?? files?.projectId ?? ""}`;
+  const tabs = orderedItems([...(files?.tabs.paths.map(path => `file:${path}`) ?? []), ...(browser?.snapshot.tabs.map(tab => `browser:${tab.id}`) ?? []), ...(http?.tabs.map(tab => `http:${tab.draft.id}`) ?? []), ...(pixel?.available ? ["pixel-art"] : [])], layout.itemOrder[orderKey], id => id);
   const previousFile = useRef(files?.tabs.activePath);
   useEffect(() => {
-    if (files?.tabs.activePath && files.tabs.activePath !== previousFile.current) { if (browser?.snapshot.activeId) browser.select(null); if (http?.activeId) http.select(null); }
+    if (files?.tabs.activePath && files.tabs.activePath !== previousFile.current) { if (browser?.snapshot.activeId) browser.select(null); if (http?.activeId) http.select(null); if (pixel?.active) pixel.select(false); }
     previousFile.current = files?.tabs.activePath;
-  }, [files?.tabs.activePath, browser, http]);
-  if (!files?.projectId && !browser && !http) return children;
+  }, [files?.tabs.activePath, browser, http, pixel]);
+  if (!files?.projectId && !browser && !http && !pixel) return children;
   const activeHttp = http?.tabs.find(tab => tab.draft.id === http.activeId);
   const activeBrowser = browser?.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId);
-  const active = activeBrowser || activeHttp ? null : files?.tabs.activePath;
-  const backgroundChat = !!active || !!activeBrowser || !!activeHttp;
+  const active = activeBrowser || activeHttp || pixel?.active ? null : files?.tabs.activePath;
+  const backgroundChat = !!active || !!activeBrowser || !!activeHttp || !!pixel?.active;
   const select = (value: unknown) => {
     if (sorting.current) return;
+    if (value === "pixel-art") { files?.select(null); browser?.select(null); http?.select(null); pixel?.select(true); return; }
+    pixel?.select(false);
     if (typeof value === "string" && value.startsWith("http:")) { files?.select(null); browser?.select(null); http?.select(value.slice(5)); }
     else if (typeof value === "string" && value.startsWith("browser:")) { files?.select(null); http?.select(null); browser?.select(value.slice(8)); }
     else { browser?.select(null); http?.select(null); files?.select(typeof value === "string" && value.startsWith("file:") ? value.slice(5) : null); }
   };
   const close = (event: React.MouseEvent<HTMLButtonElement>) => { const path = event.currentTarget.dataset.path; if (path) files?.close(path); };
-  return <Tabs value={activeHttp ? `http:${activeHttp.draft.id}` : activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
+  return <Tabs value={pixel?.active ? "pixel-art" : activeHttp ? `http:${activeHttp.draft.id}` : activeBrowser ? `browser:${activeBrowser.id}` : active ? `file:${active}` : "chat"} onValueChange={select} className="h-full min-h-0 min-w-0 flex-1 gap-0">
     {liveTabId && <span id={liveDescriptionId} className="sr-only">Impeccable Live ativo. Desligue o Live antes de fechar esta aba.</span>}
     <div className="flex min-h-9 min-w-0 shrink-0 items-center gap-2 bg-transparent px-2">
-      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos, navegador e HTTP" onKeyDown={event => {
+      <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden"><TabsList aria-label="Chat, arquivos, navegador, HTTP e pixel art" onKeyDown={event => {
         // Let the drag sensor receive arrows without the tab list moving focus
         // or stopping propagation before the event reaches the document.
         if (sorting.current) event.preventBaseUIHandler();
       }} className="h-9 justify-start gap-1 rounded-none bg-transparent p-0">
         <TabsTrigger value="chat" className="h-7 flex-none cursor-pointer gap-1.5 px-3 text-xs"><MessageSquare aria-hidden="true" className="size-3.5" />Chat</TabsTrigger>
         <SortableList ids={tabs} horizontal onSortingChange={value => { sorting.current = value; }} onReorder={ids => updateLayout(current => ({ itemOrder: { ...current.itemOrder, [orderKey]: ids } }))}>{tabs.map(id => {
+          const pixelTab = id === "pixel-art";
           const path = id.startsWith("file:") ? id.slice(5) : null;
           const tab = path === null ? browser?.snapshot.tabs.find(item => `browser:${item.id}` === id) : undefined;
           const httpTab = http?.tabs.find(item => `http:${item.draft.id}` === id);
-          const title = path ? fileName(path) : httpTab?.request.name || tab?.title || "Navegador";
+          const title = pixelTab ? "Pixel art" : path ? fileName(path) : httpTab?.request.name || tab?.title || "Navegador";
           const live = !!tab && tab.id === liveTabId && !tab.id.startsWith("ext:") && tab.conversationId === browser?.conversationId;
           return <SortableItem key={id} id={id}>{sort => <div data-workspace-tab={id} ref={sort.setNodeRef} style={sort.style} className="group/workspace-tab relative shrink-0">
             <Hint content={path ?? httpTab?.request.url ?? tab?.url}><TabsTrigger ref={sort.setActivatorNodeRef} {...sort.listeners} onKeyDown={event => {
               sort.listeners?.onKeyDown?.(event);
               if (sorting.current) event.preventBaseUIHandler();
             }} aria-describedby={[sort.attributes["aria-describedby"], live ? liveDescriptionId : undefined].filter(Boolean).join(" ") || undefined} value={id} className="h-7 max-w-64 cursor-pointer gap-1.5 pl-2 pr-7 text-xs">
-              {path ? <FileIcon path={path} /> : httpTab ? <Send className="size-3.5 shrink-0 text-onedark-green" /> : <Globe className="size-3.5 shrink-0 text-onedark-cyan" />}
+              {pixelTab ? <Grid2X2 className="size-3.5 shrink-0 text-onedark-purple" /> : path ? <FileIcon path={path} /> : httpTab ? <Send className="size-3.5 shrink-0 text-onedark-green" /> : <Globe className="size-3.5 shrink-0 text-onedark-cyan" />}
               <span className={`truncate ${path ? "font-mono text-[11px]" : ""}`}>{httpTab && <span className="mr-1 font-mono text-[10px] text-onedark-green">{httpTab.request.method}</span>}{title}{httpTab?.dirty && <span aria-label="Edições não salvas"> *</span>}{path && files?.tabs.paths.some(other => other !== path && fileName(other) === fileName(path)) && <span className="ml-1 text-muted-foreground">· {path.slice(0, path.lastIndexOf("/")) || "/"}</span>}</span>
               {live && <Badge aria-hidden="true" variant="outline" className="h-4 rounded-sm border-onedark-purple/30 bg-onedark-purple/10 px-1 font-mono text-[9px] text-onedark-purple">Live</Badge>}
             </TabsTrigger></Hint>
-            <Hint content={live ? "Desligue o Impeccable Live antes de fechar esta aba." : `Fechar ${path ?? title}`}><Button type="button" variant="ghost" size="icon" disabled={live} aria-label={path ? `Fechar arquivo ${path}` : httpTab ? `Fechar requisição ${title}` : `Fechar navegador ${title}`} data-path={path ?? undefined} onClick={event => { if (live) return; if (path) close(event); else if (httpTab) http?.requestClose(httpTab.draft.id); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
+            <Hint content={live ? "Desligue o Impeccable Live antes de fechar esta aba." : `Fechar ${path ?? title}`}><Button type="button" variant="ghost" size="icon" disabled={live} aria-label={pixelTab ? "Fechar suíte de pixel art" : path ? `Fechar arquivo ${path}` : httpTab ? `Fechar requisição ${title}` : `Fechar navegador ${title}`} data-path={path ?? undefined} onClick={event => { if (live) return; if (pixelTab) pixel?.close(); else if (path) close(event); else if (httpTab) http?.requestClose(httpTab.draft.id); else if (tab) void browser?.command({ action: "close", id: tab.id }); }} className="absolute inset-y-0 right-0.5 my-auto size-5 cursor-pointer opacity-60 group-hover/workspace-tab:opacity-100 focus-visible:opacity-100 active:not-aria-[haspopup]:translate-y-0"><X className="size-3" /></Button></Hint>
           </div>}</SortableItem>;
         })}</SortableList>
         {browser?.loaded && browser.snapshot.backend === "embedded" && browser.snapshot.tabs.length > 0 && <Hint content="Nova aba do navegador"><Button type="button" variant="ghost" size="icon" aria-label="Nova aba do navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-6 shrink-0 cursor-pointer"><Plus className="size-3.5" /></Button></Hint>}
@@ -93,6 +98,7 @@ export function FileWorkspace({ files, browser, http, liveTabId, onAnalyzeHttp, 
       {browser?.snapshot.backend === "extension" && <BrowserDiscovery browser={browser} />}
     </div>
     <TabsContent value="chat" keepMounted inert={backgroundChat} className={`min-h-0 min-w-0 flex-1 flex-col ${backgroundChat ? "hidden" : "flex"}`}>{children}</TabsContent>
+    {pixel?.active && <TabsContent value="pixel-art" className="m-0 min-h-0 min-w-0 flex-1 overflow-hidden"><PixelArtSuite pixel={pixel} /></TabsContent>}
     {activeHttp && http && <TabsContent value={`http:${activeHttp.draft.id}`} className="m-0 min-h-0 min-w-0 flex-1 overflow-hidden"><HttpPanel http={http} tab={activeHttp} onAnalyze={run => onAnalyzeHttp?.(run)} /></TabsContent>}
     {http && <HttpCloseDialog http={http} />}
     {activeBrowser && browser && <TabsContent value={`browser:${activeBrowser.id}`} className="m-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

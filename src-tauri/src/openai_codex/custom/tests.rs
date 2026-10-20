@@ -3,6 +3,74 @@ use crate::openai_codex::InMemorySecretStore;
 use crate::persistence;
 
 #[test]
+fn ollama_accounts_store_only_explicit_models_without_an_api_key() {
+    let home = tempfile::tempdir().unwrap();
+    let state = AppState::default();
+    let store = InMemorySecretStore::default();
+    let mut raw = serde_json::to_value(config(Protocol::OpenaiCompletions)).unwrap();
+    raw["protocol"] = serde_json::json!("ollama");
+    raw["baseUrl"] = serde_json::json!("http://192.168.2.102:11434");
+    raw["models"][0]["id"] = serde_json::json!("qwen3:14b");
+    let value: Config = serde_json::from_value(raw).unwrap();
+    value.validate().unwrap();
+    assert_eq!(value.endpoint().unwrap().path(), "/api/chat");
+    state
+        .with_connection(home.path(), |db| {
+            save_provider(
+                db,
+                &store,
+                "local-models",
+                &value,
+                None,
+                false,
+                Some("Meu Ollama"),
+                "ollama",
+            )
+        })
+        .unwrap();
+    assert!(store.load("local-models").is_err());
+    let accounts = crate::openai_codex::catalog_cache::list(&state, home.path()).unwrap();
+    assert_eq!(accounts[0].provider_kind, "ollama");
+    assert_eq!(accounts[0].models.len(), 1);
+    assert_eq!(accounts[0].models[0].id, "qwen3:14b");
+    assert!(!accounts[0].show_usage);
+    assert!(!accounts[0].models_stale);
+}
+
+#[test]
+fn ollama_http_is_restricted_to_local_networks_and_uses_native_routes() {
+    let mut raw = serde_json::to_value(config(Protocol::OpenaiCompletions)).unwrap();
+    raw["protocol"] = serde_json::json!("ollama");
+    let mut value: Config = serde_json::from_value(raw).unwrap();
+    for host in [
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        "192.168.2.102",
+        "10.0.0.2",
+        "172.16.0.4",
+        "[fd00::1]",
+    ] {
+        value.base_url = format!("http://{host}:11434/v1/");
+        assert_eq!(value.endpoint().unwrap().path(), "/api/chat");
+    }
+    for url in [
+        "http://8.8.8.8:11434",
+        "http://example.com",
+        "http://user:secret@localhost:11434",
+        "http://localhost:11434?key=secret",
+        "file:///tmp/ollama",
+    ] {
+        value.base_url = url.into();
+        assert!(value.validate().is_err(), "{url}");
+    }
+    value.base_url = "https://models.example/ollama".into();
+    assert_eq!(value.endpoint().unwrap().path(), "/ollama/api/chat");
+    value.models[0].supports_image_generation = true;
+    assert!(value.validate().is_err());
+}
+
+#[test]
 fn legacy_models_remain_chat_models_without_implicitly_enabling_generation() {
     let mut raw = serde_json::to_value(config(Protocol::OpenaiCompletions)).unwrap();
     let model = raw["models"][0].as_object_mut().unwrap();

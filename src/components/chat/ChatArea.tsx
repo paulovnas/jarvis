@@ -1,6 +1,6 @@
 import { JARVITO_CHAT_ID } from "@/core/companion";
 import { useEffect, useRef, useState } from "react";
-import { Globe, MessageSquare, Send } from "lucide-react";
+import { Globe, Grid2X2, MessageSquare, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -24,6 +24,8 @@ import type { ProjectFilesController } from "@/hooks/use-project-files";
 import { FileWorkspace } from "@/components/files/FileWorkspace";
 import { httpAnalysisPrompt, useHttpClient, type HttpTab } from "@/hooks/use-http-client";
 import { useBrowser } from "@/hooks/use-browser";
+import { usePixelArt } from "@/hooks/use-pixel-art";
+import { PixelArtResultsContext, usePixelArtResults } from "@/hooks/use-pixel-art-results";
 import { JarvisLogo } from "@/components/JarvisLogo";
 import { AuthoringApprovalDrawer } from "./AuthoringApprovalDrawer";
 import { WorkflowRecoveryAlert } from "./WorkflowRecoveryAlert";
@@ -45,14 +47,21 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const global = context.conversation.projectId === null;
   useVideoReady(projectId, context.conversation.id, files, snapshot);
   const http = useHttpClient(context.conversation.id, projectId, !!snapshot && !global, httpDrafts);
+  const pixel = usePixelArt(context.conversation.id, !!snapshot);
+  const pixelResults = usePixelArtResults(context.conversation.id, !!snapshot);
   const [draftInsertion, setDraftInsertion] = useState<{ id: string; text: string }>();
-  const browser = useBrowser(context.conversation.id, () => { files?.select(null); http.select(null); }, !!snapshot);
+  const browser = useBrowser(context.conversation.id, () => { files?.select(null); http.select(null); pixel.select(false); }, !!snapshot);
+  const previousPixel = useRef(false);
+  useEffect(() => {
+    if (pixel.active && !previousPixel.current) { files?.select(null); browser.select(null); http.select(null); }
+    previousPixel.current = pixel.active;
+  }, [pixel.active, files, browser, http]);
   const activeBrowser = browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId);
   const liveOptions: TurnOptions | undefined = retryChoice ? { ...retryChoice, mode: "build", workflow: "designer", approvalMode: "yolo", manualValidation: false } : undefined;
   const attention = [snapshot?.pendingApproval?.tool.id, snapshot?.pendingQuestion?.toolId, snapshot?.pendingAuthoring?.toolId, ...(workflow?.data?.agents ?? []).flatMap(agent => [agent.pendingApproval?.tool.id, agent.pendingQuestion?.toolId, agent.pendingAuthoring?.toolId])].filter(Boolean).join("|");
   const designLive = useImpeccableLive(context.conversation.id, !!snapshot && !global, { options: liveOptions, url: activeBrowser?.url, tabId: activeBrowser?.id, canResume: !!liveOptions && !chat.compacting && !attention && !global, blockedReason: attention ? "Responda à solicitação no chat para continuar a alteração Live." : undefined });
-  const currentDesigner = useRef({ designLive, liveOptions, browser, files, http });
-  useEffect(() => { currentDesigner.current = { designLive, liveOptions, browser, files, http }; });
+  const currentDesigner = useRef({ designLive, liveOptions, browser, files, http, pixel });
+  useEffect(() => { currentDesigner.current = { designLive, liveOptions, browser, files, http, pixel }; });
   const { status: liveStatus, active: liveActive, loaded: liveLoaded, busy: liveBusy } = designLive;
   const canResumeLive = !!liveOptions && !chat.compacting && !attention;
   useEffect(() => {
@@ -75,7 +84,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
         const url = selected?.id === current.designLive.status.tabId ? selected?.url : current.designLive.status.url ?? undefined;
         if (current.liveOptions) await current.designLive.resume(current.liveOptions, url);
       },
-      onShowChat: () => { const current = currentDesigner.current; current.browser.select(null); current.files?.select(null); current.http.select(null); },
+      onShowChat: () => { const current = currentDesigner.current; current.browser.select(null); current.files?.select(null); current.http.select(null); current.pixel.select(false); },
     });
   }, [onDesignerChange, context.conversation.id, liveStatus, liveActive, liveLoaded, liveBusy, canResumeLive, attention, global]);
   useEffect(() => () => { onDesignerChange?.(null); }, [onDesignerChange, context.conversation.id]);
@@ -84,9 +93,9 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   useEffect(() => {
     if (attention !== previousAttention.current) {
       previousAttention.current = attention;
-      if (attention && (files?.tabs.activePath || browser.snapshot.activeId || http.activeId) && !liveBrowser) { browser.select(null); files?.select(null); http.select(null); }
+      if (attention && (files?.tabs.activePath || browser.snapshot.activeId || http.activeId || pixel.active) && !liveBrowser) { browser.select(null); files?.select(null); http.select(null); pixel.select(false); }
     }
-  }, [attention, browser, files, http, liveBrowser]);
+  }, [attention, browser, files, http, liveBrowser, pixel]);
   useEffect(() => {
     const question = snapshot?.pendingQuestion;
     if (previousQuestion.current && !question) {
@@ -100,8 +109,9 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
   const composerOptions = [...snapshot.turns]
     .reverse()
     .find(turn => turn.options.workflow !== "publication")?.options;
-  const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId || !!http.activeId;
+  const outsideChat = !!files?.tabs.activePath || !!browser.snapshot.activeId || !!http.activeId || pixel.active;
   const isNewConversation = (snapshot.history?.total ?? snapshot.turns.length) === 0
+    && !Object.values(pixelResults).some(job => job.manual)
     && snapshot.activeTurnId === null
     && !chat.pendingTurn
     && !snapshot.pendingApproval
@@ -110,7 +120,8 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     && !snapshot.queuedMessages?.length;
   const embeddedBrowser = browser.loaded && browser.snapshot.backend === "embedded";
   const liveBanner = liveBrowser && attention && <Alert role="status" aria-label="Solicitação pendente no Live" className="mx-3 mb-2 flex w-auto items-center justify-between gap-3 py-2"><AlertDescription className="text-xs">Uma solicitação precisa da sua resposta para continuar.</AlertDescription><Button size="sm" variant="outline" className="h-7 shrink-0 cursor-pointer text-xs" onClick={() => browser.select(null)}>Responder no chat</Button></Alert>;
-  const openHttp = () => { files?.select(null); browser.select(null); void http.open(); };
+  const openHttp = () => { files?.select(null); browser.select(null); pixel.select(false); void http.open(); };
+  const pixelLauncher = <Hint content="Abrir suíte de pixel art"><Button type="button" variant="ghost" size="icon" aria-label="Abrir suíte de pixel art" disabled={pixel.busy} onClick={() => void pixel.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-purple"><Grid2X2 className="size-3.5" /></Button></Hint>;
   const browserLauncher = embeddedBrowser && <Hint content="Abrir navegador"><Button type="button" variant="ghost" size="icon" aria-label="Abrir navegador" disabled={browser.busy} onClick={() => void browser.open()} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-cyan"><Globe className="size-3.5" /></Button></Hint>;
   const httpLauncher = !global && <Hint content="Nova requisição HTTP"><Button type="button" variant="ghost" size="icon" aria-label="Nova requisição HTTP" disabled={!!http.busy} onClick={openHttp} className="size-7 cursor-pointer text-muted-foreground hover:text-onedark-green"><Send className="size-3.5" /></Button></Hint>;
   const activeTurn = snapshot.activeTurnId
@@ -131,10 +142,10 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
     <ChatComposer computerControl={<ComputerUseSession key={context.conversation.id} conversationId={context.conversation.id} onStop={chat.stop} />} projectless={global} companion={global && context.conversation.id === JARVITO_CHAT_ID} designLive={global ? undefined : designLive} liveUrl={browser.snapshot.tabs.find(tab => tab.id === browser.snapshot.activeId)?.url} draftInsertion={draftInsertion} onOpenBrowser={embeddedBrowser ? () => void browser.open() : undefined} browserBusy={browser.busy} onOpenHttp={global ? undefined : openHttp} httpBusy={!!http.busy} agentModels={agentModels} chatModels={chatModels} compacting={chat.compacting} drafts={drafts} draftKey={context.conversation.id} historySnapshot={snapshot} queuedMessages={snapshot.queuedMessages} onRemoveQueued={chat.removeQueued} onDeleteQueued={chat.deleteQueued} onSendQueuedNow={chat.sendQueuedNow} onReorderQueued={chat.reorderQueued} onResumeQueue={chat.resumeQueue} running={snapshot.activeTurnId !== null} onStop={chat.stop} onSendMessage={chat.send} onExecutionChoiceChange={setRetryChoice} modelGroups={modelGroups} modelBindings={modelBindings} modelsReady={modelsReady} onRefreshModels={onRefreshModels} refreshingModels={refreshingModels} initialOptions={composerOptions} workflowSnapshot={workflow?.data} />
     {modelGroups.length === 0 && <p className="mt-2 text-center text-xs text-muted-foreground">Conecte uma conta em Configurações para enviar mensagens.</p>}
   </footer>;
-  return <FileWorkspace files={files} browser={browser} http={http} liveTabId={designLive.active ? designLive.status.tabId : null} browserBanner={liveBanner} onAnalyzeHttp={run => { http.select(null); browser.select(null); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={outsideChat ? <>{browserLauncher}{httpLauncher}</> : undefined}>
+  return <PixelArtResultsContext value={pixelResults}><FileWorkspace files={files} browser={browser} http={http} pixel={pixel} liveTabId={designLive.active ? designLive.status.tabId : null} browserBanner={liveBanner} onAnalyzeHttp={run => { http.select(null); browser.select(null); pixel.select(false); files?.select(null); setDraftInsertion({ id: crypto.randomUUID(), text: httpAnalysisPrompt(run) }); }} terminalLauncher={<>{pixelLauncher}{outsideChat && <>{browserLauncher}{httpLauncher}</>}</>}>
     <section aria-label={isNewConversation ? "Nova conversa" : undefined} data-empty={isNewConversation} className="new-conversation-stage relative isolate grid min-h-0 flex-1 overflow-hidden">
       <div className="conversation-transcript-slot relative z-10 flex min-h-0 overflow-hidden">
-        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} retryChoice={retryChoice} projectId={context.project?.id} onLatestVisibility={onLatestVisibility} />}
+        {!isNewConversation && <Transcript snapshot={snapshot} chat={chat} workflow={workflow?.data} retryChoice={retryChoice} projectId={context.project?.id} onLatestVisibility={onLatestVisibility} />}
       </div>
       <div className="new-conversation-brand-slot relative z-10 min-h-0 overflow-hidden" aria-hidden={!isNewConversation}>
         <div className="new-conversation-brand flex flex-col items-center gap-1 pb-5 text-center">
@@ -147,7 +158,7 @@ function ConversationView({ context, modelGroups, modelBindings, modelsReady, on
       </div>
       <div aria-hidden="true" className="new-conversation-spacer min-h-0" />
     </section>
-  </FileWorkspace>;
+  </FileWorkspace></PixelArtResultsContext>;
 }
 
 export function ChatArea({ modelGroups = [], modelBindings, modelsReady, onRefreshModels, refreshingModels, library, chat, workflow, agentModels, onLatestVisibility, files, drafts: sharedDrafts, questionDrafts: sharedQuestionDrafts, onDesignerChange }: { modelGroups?: ProviderModelGroup[]; modelBindings?: ModelBinding[]; modelsReady?: boolean; onRefreshModels?: () => Promise<ModelCatalogRefresh | null>; refreshingModels?: boolean; library: LibrarySnapshot | null; chat: ChatController; workflow?: WorkflowController; agentModels?: AgentModelsController; onLatestVisibility?: LatestVisibility; files?: ProjectFilesController; drafts?: Map<string, ChatDraft>; questionDrafts?: Map<string, QuestionDraft>; onDesignerChange?: (session: DesignerSession | null) => void }) {

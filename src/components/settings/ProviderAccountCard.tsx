@@ -59,9 +59,10 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
     }).catch(() => { if (active) setReferenceError(true); });
     return () => { active = false; };
   }, [open]);
-  const custom = account.providerKind === "custom";
+  const custom = account.providerKind === "custom" || account.providerKind === "ollama";
   const manualModels = custom || account.providerKind === "openrouter";
-  const keyProvider = account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" || account.providerKind === "openrouter";
+  const searchProvider = account.providerKind === "brave-search";
+  const keyProvider = searchProvider || account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" || account.providerKind === "openrouter";
   const summaryId = useId();
   const models = manualModels && account.custom ? account.custom.models : account.models;
   const activeModels = models.filter(model => !account.disabledModels?.includes(model.id) && (!("supportsChat" in model) || model.supportsChat || model.supportsImageGeneration));
@@ -72,7 +73,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
     && (reference.kind === "builtin_agent" || reference.kind === "custom_agent")
     && !chatModelIds.has(reference.choice.model),
   ) : [];
-  const modelSummary = !account.enabled ? "Desativada" : !account.modelsAvailable
+  const modelSummary = !account.enabled ? "Desativada" : searchProvider ? "Busca na web" : !account.modelsAvailable
     ? "Modelos indisponíveis"
     : models.length === 0
       ? "Nenhum modelo"
@@ -99,7 +100,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Badge variant="outline" className={`shrink-0 ${!account.enabled ? "text-muted-foreground" : !account.modelsAvailable ? "border-onedark-yellow/30 bg-onedark-yellow/10 text-onedark-yellow" : "border-onedark-green/30 bg-onedark-green/10 text-onedark-green"}`}>
                 <CheckCircle2 aria-hidden="true" data-icon="inline-start" />
-                {!account.enabled ? "Desativada" : account.modelsAvailable ? custom ? "Configurada" : "Conectada" : "Indisponível"}
+                {!account.enabled ? "Desativada" : account.modelsAvailable ? custom || searchProvider ? "Configurada" : "Conectada" : "Indisponível"}
               </Badge>
             <CardDescription id={summaryId} className="text-xs">
               {providerKindLabels[account.providerKind] ?? account.providerKind} · {modelSummary}
@@ -137,7 +138,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             <dt className="text-muted-foreground">{custom ? "Cadastrada em" : "Conectada em"}</dt>
             <dd className="text-right">{formatConnectionDate(account.createdAt)}</dd>
           </dl>
-          {!custom && <><Separator /><div className="flex flex-col gap-3">
+          {!custom && !searchProvider && <><Separator /><div className="flex flex-col gap-3">
             <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
               <span aria-hidden="true">Limites na statusbar</span>
               <Switch aria-label={`Limites de ${displayName} na statusbar`} checked={account.showUsage !== false} disabled={saving} onCheckedChange={show => onUsageChange?.(account.alias, show, account.showThirdPartyUsage === true)} className="cursor-pointer" />
@@ -156,7 +157,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
             </label>}
           </div><ProviderUsageAlertSettings key={`${account.usageAlert?.window ?? "off"}/${account.usageAlert?.remainingPercent ?? 20}`} account={account} saving={saving || !onUsageAlertChange} onChange={(alias, alert) => onUsageAlertChange?.(alias, alert)} /></>}
           <Separator />
-          <div className="flex flex-col gap-2">
+          {searchProvider ? <p className="text-xs text-muted-foreground">Selecione esta conta em Ferramentas → Web Search. As pesquisas usam a cota da sua API Brave Search e não precisam de um modelo de IA.</p> : <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="text-xs font-medium text-muted-foreground">Modelos para seleção</span><Badge variant="secondary">{activeModels.length}/{models.length}</Badge></div>{!manualModels && <Button type="button" size="sm" variant="outline" disabled={saving || refreshing || !account.enabled || !onRefreshModels} onClick={() => onRefreshModels?.(account.alias)} className="cursor-pointer"><RefreshCw aria-hidden="true" data-icon="inline-start" className={refreshing ? "animate-spin" : undefined} />{refreshing ? "Consultando…" : "Atualizar modelos"}</Button>}</div>
             <p className="text-xs leading-5 text-muted-foreground">{manualModels ? "Escolha quais modelos cadastrados neste endpoint poderão ser usados. Para mudar o catálogo, edite a conexão." : "A consulta pode demorar. Modelos novos são ativados automaticamente. Modelos retirados pelo provedor deixam de aparecer; agentes que ainda os usam precisam de outro modelo."}</p>
             {!account.enabled ? <p className="text-muted-foreground">Ative a conta para disponibilizar seus modelos.</p> : !account.modelsAvailable ? (
@@ -173,7 +174,7 @@ export function ProviderAccountCard({ account, onDisconnect, onEnabledChange, on
                 ))}
               </div>
             )}
-          </div>
+          </div>}
           {affectedAgents.length > 0 && <div role="alert" className="space-y-2 rounded-md border border-onedark-yellow/30 bg-onedark-yellow/5 p-3 text-xs"><p className="font-medium text-foreground">{affectedAgents.length} {affectedAgents.length === 1 ? "agente precisa" : "agentes precisam"} revisar o modelo</p><ul className="space-y-1 text-muted-foreground">{affectedAgents.map(reference => <li key={reference.id}><span className="text-foreground">{reference.label}</span>{reference.details[0] && <span> ({reference.details[0]})</span>} · <span className="font-mono">{reference.choice.model}</span> {account.models.some(model => model.id === reference.choice.model) ? "desativado" : "retirado do catálogo"}</li>)}</ul>{onReviewAgents && <Button type="button" variant="outline" size="sm" onClick={() => { setOpen(false); onReviewAgents(affectedAgents.some(reference => reference.kind === "custom_agent") ? "agents" : "flows"); }} className="cursor-pointer">Revisar nos Fluxos</Button>}</div>}
           {referenceError && <p role="status" className="text-xs text-muted-foreground">Não foi possível verificar os agentes vinculados agora.</p>}
         </div>

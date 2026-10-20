@@ -12,6 +12,26 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const account: ProviderAccount = { alias: "opencode-go-pessoal", providerKind: "opencode-go", enabled: true, showUsage: true, createdAt: 1, email: null, accountType: "personal", modelsAvailable: true, models: [{ id: "glm", name: "GLM", reasoningLevels: [], defaultReasoningLevel: null }] };
 beforeEach(() => { call.mockReset().mockResolvedValue(account); vi.mocked(openUrl).mockReset().mockResolvedValue(undefined); });
 
+it("configures Brave Search without model discovery and preserves the key when editing", async () => {
+  const brave: ProviderAccount = { ...account, alias: "brave-search-work", displayName: "Brave Search", providerKind: "brave-search", models: [] };
+  call.mockResolvedValue(brave);
+  const user = userEvent.setup(), saved = vi.fn();
+  const view = render(<OpenCodeGoProviderForm providerKind="brave-search" onSaved={saved} onCancel={vi.fn()} />);
+  expect(screen.getByText(/sem consumir cota ao cadastrar/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Sufixo do alias"), { target: { value: "work" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Brave Search" } });
+  fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: " brave-private-test-key " } });
+  await user.click(screen.getByRole("button", { name: "Conectar Brave Search" }));
+  await waitFor(() => expect(saved).toHaveBeenCalledWith(brave));
+  expect(call).toHaveBeenCalledExactlyOnceWith("save_brave_search_provider", { alias: brave.alias, displayName: "Brave Search", apiKey: "brave-private-test-key", editing: false });
+  expect(screen.getByLabelText("Chave de API")).toHaveValue("");
+  view.rerender(<OpenCodeGoProviderForm key={brave.alias} account={brave} onSaved={saved} onCancel={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+  await waitFor(() => expect(call).toHaveBeenLastCalledWith("save_brave_search_provider", { alias: brave.alias, displayName: "Brave Search", apiKey: null, editing: true }));
+  await user.click(screen.getByRole("button", { name: "Abrir Brave Search" }));
+  expect(openUrl).toHaveBeenCalledWith("https://api-dashboard.search.brave.com/");
+});
+
 it("connects Charm Hyper with its native command and preserves its display name while editing", async () => {
   const hyper: ProviderAccount = { ...account, alias: "charm-hyper-pessoal", providerKind: "charm-hyper", displayName: "Meu Hyper" };
   call.mockImplementation((command: string) => Promise.resolve(command === "get_charm_hyper_panel_status" ? { connected: false, teamName: null, teamId: null, teams: [], flowId: null } : hyper));

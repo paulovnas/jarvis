@@ -1,5 +1,9 @@
 //! Conversation-owned native browser children. Page content has no application IPC authority.
 mod capture;
+#[cfg(feature = "browser-probe")]
+pub(crate) async fn capture_probe_view(view: &tauri::Webview) -> Result<Vec<u8>, AgentError> {
+    capture::capture(view).await
+}
 mod cdp;
 pub(crate) mod extension;
 pub(crate) mod live;
@@ -338,7 +342,7 @@ async fn require_conversation(
     let app = app.clone();
     let conversation = conversation.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+        let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
         #[cfg(all(feature = "browser-probe", target_os = "linux"))]
         let home = probe::linux_agent::home().unwrap_or(&home).to_path_buf();
         library::agent_location(&app.state::<AppState>(), &home, &conversation)
@@ -589,7 +593,7 @@ pub(crate) async fn command(
         }
         "screenshot" => {
             let bytes = capture::capture(&view).await?;
-            let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+            let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
             let conversation = conversation.to_owned();
             let item = tauri::async_runtime::spawn_blocking(move || {
                 attachments::store(&home, &conversation, "navegador.png", &bytes)
@@ -631,9 +635,7 @@ pub(crate) async fn prune(app: &tauri::AppHandle) -> Result<(), AgentError> {
     let _operation = state.operations.lock().await;
     let app_for_read = app.clone();
     let retained = tauri::async_runtime::spawn_blocking(move || {
-        let home = app_for_read
-            .path()
-            .home_dir()
+        let home = crate::data_dir::app_home(&app_for_read)
             .map_err(|_| AgentError::storage())?;
         app_for_read
             .state::<AppState>()

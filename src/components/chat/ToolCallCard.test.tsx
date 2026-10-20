@@ -9,6 +9,14 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn().mockResolvedValue
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 describe("ToolCallCard Web Search", () => {
+  it("renders Brave snippets and source links without displaying a fictitious model", async () => {
+    const user = userEvent.setup();
+    render(<ToolCallCard tool={{ id: "brave", name: "web_search", status: "completed", args: { query: "Tauri" }, output: JSON.stringify({ accountAlias: "brave-search-work", provider: "Brave Search", model: null, answer: "Official Tauri documentation", sources: [{ title: "Tauri docs", url: "https://tauri.app/" }] }) }} />);
+    await user.click(screen.getByRole("button", { name: /Tauri.*Concluída/ }));
+    expect(screen.getByText("brave-search-work · Brave Search")).toBeVisible();
+    expect(await screen.findByText("Official Tauri documentation")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Tauri docs" })).toBeVisible();
+  });
   it("names native observation and distinguishes native input from read-only activity", () => {
     const { rerender } = render(<ToolCallCard tool={{ id: "observe", name: "computer_observe", status: "completed", args: { targetId: "safari-window" }, output: "observação" }} />);
     expect(screen.getByRole("button", { name: /Computador · Observar janela.*safari-window/ })).toBeVisible();

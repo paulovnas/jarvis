@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn only_settings_can_discover_and_save_native_api_providers() {
+    for command in [
+        "lookup_ollama_model",
+        "save_ollama_provider",
+        "save_openrouter_provider",
+    ] {
+        assert!(command_allowed("settings", command), "{command}");
+        for label in ["about", "companion", "browser-1", "remote", "other"] {
+            assert!(!command_allowed(label, command), "{label}: {command}");
+        }
+    }
+}
+
+#[test]
 fn only_the_settings_auxiliary_surface_can_save_provider_display_names() {
     assert!(command_allowed("settings", "set_provider_display_name"));
     for label in ["about", "companion", "browser-1", "remote", "other"] {

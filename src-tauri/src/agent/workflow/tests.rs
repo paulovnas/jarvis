@@ -1,5 +1,61 @@
 use super::*;
 
+#[test]
+fn pixel_art_flow_workers_keep_media_in_the_parent_chat_and_distinct_receipts() {
+    let (_fixture, hub) = hub();
+    let native = catalog::Catalog::default()
+        .resolve_agent("builtin:pixel_art")
+        .unwrap();
+    let mut child = job(&hub, Role::PixelArt, ".");
+    child.custom_agent = Some(native.clone());
+    hub.mutate(|state| {
+        state.flow = Flow::Custom;
+        state.custom_agent = Some(native.clone());
+        state.jobs.insert(child.id.clone(), child.clone());
+        Ok(())
+    })
+    .unwrap();
+    let direct = Execution {
+        hub: hub.clone(),
+        id: "main".into(),
+        role: Role::PixelArt,
+        flow: Flow::Custom,
+        scope: vec![".".into()],
+    };
+    let worker = Execution {
+        id: child.id,
+        ..direct.clone()
+    };
+    let mut receipts = Vec::new();
+    for execution in [&direct, &worker] {
+        assert_eq!(execution.root().id, hub.root.id);
+        receipts.push(super::super::pixel_art::operation_id(
+            &execution.root().id,
+            execution.pixel_art_executor_id(),
+            "provider-call-1",
+        ));
+        let mut definitions = tools::definitions(Mode::Build);
+        definitions.push(super::super::vision::definition());
+        execution.filter(&mut definitions);
+        for name in [
+            "pixel_art_docs",
+            "pixel_art_run",
+            "pixel_art_status",
+            "pixel_art_cancel",
+            "vision",
+        ] {
+            assert!(
+                definitions.iter().any(|tool| tool["name"] == name),
+                "{name}"
+            );
+        }
+        for name in ["generate_image", "bash", "write", "mcp_activate"] {
+            assert!(!execution.allowed(name), "{name}");
+        }
+    }
+    assert_ne!(receipts[0], receipts[1]);
+}
+
 #[tokio::test]
 async fn image_specialists_can_inspect_real_project_evidence_without_unrelated_mutations() {
     let (fixture, hub) = hub();
@@ -614,6 +670,7 @@ fn recovery_contract_is_available_to_every_native_role_and_custom_capability() {
         Role::Designer,
         Role::Video,
         Role::ImageGenerator,
+        Role::PixelArt,
         Role::Builder,
         Role::Reviewer,
         Role::Github,
@@ -763,6 +820,7 @@ fn mandatory_context_retrieval_is_available_in_every_role_flow_and_scope() {
             Role::Designer,
             Role::Video,
             Role::ImageGenerator,
+            Role::PixelArt,
             Role::Builder,
             Role::Reviewer,
             Role::Custom,
@@ -843,6 +901,7 @@ fn structural_discovery_is_mandatory_for_project_roles_and_available_during_reco
             }
         }
         assert!(Role::ImageGenerator.allows(Flow::ImageGenerator, name, true));
+        assert!(Role::PixelArt.allows(Flow::Custom, name, true));
         assert!(!Role::Video.allows(Flow::Video, name, true));
         for capability in [
             catalog::Capability::ReadOnly,
@@ -2362,6 +2421,7 @@ fn recovery_reconciles_completed_workers_and_resumes_only_interrupted_turns() {
     let mut completed = job(&hub, Role::Investigator, ".");
     completed.status = Status::Running;
     completed.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Completed,
         summary: "Análise concluída".into(),
         outcomes: vec!["Estado identificado".into()],
@@ -2659,6 +2719,7 @@ fn complete_closure_requires_independent_approval_for_the_exact_bead() {
     let mut review = job(&hub, Role::Reviewer, ".");
     review.status = Status::Completed;
     review.handoff = Some(Handoff {
+        objective: None,
         verdict: Verdict::Approved,
         summary: "Reviewed".into(),
         outcomes: vec!["Outcome".into()],

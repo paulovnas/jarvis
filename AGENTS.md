@@ -218,3 +218,31 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+<!-- BEGIN JARVIS PROJECT INSTRUCTIONS -->
+## Política vigente de implementação, validação e encerramento
+
+Esta política substitui integralmente as seções anteriores **Testes são OBRIGATÓRIOS (não opcionais)**, **Quality gates ao final de TODA implementação (OBRIGATÓRIO)** e **Manutenção dos artefatos Rust**. As obrigações antigas de executar gates globais ao terminar qualquer implementação e de limpar automaticamente o cache Rust estão revogadas, mesmo que seu texto legado permaneça neste arquivo. As instruções de **Session Completion** e demais protocolos de encerramento também seguem esta política quanto a validação, limpeza e ações adicionais. Todas as demais regras do projeto permanecem válidas.
+
+### Implementar e validar somente o escopo solicitado
+
+- Toda feature ou bugfix continua exigindo teste de comportamento observável, usando o framework existente e testes colocalizados. Reutilize testes adequados; deixe uma regressão para o comportamento corrigido.
+- Após implementar, execute somente testes diretamente relacionados à alteração e aos consumidores efetivamente afetados. No frontend, use `bun run test -- <arquivos_relacionados>`; no Rust, execute `cargo test <filtro_relacionado>` dentro de `src-tauri`. Confirme os caminhos e filtros reais antes de executar.
+- Não rode automaticamente a suíte inteira, `bun run check`, lint/typecheck globais, `bun run build`, `cargo clippy --all-targets` ou `cargo test` sem filtro. Esses comandos não são pré-requisitos automáticos para entregar uma implementação com validação direcionada.
+- Reutilize resultados ainda válidos. Corrija falhas causadas pela própria alteração dentro do escopo e repita apenas os testes afetados, sem reiniciar toda a validação.
+- Para alterações apenas em documentação ou regras, confira o texto alterado, a consistência das instruções e a preservação do conteúdo não relacionado; não execute testes de aplicação ou builds sem necessidade relacionada ao pedido.
+- Se um problema de validação estiver fora do escopo solicitado, informe a evidência e a limitação, use `ask_user` para decidir como proceder e aguarde. Não amplie a tarefa investigando ou corrigindo outro subsistema por conta própria. Se a causa ainda for desconhecida, não a apresente como falha preexistente comprovada.
+
+### Entrega e escolha explícita do próximo passo
+
+- Concluída a validação direcionada, informe brevemente o que foi implementado, os testes realmente executados e seus resultados, e as validações não executadas ou bloqueadas. Testes direcionados não equivalem à validação completa do projeto nem à aceitação funcional/visual do usuário.
+- Em seguida, use `ask_user` com `requireExplicitAnswer=true` para devolver o controle ao usuário. Ofereça opções pertinentes: **gerar um build/instalador para testar**, **implementar outra coisa**, **executar validações completas**, **fazer commit e push**, **preparar uma nova release** ou **encerrar por enquanto**. Recomende encerrar quando não houver necessidade adicional demonstrada; a recomendação não autoriza execução automática.
+- Aguarde a escolha antes de executar qualquer ação adicional. Aprovação para implementar não autoriza automaticamente build, instalação, validação global, commit, push ou release. A escolha de uma ação não autoriza as demais nem dispensa revisões nativas obrigatórias. Se o usuário cancelar ou não responder, preserve o trabalho e não execute ações adicionais.
+- Não retome implementações anteriores ou tarefas pendentes sem solicitação. Build/instalador para teste não implica instalar, publicar ou criar uma release.
+
+### Cache Rust: informar antes de limpar
+
+- Meça `src-tauri/target` somente quando isso for pertinente ao trabalho ou houver indício de pressão de disco; não transforme a medição em uma auditoria automática a cada implementação.
+- Se o cache atingir **30 GiB** ou o volume tiver menos de **15% de espaço livre**, informe os valores observados e avise que a limpeza exigirá recompilação posterior. Use `ask_user` com `requireExplicitAnswer=true` para perguntar se o usuário deseja limpar ou preservar o cache e aguarde a resposta.
+- Nunca execute `cargo clean`, inclusive limpeza seletiva de pacotes, nem elimine artefatos do cache sem autorização explícita para essa manutenção. Não limpe enquanto Jarvis, `cargo`, `rustc` ou `tauri dev` estiver usando o diretório. YOLO e a autorização para implementar não substituem a escolha exigida por esta política.
+<!-- END JARVIS PROJECT INSTRUCTIONS -->

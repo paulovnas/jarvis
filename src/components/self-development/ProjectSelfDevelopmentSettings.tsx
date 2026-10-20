@@ -59,7 +59,7 @@ export function ProjectSelfDevelopmentSettings({ controller }: { controller: Sel
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
         <div className="flex items-center justify-between gap-6">
-          <div className="space-y-1"><Label htmlFor="self-development-enabled">Ambiente de desenvolvimento do Jarvis</Label><p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">A ativação não inicia uma conversa. Você escolhe e compartilha cada incidente. Desativar remove os incidentes e revoga o acesso dos agentes.</p></div>
+          <div className="space-y-1"><Label htmlFor="self-development-enabled">Ambiente de desenvolvimento do Jarvis</Label><p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Permite consultar os logs internos sanitizados, incluindo erros e stacks disponíveis. Esses diagnósticos podem ser enviados ao provedor do modelo quando consultados no chat. Você escolhe e compartilha cada incidente. Desativar remove os incidentes e revoga o acesso aos diagnósticos.</p></div>
           <Switch id="self-development-enabled" className="cursor-pointer" checked={enabled} disabled={disabled} onCheckedChange={value => { if (value) void toggle(true); else setDisabling(true); }} />
         </div>
         {controller.error && <Alert variant="destructive"><AlertDescription>{controller.error}</AlertDescription></Alert>}
@@ -70,7 +70,7 @@ export function ProjectSelfDevelopmentSettings({ controller }: { controller: Sel
     {enabled && <Card>
       <CardHeader className="border-b border-border">
         <CardTitle className="flex items-center gap-2"><Bug aria-hidden="true" className="size-4 text-primary" />Investigar com o Jarvis</CardTitle>
-        <CardDescription>Selecione uma única conversa da biblioteca deste dispositivo. Apenas o incidente preparado fica disponível aos agentes deste projeto.</CardDescription>
+        <CardDescription>Selecione uma única conversa da biblioteca deste dispositivo. Compartilhe o incidente preparado sem liberar acesso ao histórico bruto da conversa.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5 pt-5">
         <Alert><ShieldCheck aria-hidden="true" /><AlertDescription>O resumo permitido inclui versão, modelo, erros e sequência de ferramentas. Credenciais, texto bruto das mensagens e logs globais ficam fora do incidente.</AlertDescription></Alert>

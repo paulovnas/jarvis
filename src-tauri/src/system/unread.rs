@@ -57,9 +57,7 @@ async fn update(
 ) -> Result<Snapshot, String> {
     let state = app.state::<super::SystemState>();
     let _edit = state.unread.edit.lock().await;
-    let home = app
-        .path()
-        .home_dir()
+    let home = crate::data_dir::app_home(&app)
         .map_err(|_| "Não foi possível localizar as conversas.")?;
     let db = app.state::<AppState>().inner().clone();
     let conversations = tauri::async_runtime::spawn_blocking(move || {

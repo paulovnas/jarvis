@@ -354,7 +354,7 @@ pub(crate) async fn get_chat_prediction(
     conversation_id: String,
 ) -> Result<Option<Prediction>, AgentError> {
     let (home, state, agent) = (
-        app.path().home_dir().map_err(|_| AgentError::storage())?,
+        crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?,
         state.inner().clone(),
         agent.inner().clone(),
     );
@@ -387,7 +387,7 @@ pub(crate) async fn dismiss_chat_prediction(
     turn_id: String,
 ) -> Result<(), AgentError> {
     let (home, state, agent) = (
-        app.path().home_dir().map_err(|_| AgentError::storage())?,
+        crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?,
         state.inner().clone(),
         agent.inner().clone(),
     );

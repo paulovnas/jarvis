@@ -144,7 +144,10 @@ impl Guard {
         output: &str,
     ) -> Option<String> {
         let failed = error.is_some();
-        if tool.name == "read" && !failed {
+        // A verified missing file is fresh context for creating it, not an unreadable file.
+        if tool.name == "read"
+            && (!failed || error.is_some_and(|error| error.code == "file_not_found"))
+        {
             for path in paths(tool) {
                 self.stale_mutation_paths.remove(&path);
             }
@@ -450,6 +453,146 @@ mod tests {
         assert!(guard.before_call(&patch).is_err());
         guard.observe(&tool("read", json!({"path":"src/b.ts"})), None, "fresh b");
         assert!(guard.before_call(&patch).is_ok());
+    }
+
+    #[tokio::test]
+    async fn missing_file_read_recovers_creation_after_a_failed_patch() {
+        for path in ["new.txt", "new/nested.txt"] {
+            let fixture = super::super::tests::Fixture::new();
+            fs::write(fixture.root.join("existing.txt"), "original").unwrap();
+            let mut guard = Guard::default();
+            let patch = tool(
+                "apply_patch",
+                json!({"patchText": format!(
+                    "*** Begin Patch\n*** Add File: {path}\n+created\n*** Update File: existing.txt\n@@\n-not the current content\n+changed\n*** End Patch"
+                )}),
+            );
+            let (_send, signal) = watch::channel(false);
+            let conflict = super::super::patch::execute(
+                &fixture.root,
+                &patch.args,
+                super::super::Mode::Build,
+                signal,
+            )
+            .await
+            .err()
+            .expect("the conflicting patch must not apply");
+            guard.observe(&patch, Some(&conflict), conflict.message());
+            let write = tool("write", json!({"path":path,"content":"created"}));
+            assert_eq!(
+                guard.before_call(&write).unwrap_err().code,
+                "stale_edit_context"
+            );
+
+            let read = tool("read", json!({"path":path}));
+            let (_send, signal) = watch::channel(false);
+            let missing = super::super::tools::execute_with_revision(
+                &fixture.root,
+                &read,
+                super::super::Mode::Build,
+                signal,
+            )
+            .await
+            .map(|_| ())
+            .expect_err("the rejected patch did not create the file");
+            assert!(!fixture.root.join(path).exists());
+            assert!(
+                !fixture.root.join("new").exists(),
+                "a missing read must not create folders"
+            );
+            assert_eq!(missing.code, "file_not_found");
+            assert_eq!(
+                super::super::tools::read_text(&fixture.root.join(path))
+                    .unwrap_err()
+                    .code,
+                "file_not_found"
+            );
+            guard.observe(&read, Some(&missing), missing.message());
+            guard
+                .before_call(&write)
+                .expect("confirmed absence must allow creating the file");
+            assert!(
+                guard
+                    .before_call(&tool("edit", json!({"path":"existing.txt"})))
+                    .is_err(),
+                "other unobserved targets must remain protected"
+            );
+
+            let (_send, signal) = watch::channel(false);
+            super::super::tools::execute_with_revision(
+                &fixture.root,
+                &write,
+                super::super::Mode::Build,
+                signal,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                fs::read_to_string(fixture.root.join(path)).unwrap(),
+                "created"
+            );
+            assert_eq!(
+                fs::read_to_string(fixture.root.join("existing.txt")).unwrap(),
+                "original"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_or_escaping_reads_do_not_release_failed_mutations() {
+        for path in ["../outside.txt", "missing/../outside.txt", "binary.txt"] {
+            let fixture = super::super::tests::Fixture::new();
+            fs::write(fixture.root.join("binary.txt"), [0_u8, 255]).unwrap();
+            let mut guard = Guard::default();
+            let edit = tool("edit", json!({"path":path,"oldText":"old","newText":"new"}));
+            let conflict = AgentError::new("tool_error", "uncertain mutation");
+            guard.observe(&edit, Some(&conflict), conflict.message());
+            let read = tool("read", json!({"path":path}));
+            let (_send, signal) = watch::channel(false);
+            let denied = super::super::tools::execute_with_revision(
+                &fixture.root,
+                &read,
+                super::super::Mode::Build,
+                signal,
+            )
+            .await
+            .map(|_| ())
+            .expect_err("unsafe or unreadable paths must stay rejected");
+            assert_ne!(denied.code, "file_not_found");
+            guard.observe(&read, Some(&denied), denied.message());
+            assert_eq!(
+                guard.before_call(&edit).unwrap_err().code,
+                "stale_edit_context"
+            );
+            assert!(!fixture.root.join("missing").exists());
+        }
+    }
+
+    #[test]
+    fn ambiguous_read_errors_do_not_release_failed_mutations() {
+        for code in ["tool_error", "permission_denied", "cancelled"] {
+            let mut guard = Guard::default();
+            let write = tool("write", json!({"path":"new.txt","content":"new"}));
+            let patch = tool(
+                "apply_patch",
+                json!({"patchText":"*** Begin Patch\n*** Add File: new.txt\n+new\n*** End Patch"}),
+            );
+            let conflict = AgentError::new("patch_error", "uncertain mutation");
+            guard.observe(&patch, Some(&conflict), conflict.message());
+            let ambiguous = AgentError::new(
+                code,
+                "O arquivo ou pasta não existe ou não pode ser acessado.",
+            );
+            guard.observe(
+                &tool("read", json!({"path":"new.txt"})),
+                Some(&ambiguous),
+                ambiguous.message(),
+            );
+            assert_eq!(
+                guard.before_call(&write).unwrap_err().code,
+                "stale_edit_context"
+            );
+        }
     }
 
     #[tokio::test]

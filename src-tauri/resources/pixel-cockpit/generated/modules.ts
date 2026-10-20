@@ -1,0 +1,17 @@
+import * as module0 from "./src/lib/animationAlignment";
+import * as module1 from "./src/lib/animationPack";
+import * as module2 from "./src/lib/animationPackV2";
+import * as module3 from "./src/lib/animationQuality";
+import * as module4 from "./src/lib/animationReview";
+import * as module5 from "./src/lib/animationTournament";
+import * as module6 from "./src/lib/animationTournamentGate";
+import * as module7 from "./src/lib/effectQuality";
+import * as module8 from "./src/lib/exporters";
+import * as module9 from "./src/lib/image";
+import * as module10 from "./src/lib/motionPilot";
+import * as module11 from "./src/lib/motionRecipes";
+import * as module12 from "./src/lib/officialAnimations";
+import * as module13 from "./src/lib/sprite";
+import * as module14 from "./src/lib/storage";
+import * as module15 from "./src/lib/vfxComposite";
+export const modules = {"animationAlignment": module0,"animationPack": module1,"animationPackV2": module2,"animationQuality": module3,"animationReview": module4,"animationTournament": module5,"animationTournamentGate": module6,"effectQuality": module7,"exporters": module8,"image": module9,"motionPilot": module10,"motionRecipes": module11,"officialAnimations": module12,"sprite": module13,"storage": module14,"vfxComposite": module15};

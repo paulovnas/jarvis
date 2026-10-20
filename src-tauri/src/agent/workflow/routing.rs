@@ -38,7 +38,7 @@ pub(super) fn next_step(
         ));
     }
     match verdict {
-        Verdict::Rework => step.on_rework.clone().map(Some).ok_or_else(|| {
+        Verdict::Rework | Verdict::Blocked => step.on_rework.clone().map(Some).ok_or_else(|| {
             invalid("Correção solicitada, mas a etapa não possui uma saída de correção.")
         }),
         _ => Err(invalid("Etapa bloqueada.")),

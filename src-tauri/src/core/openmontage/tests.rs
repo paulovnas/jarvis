@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+fn bridge_upgrade_preserves_configuration_and_rejects_unknown_edits() {
+    let directory = tempfile::tempdir().unwrap();
+    let generation = directory.path();
+    fixture(generation);
+    let bridge = generation.join(REPOSITORY).join(BRIDGE);
+    let configuration = generation.join(REPOSITORY).join("config.yaml");
+    let original_configuration = fs::read(&configuration).unwrap();
+    let receipt = fs::read(generation.join(RECEIPT)).unwrap();
+    let previous = b"previous known native adapter";
+    fs::write(&bridge, previous).unwrap();
+    let approved_hash = format!("{:x}", Sha256::digest(previous));
+    refresh_managed_bridge(generation, &[approved_hash.as_str()]).unwrap();
+    assert_eq!(fs::read(&bridge).unwrap(), include_bytes!("../openmontage_bridge.py"));
+    assert_eq!(fs::read(configuration).unwrap(), original_configuration);
+    assert_eq!(fs::read(generation.join(RECEIPT)).unwrap(), receipt);
+    validate(generation, VERSION).unwrap();
+    refresh_managed_bridge(generation, &[]).unwrap();
+    fs::write(&bridge, b"unknown local modification").unwrap();
+    assert!(refresh_managed_bridge(generation, &[approved_hash.as_str()]).is_err());
+    assert_eq!(fs::read(bridge).unwrap(), b"unknown local modification");
+}
+
 pub(crate) fn fixture(generation: &Path) {
     fs::create_dir_all(generation).unwrap();
     hyperframes::tests::fixture(generation, HYPERFRAMES_VERSION);

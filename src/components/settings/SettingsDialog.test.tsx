@@ -9,7 +9,7 @@ import SettingsDialog from "./SettingsDialog";
 import { coreFixture } from "@/test/core-fixtures";
 import { computerSnapshot } from "@/test/computer-fixtures";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { customAccountFixture } from "@/test/custom-provider-fixtures";
+import { customAccountFixture, ollamaAccountFixture } from "@/test/custom-provider-fixtures";
 
 const { invokeMock, usageMock, mcpListMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), usageMock: vi.fn(), mcpListMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -70,6 +70,58 @@ function renderSettings(onOpenChange = vi.fn()) {
 }
 
 describe("SettingsDialog provider accounts", () => {
+  it("adds Brave Search through the provider list and reopens its API key form for editing", async () => {
+    const saved = account("brave-search-work", { providerKind: "brave-search", displayName: "Brave Search" });
+    invokeMock.mockImplementation(async (command: string) => command === "list_provider_accounts" ? [] : command === "get_provider_model_references" ? { references: [], bindings: [] } : command === "save_brave_search_provider" ? saved : undefined);
+    const user = userEvent.setup(); renderSettings();
+    await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
+    screen.getByRole("combobox", { name: "Provedor" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("option", { name: "Brave Search" }));
+    expect(screen.getByRole("dialog", { name: "Adicionar Brave Search" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Sufixo do alias"), { target: { value: "work" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome de exibição" }), { target: { value: "Brave Search" } });
+    fireEvent.change(screen.getByLabelText("Chave de API"), { target: { value: "brave-test-key" } });
+    await user.click(screen.getByRole("button", { name: "Conectar Brave Search" }));
+    await user.click(await screen.findByRole("button", { name: "Detalhes de Brave Search" }));
+    await user.click(screen.getByRole("button", { name: "Atualizar chave" }));
+    expect(await screen.findByRole("dialog", { name: "Editar Brave Search" })).toBeVisible();
+    expect(screen.getByLabelText("Chave de API")).toHaveValue("");
+    expect(screen.getByLabelText("Sufixo do alias")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenLastCalledWith("save_brave_search_provider", { alias: saved.alias, displayName: "Brave Search", apiKey: null, editing: true }));
+  });
+  it("adds and edits native Ollama with explicit model registration and no API key", async () => {
+    const user = userEvent.setup(); const saved = ollamaAccountFixture(); const changed = vi.fn();
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "list_provider_accounts") return [];
+      if (command === "get_provider_model_references") return { references: [], bindings: [] };
+      if (command === "save_ollama_provider") return saved;
+      if (command === "lookup_ollama_model") return { model: saved.custom!.models[0], sourceUrl: `${saved.custom!.baseUrl}/api/show`, tokenField: "max_tokens" };
+      return undefined;
+    });
+    render(<SettingsDialog open onOpenChange={vi.fn()} onAccountsChange={changed} />);
+    await user.click(screen.getByRole("tab", { name: /Provedores/ }));
+    await user.click(await screen.findByRole("button", { name: "Adicionar conta" }));
+    screen.getByRole("combobox", { name: "Provedor" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("option", { name: "Ollama" }));
+    expect(screen.getByRole("dialog", { name: "Adicionar Ollama" })).toBeVisible();
+    expect(screen.queryByLabelText("Chave de API")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("URL base"), { target: { value: saved.custom!.baseUrl } });
+    fireEvent.change(screen.getByLabelText("ID do modelo 1"), { target: { value: "qwen3:14b" } });
+    fireEvent.blur(screen.getByLabelText("ID do modelo 1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar provedor" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+    await user.click(await screen.findByRole("button", { name: "Detalhes de Ollama" }));
+    await user.click(screen.getByRole("button", { name: "Editar" }));
+    expect(await screen.findByRole("dialog", { name: "Editar Ollama" })).toBeVisible();
+    expect(screen.getByLabelText("URL base")).toHaveValue(saved.custom!.baseUrl);
+    expect(screen.getByLabelText("Alias completo")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Salvar provedor" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenLastCalledWith("save_ollama_provider", { alias: saved.alias, displayName: "Ollama", config: saved.custom, editing: true }));
+    expect(changed).toHaveBeenLastCalledWith([saved]);
+  });
   it("oferece geração no onboarding quando a conta só contém um modelo de imagem", async () => {
     const router = customAccountFixture();
     router.custom = { ...router.custom!, baseUrl: "https://openrouter.ai/api/v1", models: [{ ...router.custom!.models[0], id: "bytedance-seed/seedream-5-0-flash", name: "Seedream", supportsChat: false, supportsImageGeneration: true, supportsTools: false, contextWindow: 0, maxOutputTokens: 0 }] };

@@ -1,0 +1,68 @@
+@font-face { font-family: Roboto; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/roboto-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: Roboto; font-style: normal; font-weight: 500; font-display: swap; src: url("./fonts/roboto-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: Roboto; font-style: normal; font-weight: 600; font-display: swap; src: url("./fonts/roboto-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --background: #242526;
+  --foreground: #ededed;
+  --muted: #343637;
+  --accent: #404345;
+  --primary: #0071e3;
+  --primary-foreground: #fff;
+  --ring: #69b0ff;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  color: var(--foreground);
+  background: var(--background);
+  --panel: #2b2d2e;
+  --panel-soft: #282a2b;
+  --line: rgb(255 255 255 / 9%);
+  --line-strong: rgb(255 255 255 / 18%);
+  --text-muted: #b0b3b7;
+  --green: #84d18a;
+  --green-soft: #303e33;
+  --teal: #75d5de;
+  --amber: #edc46a;
+  --amber-soft: #443b28;
+  --danger: #ff9096;
+  --ui-readable-font-floor: 13px;
+}
+body { background: var(--background); }
+.topbar, .statusbar, .workspace-panel, .sidebar { background: var(--panel-soft); }
+.panel, .settings-modal, .modal, .modal-card, .popover { background: var(--panel); color: inherit; }
+input, select, textarea { color: var(--foreground); background: var(--muted); border-color: var(--line-strong); }
+button, [role="button"], select, input[type="checkbox"], a { cursor: pointer; }
+button:disabled { cursor: default; }
+.primary-button { color: var(--primary-foreground); background: var(--primary); border-color: transparent; }
+.secondary-button, .icon-button { color: var(--foreground); background: var(--muted); border-color: var(--line); }
+button[data-slot="button"] { color: var(--foreground); background: var(--muted); border-color: var(--line); height: auto; min-height: 32px; white-space: normal; }
+button.primary-button[data-slot="button"], button.primary[data-slot="button"] { background: var(--primary); color: var(--primary-foreground); border-color: transparent; }
+button.active[data-slot="button"], button.selected[data-slot="button"], button[aria-pressed="true"][data-slot="button"] { background: var(--accent); border-color: var(--line-strong); color: var(--foreground); }
+button.timeline-frame-card.is-selected[data-slot="button"] { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 14%, transparent); }
+[data-slot="native-select-wrapper"] { min-width: 0; }
+[data-slot="checkbox"] { width: 16px; height: 16px; padding: 0; cursor: pointer; }
+[data-slot="checkbox"][aria-checked="true"] { background: var(--primary); color: var(--primary-foreground); }
+[data-slot="collapsible-trigger"] { width: 100%; text-align: left; cursor: pointer; background: transparent; border: 0; color: inherit; }
+[data-slot="collapsible-trigger"]::before { content: "›"; display: inline-block; margin-right: 8px; }
+[data-slot="collapsible-trigger"][data-panel-open]::before { transform: rotate(90deg); }
+[data-pixel-processing] [data-slot="collapsible-trigger"]::before { content: none; }
+.app-shell [data-pixel-processing] h3 { font-size: 14px !important; line-height: 1.4; margin: 0; }
+[data-jarvis-suite-dialog] { width: min(1180px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; background: var(--panel); color: var(--foreground); }
+input[type="range"][data-slot="input"], input[type="color"][data-slot="input"] { padding: 0; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.codex-progress-track { background: var(--accent); }
+.codex-progress-fill { background: var(--ring); }
+.codex-progress-copy { color: var(--text-muted); }
+.panel, .modal-card, .settings-modal { border-radius: 12px; }
+.app-shell button[data-slot="button"], [data-jarvis-suite-dialog] button[data-slot="button"] { font-weight: 500; }
+.app-shell :is(h1, h2, h3, strong), [data-jarvis-suite-dialog] :is(h1, h2, h3, strong) { font-weight: 600; }
+.source-panel > .workflow-tabs button.active[data-slot="button"] { background: var(--accent); color: var(--foreground); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.workflow-tabs svg { color: currentColor; }
+.history-list { align-content: start; grid-auto-rows: max-content; }
+.history-item[data-slot="button"] { min-height: 76px; height: auto; justify-content: flex-start; text-align: left; }
+.history-item.selected[data-slot="button"] { background: var(--accent); border-color: var(--line-strong); }
+.history-item :is(small, em), .preview-meta, .codex-progress-copy, .timeline-frame-card input, .animation-pack-actions button { font-family: var(--font-mono); font-size: 11px; font-weight: 400; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

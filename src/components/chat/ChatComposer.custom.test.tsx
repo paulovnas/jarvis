@@ -72,6 +72,20 @@ it("runs the mixed GitHub agent directly with its dedicated configurable model",
   expect(send).toHaveBeenCalledWith("Liste os pull requests abertos", { executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build", workflow: "custom", customAgentId: "builtin:github", approvalMode: "yolo" });
 });
 
+it("selects the pixel artist directly and sends edits to its shared suite with the chosen chat model", async () => {
+  const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
+  const pixel = { ...builtinImageAgent, id: "builtin:pixel_art", role: "pixel_art" as const, name: "Artista de pixel art", description: "Gera e edita sprites, animações e efeitos na suíte compartilhada." };
+  vi.mocked(invoke).mockImplementation(async command => command === "get_workflow_catalog" ? { ...customCatalog, builtinAgents: [...customCatalog.builtinAgents, pixel] } : []);
+  render(<ChatComposer modelGroups={models} onSendMessage={send} />);
+  await user.click(await screen.findByRole("button", { name: "Selecionar fluxo" }));
+  await user.click(await screen.findByRole("option", { name: pixel.name }));
+  await user.type(screen.getByRole("textbox", { name: "Mensagem" }), "Aumente a duração do terceiro frame sem gerar outra imagem{Enter}");
+  expect(send).toHaveBeenCalledWith("Aumente a duração do terceiro frame sem gerar outra imagem", {
+    executor: "jarvis", account: "local", model: "model", reasoning: null, mode: "build",
+    workflow: "custom", customAgentId: "builtin:pixel_art", approvalMode: "yolo",
+  });
+});
+
 it.each([false, true])("disables saved behavior options in a reopened Github chat (running: %s)", async running => {
   const user = userEvent.setup(), send = vi.fn().mockResolvedValue(true);
   let loadCatalog!: (catalog: typeof customCatalog) => void;

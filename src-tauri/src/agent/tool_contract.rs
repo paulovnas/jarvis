@@ -168,6 +168,8 @@ impl Capabilities {
                 | "http_result"
                 | "video_docs"
                 | "video_tools"
+                | "pixel_art_docs"
+                | "pixel_art_status"
                 | "jarvito_list_projects"
                 | "jarvito_list_executors"
                 | "jarvito_list_conversations"
@@ -425,6 +427,20 @@ pub(super) fn recoverable(code: &str, tool: &str, message: &str, issues: Vec<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pixel_art_catalog_and_status_are_read_only_and_generation_is_approved() {
+        for name in ["pixel_art_docs", "pixel_art_status"] {
+            let capabilities = Capabilities::native(name);
+            assert_eq!(capabilities.effect, Effect::ReadOnly);
+            assert_eq!(capabilities.approval, ApprovalPolicy::Never);
+        }
+        let generation = Capabilities::native("pixel_art_run");
+        assert_eq!(generation.effect, Effect::Mutating);
+        assert_eq!(generation.approval, ApprovalPolicy::AccordingToTurn);
+        assert!(!generation.parallel_safe);
+        assert_eq!(Handler::native("pixel_art_run"), Handler::Native);
+    }
     fn call(name: &str, args: Value) -> ToolCall {
         ToolCall {
             id: "contract-test".into(),
@@ -532,6 +548,7 @@ mod tests {
             "jarvis_dev_incidents",
             "jarvis_dev_diagnostics",
             "jarvis_dev_incident",
+            "jarvis_dev_logs",
         ] {
             let tool = call(
                 name,
@@ -563,6 +580,9 @@ mod tests {
                 json!({"incidentId":"selected","limit":101})
             ))
             .is_err());
+        for args in [json!({"path":"outside.jsonl"}), json!({"limit":51}), json!({"level":"debug"})] {
+            assert!(private.preflight(&call("jarvis_dev_logs", args)).is_err());
+        }
     }
 
     #[test]

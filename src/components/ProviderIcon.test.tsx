@@ -3,8 +3,8 @@ import { expect, it } from "vitest";
 import { ProviderIcon } from "./ProviderIcon";
 import openCodeMark from "../../public/provider-opencode-go.svg?raw";
 
-it("identifies Charm Hyper without falling back to the OpenAI mark", () => {
-  const { container } = render(<ProviderIcon kind="charm-hyper" className="size-4 text-primary" />);
+it.each(["charm-hyper", "ollama", "brave-search"])("identifies %s with its own icon", kind => {
+  const { container } = render(<ProviderIcon kind={kind} className="size-4 text-primary" />);
   expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");
   expect(container.firstElementChild).toHaveClass("size-4", "text-primary");
   expect(container.querySelector("svg")).toBeInTheDocument();

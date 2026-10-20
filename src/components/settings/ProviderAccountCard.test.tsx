@@ -2,7 +2,21 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderAccount } from "@/core/provider-accounts";
-import { customAccountFixture } from "@/test/custom-provider-fixtures";
+import { customAccountFixture, ollamaAccountFixture } from "@/test/custom-provider-fixtures";
+
+it("shows the configured Ollama host and registered models without quotas or catalog refresh", async () => {
+  const user = userEvent.setup(); const account = ollamaAccountFixture(); const edit = vi.fn();
+  render(<ProviderAccountCard account={account} onEdit={edit} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} onReauthorize={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Detalhes de Ollama" }));
+  expect(screen.getByText(account.custom!.baseUrl)).toBeVisible();
+  expect(screen.queryByRole("switch", { name: /Limites/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Atualizar modelos" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Re-autorizar" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Chave de API")).not.toBeInTheDocument();
+  expect(screen.getByRole("switch", { name: "Disponibilizar qwen3:14b" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Editar" }));
+  expect(edit).toHaveBeenCalledWith(account);
+});
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -43,6 +57,20 @@ const account: ProviderAccount = {
 };
 
 describe("ProviderAccountCard", () => {
+  it("shows Brave as a search service without model or quota controls and allows key updates", async () => {
+    const brave = { ...account, alias: "brave-search-work", providerKind: "brave-search", displayName: "Brave Search", models: [] };
+    const edit = vi.fn(), user = userEvent.setup();
+    render(<ProviderAccountCard account={brave} onEdit={edit} onDisconnect={vi.fn()} onEnabledChange={vi.fn()} />);
+    expect(screen.getByText("Configurada")).toBeVisible();
+    expect(screen.queryByText(/Nenhum modelo/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Detalhes de Brave Search" }));
+    expect(screen.getByText(/Ferramentas → Web Search/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Atualizar modelos" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /Limites/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Re-autorizar" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Atualizar chave" }));
+    expect(edit).toHaveBeenCalledWith(brave);
+  });
   it("shows and edits the public name while preserving aliases for operations", async () => {
     const user = userEvent.setup(), onEnabledChange = vi.fn(), onDisplayNameChange = vi.fn();
     render(<ProviderAccountCard account={{ ...account, displayName: "Minha conta" }} onDisconnect={vi.fn()} onEnabledChange={onEnabledChange} onDisplayNameChange={onDisplayNameChange} />);

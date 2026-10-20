@@ -8,7 +8,8 @@ const sourceSchema = z.object({
 });
 const resultSchema = z.object({
   accountAlias: z.string(),
-  model: z.string(),
+  model: z.string().nullable(),
+  provider: z.string().optional(),
   answer: z.string(),
   sources: z.array(sourceSchema),
 });

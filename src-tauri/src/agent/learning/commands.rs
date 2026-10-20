@@ -6,7 +6,7 @@ async fn location(
     state: &AppState,
     project: &str,
 ) -> Result<(PathBuf, PathBuf), AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::internal())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::internal())?;
     let state = state.clone();
     let project = project.to_owned();
     let db_home = home.clone();

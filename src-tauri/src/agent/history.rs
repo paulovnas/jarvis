@@ -89,6 +89,17 @@ pub(super) fn history_preview(mut turn: Turn) -> Turn {
                 args.insert(key.into(), value);
             }
         }
+        if tool.name.starts_with("pixel_art_") {
+            if let Ok(receipt) = serde_json::from_str::<Value>(&tool.output) {
+                if receipt["kind"] == "pixel_art" {
+                    if let Some(id) = receipt["jobId"].as_str().filter(|id| {
+                        id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    }) {
+                        args.insert("__pixelArtJobId".into(), Value::String(id.into()));
+                    }
+                }
+            }
+        }
         args.insert(DEFERRED_DETAIL_KEY.into(), Value::Bool(true));
         tool.args = Value::Object(args);
         tool.output = if tool.name == "read_skill" {
@@ -1607,7 +1618,7 @@ pub async fn get_chat_history(
 ) -> Result<Page, AgentError> {
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     tauri::async_runtime::spawn_blocking(move || {
         agent.history_page(&state, &home, &conversation_id, before, after, around)
     })
@@ -1626,7 +1637,7 @@ pub async fn get_chat_tool_call(
 ) -> Result<ToolCall, AgentError> {
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     tauri::async_runtime::spawn_blocking(move || {
         agent.chat_tool_call(&state, &home, &conversation_id, &turn_id, &tool_id)
     })
@@ -1704,6 +1715,72 @@ mod tests {
         let tool = preview.steps[0].tools.last().unwrap();
         assert_eq!(tool.output, output);
         assert_eq!(tool.args["image_ids"], serde_json::json!(["a".repeat(32)]));
+    }
+
+    #[test]
+    fn pixel_art_history_keeps_distinct_receipt_references_for_reused_provider_call_ids() {
+        let mut turn = stored(0).turn;
+        turn.steps[0].tools.clear();
+        let call_id = "provider-call-1";
+        let jobs = ["main", "worker"].map(|executor| {
+            super::super::pixel_art::operation_id("root-conversation", executor, call_id)
+        });
+        assert_ne!(jobs[0], jobs[1]);
+        for job in &jobs {
+            turn.steps[0].tools.push(ToolCall {
+                id: call_id.into(),
+                name: "pixel_art_run".into(),
+                args: json!({"action":"generate","arguments":{"large":"not a preview"}}),
+                status: "completed".into(),
+                output: json!({"kind":"pixel_art","jobId":job,"logs":["large original log"],"result":{"large":"engine state"}}).to_string(),
+                duration_ms: 5,
+            });
+        }
+        let preview = history_preview(turn);
+        for (tool, job) in preview.steps[0].tools.iter().zip(&jobs) {
+            assert_eq!(tool.id, call_id);
+            assert_eq!(tool.args["__pixelArtJobId"], job.as_str());
+            assert_eq!(tool.args[DEFERRED_DETAIL_KEY], true);
+            assert!(tool.output.is_empty());
+            assert!(tool.args.get("arguments").is_none());
+        }
+    }
+
+    #[test]
+    fn pixel_art_history_only_trusts_valid_pixel_receipt_ids() {
+        let mut turn = stored(0).turn;
+        turn.steps[0].tools.clear();
+        for (name, output) in [
+            (
+                "pixel_art_run",
+                json!({"kind":"other","jobId":"a".repeat(32)}),
+            ),
+            (
+                "pixel_art_status",
+                json!({"kind":"pixel_art","jobId":"../outside"}),
+            ),
+            (
+                "pixel_art_status",
+                json!({"kind":"pixel_art","jobId":"z".repeat(32)}),
+            ),
+            ("read", json!({"kind":"pixel_art","jobId":"a".repeat(32)})),
+        ] {
+            turn.steps[0].tools.push(ToolCall {
+                id: "call".into(),
+                name: name.into(),
+                args: json!({"__pixelArtJobId":"b".repeat(32),"path":"src/example.ts"}),
+                status: "completed".into(),
+                output: output.to_string(),
+                duration_ms: 5,
+            });
+        }
+        let preview = history_preview(turn);
+        for tool in &preview.steps[0].tools {
+            assert!(tool.args.get("__pixelArtJobId").is_none());
+            assert_eq!(tool.args["path"], "src/example.ts");
+            assert_eq!(tool.args[DEFERRED_DETAIL_KEY], true);
+            assert!(tool.output.is_empty());
+        }
     }
 
     fn stored(index: usize) -> StoredTurn {

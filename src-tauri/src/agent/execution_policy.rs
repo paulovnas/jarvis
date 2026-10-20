@@ -205,6 +205,13 @@ pub(super) fn inspect_tool(
         ),
         "terminal_close" => ExecutionOperation::ProcessControl,
         "http_send" => ExecutionOperation::Network,
+        "pixel_art_run" => ExecutionOperation::Declared {
+            read_paths: vec![PathBuf::from(".")],
+            write_paths: vec![PathBuf::from(".")],
+            network: matches!(tool.args["action"].as_str(), Some("generate" | "invoke")),
+            persistent_process: true,
+            destructive: false,
+        },
         "video_run" => ExecutionOperation::Declared {
             read_paths: vec![PathBuf::from(tool.args["path"].as_str().unwrap_or("."))],
             write_paths: if tool.args["action"] == "status" {
@@ -284,7 +291,11 @@ pub(super) fn apply_video_preflight(
         && policy.outcome.decision != ExecutionDecision::Deny
     {
         policy.outcome.decision = ExecutionDecision::Ask;
-        if tool.args["action"] == "tool" {
+        if tool.args["action"] == "repair" {
+            policy.outcome.effects.uses_network = true;
+            policy.outcome.code = "video_dependency_approval_required".into();
+            policy.outcome.reason = preflight.description.clone();
+        } else if tool.args["action"] == "tool" {
             policy.outcome.effects.uses_network = true;
             policy.outcome.code = "video_service_approval_required".into();
             policy.outcome.reason = format!("A ferramenta do OpenMontage acessa um serviço externo, pode gerar custos ou baixar modelos. {} Revise o provedor e os parâmetros antes de autorizar esta execução.", preflight.description);
@@ -1072,6 +1083,36 @@ mod tests {
     }
 
     #[test]
+    fn pixel_art_generation_declares_network_and_local_processing_does_not() {
+        let root = Path::new("/workspace/project");
+        for (action, network) in [("generate", true), ("invoke", true), ("export", false)] {
+            let policy = inspect_tool(
+                root,
+                &tool(
+                    "pixel_art_run",
+                    serde_json::json!({"action": action, "arguments": {}}),
+                ),
+                capabilities(Effect::Mutating),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(policy.outcome.effects.uses_network, network, "{action}");
+            assert!(policy.outcome.effects.writes_filesystem);
+            assert_eq!(policy.outcome.write_paths, [root.to_path_buf()]);
+        }
+        assert!(inspect_tool(
+            root,
+            &tool(
+                "pixel_art_status",
+                serde_json::json!({"jobId": "a".repeat(32)})
+            ),
+            capabilities(Effect::ReadOnly),
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
     fn openmontage_writes_are_scoped_and_network_requires_trusted_preflight() {
         let root = Path::new("/workspace/project");
         let call = tool(
@@ -1115,6 +1156,36 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(escape.outcome.decision, ExecutionDecision::Deny);
+    }
+
+    #[test]
+    fn video_dependency_repair_declares_network_approval_and_preserves_denials() {
+        let root = Path::new("/workspace/project");
+        for path in [".", "../outside"] {
+            let call = tool(
+                "video_run",
+                serde_json::json!({"action":"repair","path":path,"tool":"video_understand"}),
+            );
+            let mut policy = inspect_tool(root, &call, capabilities(Effect::Mutating))
+                .unwrap()
+                .unwrap();
+            apply_video_preflight(
+                &mut policy,
+                &call,
+                &super::super::video::ApprovalPreflight {
+                    required: true,
+                    description: "Instalar transformers e torch no ambiente gerenciado.".into(),
+                },
+            );
+            if path == "." {
+                assert_eq!(policy.outcome.decision, ExecutionDecision::Ask);
+                assert!(policy.outcome.effects.uses_network);
+                assert_eq!(policy.outcome.code, "video_dependency_approval_required");
+                assert!(policy.outcome.reason.contains("transformers"));
+            } else {
+                assert_eq!(policy.outcome.decision, ExecutionDecision::Deny);
+            }
+        }
     }
 
     #[test]

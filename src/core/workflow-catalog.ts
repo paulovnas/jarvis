@@ -4,8 +4,8 @@ import { workflowAppearanceSchema } from "./workflow-appearance";
 import { executorSchema, serviceTierSchema } from "./executors";
 
 const id = z.string().regex(/^[a-f0-9]{32}$/i);
-const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "image_generator", "builder", "reviewer", "github"]);
-const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|video|image_generator|builder|reviewer|github)$/);
+const builtinRoleSchema = z.enum(["planner", "investigator", "writer", "orchestrator", "designer", "video", "image_generator", "pixel_art", "builder", "reviewer", "github"]);
+const builtinAgentIdSchema = z.string().regex(/^builtin:(planner|investigator|writer|orchestrator|designer|video|image_generator|pixel_art|builder|reviewer|github)$/);
 const agentReferenceIdSchema = z.union([id, builtinAgentIdSchema]);
 const modelTargetSchema = z.object({ executor: executorSchema.optional(), account: z.string(), model: z.string(), reasoning: z.string().nullable(), serviceTier: serviceTierSchema });
 export const modelChoiceSchema = modelTargetSchema.extend({ fallback: modelTargetSchema.strict().nullish() });

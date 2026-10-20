@@ -70,6 +70,51 @@ struct Handoff {
     task_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    objective: Option<ObjectiveOutcome>,
+}
+impl Handoff {
+    fn successful(&self) -> bool {
+        // The step verdict is independent of pending deliveries in the whole request.
+        matches!(self.verdict, Verdict::Completed | Verdict::Approved)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObjectiveOutcome {
+    status: ObjectiveStatus,
+    remaining: Vec<String>,
+    reason: String,
+    recovery_attempts: Vec<String>,
+    next_action: String,
+}
+impl ObjectiveOutcome {
+    fn pending(&self) -> bool {
+        self.status != ObjectiveStatus::Completed
+    }
+
+    fn error(&self, handoff: &Handoff) -> AgentError {
+        let delivered = handoff.outcomes.join("\n- ");
+        let remaining = self.remaining.join("\n- ");
+        let attempts = if self.recovery_attempts.is_empty() {
+            "Nenhuma tentativa de reparo foi registrada.".into()
+        } else {
+            self.recovery_attempts.join("\n- ")
+        };
+        AgentError::new("workflow_incomplete", &format!(
+            "Entregue:\n- {delivered}\n\nPendente:\n- {remaining}\n\nMotivo: {}\n\nTentativas de recuperação:\n- {attempts}\n\nPara continuar: {}",
+            self.reason, self.next_action
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ObjectiveStatus {
+    Completed,
+    Partial,
+    Blocked,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -155,6 +200,17 @@ struct Job {
     options: TurnOptions,
 }
 impl Job {
+    fn stage_status(&self) -> Status {
+        if self.status == Status::Blocked
+            && self.error.is_none()
+            && self.handoff.as_ref().is_some_and(Handoff::successful)
+        {
+            Status::Completed
+        } else {
+            self.status
+        }
+    }
+
     fn writes(&self) -> bool {
         if let Some(agent) = &self.custom_agent {
             return agent.capability != catalog::Capability::ReadOnly;
@@ -573,6 +629,9 @@ impl Execution {
     pub(super) fn root(&self) -> &Arc<Session> {
         &self.hub.root
     }
+    pub(super) fn pixel_art_executor_id(&self) -> &str {
+        &self.id
+    }
     pub(super) fn hook_agent_type(&self) -> &'static str {
         self.role.id()
     }
@@ -976,7 +1035,8 @@ impl Execution {
         if self.flow == Flow::Custom {
             if matches!(name, "generate_image" | "image_process") && !self.direct() {
                 return self.custom_agent().is_ok_and(|agent| {
-                    agent.capability != catalog::Capability::ReadOnly
+                    agent.native_role != Some(Role::PixelArt)
+                        && agent.capability != catalog::Capability::ReadOnly
                         && !agent.denied_tools.iter().any(|tool| tool == name)
                 });
             }
@@ -1501,6 +1561,8 @@ fn recovery_inspection_tool(name: &str, mcp_mutating: bool) -> bool {
             | "design_read"
             | "video_docs"
             | "video_tools"
+            | "pixel_art_docs"
+            | "pixel_art_status"
             | "ctx_search"
             | "ctx_stats"
             | "beads_show"
@@ -1756,7 +1818,10 @@ pub(super) fn recovery_checkpoint_available(
     };
     if manifest.run_id != turn.turn.id
         || manifest.flow != flow
-        || !matches!(manifest.root_status, Status::Interrupted | Status::Failed)
+        || !matches!(
+            manifest.root_status,
+            Status::Interrupted | Status::Failed | Status::Blocked
+        )
     {
         return Err(invalid(
             "O checkpoint salvo não corresponde à execução que falhou.",
@@ -2058,6 +2123,7 @@ async fn finish_hub(
         Ok(()) => Status::Completed,
         Err(error) if error.code == "cancelled" => Status::Cancelled,
         Err(error) if error.code == "progress_paused" => Status::Interrupted,
+        Err(error) if error.code == "workflow_incomplete" => Status::Blocked,
         Err(_) => Status::Failed,
     };
     let saved = interrupted.and_then(|()| {

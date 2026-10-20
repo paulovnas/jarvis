@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import { defaultReasoning, reasoningLabel, selectableReasoningLevels } from "./reasoning";
 
+it("labels native thinking on/off in Portuguese", () => {
+  expect(reasoningLabel("on")).toBe("Ativado");
+  expect(reasoningLabel("off")).toBe("Desativado");
+});
+
 it("excludes the Ultra alias without changing provider levels or legacy labels", () => {
   const levels = ["none", "low", "ultra", "xhigh", "max", "future"];
   expect(selectableReasoningLevels(levels)).toEqual(["none", "low", "xhigh", "max", "future"]);

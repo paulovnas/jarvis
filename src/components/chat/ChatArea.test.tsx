@@ -79,6 +79,40 @@ describe("Persistent live conversation", () => {
     expect(screen.queryByRole("button", { name: "Nova requisição HTTP" })).not.toBeInTheDocument();
     expect(call.mock.calls.some(([command]) => command === "get_impeccable_live" || command === "get_http_snapshot")).toBe(false);
   });
+  it("preserves the draft in the pixel suite and returns to chat when attention is needed", async () => {
+    const user = userEvent.setup();
+    call.mockImplementation(async command => {
+      if (command === "get_pixel_art_session") return null;
+      if (command === "open_pixel_art_suite") return { conversationId: "c1", sessionId: "c1" };
+      if (command === "get_browser_tabs") return { tabs: [], activeId: null, backend: "embedded" };
+      return emptyChat();
+    });
+    render(<TestChat />);
+    await user.type(await screen.findByRole("textbox", { name: "Mensagem" }), "Rascunho");
+    await user.click(screen.getByRole("button", { name: "Abrir suíte de pixel art" }));
+    expect(await screen.findByRole("tab", { name: "Pixel art" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("region", { name: "Suíte de pixel art" })).toBeVisible();
+    await update({
+      ...emptyChat(), revision: 2, activeTurnId: "turn1", turns: [{ ...savedTurn(), status: "running" }],
+      pendingQuestion: { turnId: "turn1", toolId: "pixel-question", questions: [{ id: "duration", question: "Qual duração prefere?", options: [] }] },
+    });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveTextContent("Rascunho");
+    await user.click(screen.getByRole("button", { name: "Fechar suíte de pixel art" }));
+    expect(screen.queryByRole("tab", { name: "Pixel art" })).not.toBeInTheDocument();
+    expect(call.mock.calls.some(([command]) => command === "pixel_art_cancel")).toBe(false);
+  });
+  it("shows a manual suite export in an otherwise empty chat after reopening", async () => {
+    call.mockImplementation(async command => command === "get_pixel_art_jobs" ? [{
+      kind: "pixel_art", jobId: "manual-export", conversationId: "c1", revision: 1, manual: true,
+      action: "export", status: "completed", phase: "GIF exportado na suíte",
+      artifacts: [{ name: "walk.gif", path: "C:/project/walk.gif", mime: "image/gif" }],
+    }] : emptyChat());
+    render(<TestChat />);
+    expect(await screen.findByText("GIF exportado na suíte")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copiar caminho de walk.gif" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Nova conversa" })).not.toBeInTheDocument();
+  });
   it("keeps native computer control in the composer popover and stops the active agent with it", async () => {
     const user = userEvent.setup();
     const running = { ...emptyChat(), activeTurnId: "native-turn", turns: [{ ...savedTurn(), id: "native-turn", status: "running" as const }] };

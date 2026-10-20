@@ -1,7 +1,9 @@
 import type { ProviderAccount } from "@/core/provider-accounts";
-import { Network, PlugZap, Sparkles, Zap } from "lucide-react";
+import { Globe, Network, PlugZap, Server, Sparkles, Zap } from "lucide-react";
 
 export function ProviderIcon({ kind, className = "size-3.5" }: { kind: ProviderAccount["providerKind"]; className?: string }) {
+  if (kind === "brave-search") return <Globe aria-hidden="true" className={`shrink-0 ${className}`} />;
+  if (kind === "ollama") return <Server aria-hidden="true" className={`shrink-0 ${className}`} />;
   if (kind === "openrouter") return <Network aria-hidden="true" className={`shrink-0 ${className}`} />;
   if (kind === "custom") return <PlugZap aria-hidden="true" className={`shrink-0 ${className}`} />;
   if (kind === "muse-code") return <Sparkles aria-hidden="true" className={`shrink-0 ${className}`} />;

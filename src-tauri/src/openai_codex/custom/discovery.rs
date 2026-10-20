@@ -90,6 +90,7 @@ fn parse(catalog: &Value, id: &str, protocol: Protocol) -> Result<DiscoveredMode
             Protocol::OpenaiCompletions => Reasoning::Openrouter,
             Protocol::OpenaiResponses => Reasoning::Effort,
             Protocol::AnthropicMessages => Reasoning::Adaptive,
+            Protocol::Ollama => return Err(error("Use a consulta nativa do Ollama.")),
         }
     } else {
         levels.clear();

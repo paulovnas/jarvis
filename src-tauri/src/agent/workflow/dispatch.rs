@@ -27,6 +27,18 @@ pub(super) fn definitions(flow: Flow, role: Role) -> Vec<Value> {
             .find(|tool| tool["name"] == "hub_complete")
             .expect("completion tool exists");
         complete["parameters"]["properties"]["route"] = json!({"type":"string","minLength":1,"maxLength":64,"description":"For a step with declared conditional exits, choose exactly one of its route IDs when completed/approved. Omit for fixed connections and rework/blocked. The runtime validates the saved graph before scheduling."});
+        complete["parameters"]["properties"]["objective"] = json!({
+            "type":"object", "additionalProperties":false,
+            "description":"Required when ending the graph: outcome of the user's WHOLE current request, distinct from this step's verdict. Finish planning or a pilot without full delivery as partial, never completed. First attempt available authorized recovery; report actual attempts and an actionable continuation. Do not end while a configured route can continue authorized work.",
+            "properties":{
+                "status":{"type":"string","enum":["completed","partial","blocked"]},
+                "remaining":strings,
+                "reason":{"type":"string","maxLength":16000},
+                "recoveryAttempts":strings,
+                "nextAction":{"type":"string","maxLength":16000}
+            },
+            "required":["status","remaining","reason","recoveryAttempts","nextAction"]
+        });
     }
     if role.coordinator() || (flow == Flow::Publication && role == Role::Github) {
         let spawn_roles: Vec<_> = [
@@ -783,6 +795,17 @@ async fn complete(
             "A aprovação deve citar tarefas verificadas e evidências.",
         ));
     }
+    if let Some(objective) = &handoff.objective {
+        if exec.flow != Flow::Custom
+            || !strings(&objective.remaining, false)
+            || !strings(&objective.recovery_attempts, false)
+            || objective.reason.len() > 16_000
+            || objective.next_action.len() > 16_000
+        {
+            return Err(invalid("Resultado do pedido inválido: use o contrato compacto do fluxo personalizado."));
+        }
+        custom::validate_objective(&handoff)?;
+    }
     if exec.flow != Flow::Custom
         && ((exec.role == Role::Reviewer && handoff.verdict == Verdict::Completed)
             || (exec.role != Role::Reviewer
@@ -808,7 +831,7 @@ async fn complete(
                 .find(|step| Some(step.id.as_str()) == job.custom_step_id.as_deref())
         });
         if let Some(step) = step {
-            routing::next_step(step, &handoff.verdict, handoff.route.as_deref())?;
+            custom::next_step(step, &handoff)?;
         } else if handoff.route.is_some() {
             return Err(invalid("A rota não pertence a uma etapa do fluxo atual."));
         }
@@ -830,6 +853,17 @@ async fn complete(
         return Err(invalid(
             "Aguarde os agentes filhos antes de entregar o handoff.",
         ));
+    }
+    if exec.allowed("pixel_art_status") {
+        if let Some(app) = exec.native_app() {
+            let running = crate::agent::pixel_art::running(app, &exec.root().id).await;
+            if !running.is_empty() {
+                return Err(invalid(&format!(
+                    "Há operações de pixel art em execução: {}. Use pixel_art_status para acompanhar ou pixel_art_cancel para cancelar antes de entregar o resultado da etapa.",
+                    running.join(", "),
+                )));
+            }
+        }
     }
     if let Some(checkpoint) = check_bead(&exec.hub, &job, Some(&handoff), signal).await? {
         if job.bead_fingerprint.as_deref() != Some(checkpoint.fingerprint.as_str()) {
@@ -1538,7 +1572,7 @@ fn settle_generation(
     hub.mutate(|state| {
         let job = state.jobs.get_mut(&original.id).ok_or_else(AgentError::internal)?;
         job.status = match result {
-            Ok(()) if job.handoff.as_ref().is_some_and(|h| matches!(h.verdict, Verdict::Completed | Verdict::Approved)) => Status::Completed,
+            Ok(()) if job.handoff.as_ref().is_some_and(Handoff::successful) => Status::Completed,
             Ok(()) => Status::Blocked,
             Err(error) if error.code == "cancelled" => Status::Cancelled,
             Err(error) if matches!(error.code.as_str(), "interrupted" | "progress_paused") => Status::Interrupted,

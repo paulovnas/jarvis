@@ -1,4 +1,4 @@
-import { ChevronRight, Cpu, TriangleAlert } from "lucide-react";
+import { AlertCircle, ChevronRight, Cpu, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import type { CoreActivity } from "@/core/chat";
 import type { CoreId } from "@/core/core-components";
 import { readGeneratedImages } from "@/core/image-generation";
+import { toolSeverity } from "./tool-activity";
 import type { AssistantWorkData, ToolCallItem } from "./types";
 
 type ActivityComponent = CoreActivity["component"];
@@ -80,14 +81,17 @@ export function CoreActivitySummary({ steps }: { steps: AssistantWorkData["steps
     return [...grouped.values()];
   }, [steps]);
   if (resources.length === 0) return null;
-  const warnings = resources.some(resource => resource.receipts.some(receipt => hasWarning(receipt.status)) || [...resource.diagnostics.values()].some(item => item.warning) || resource.tools.some(tool => tool.status === "error"));
+  // Real failures and advisory receipts must stay distinguishable here too; this
+  // summary is the only severity source that appears after expanding the block.
+  const failures = resources.flatMap(resource => resource.tools).filter(tool => toolSeverity(tool) === "error").length;
+  const warnings = resources.some(resource => resource.receipts.some(receipt => hasWarning(receipt.status)) || [...resource.diagnostics.values()].some(item => item.warning) || resource.tools.some(tool => toolSeverity(tool) === "warning"));
 
   return <Collapsible className="mt-1 min-w-0">
     <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} className="group h-auto min-h-8 cursor-pointer gap-2 px-1 text-[11px] text-muted-foreground hover:bg-transparent hover:text-foreground">
       <Cpu aria-hidden="true" className="size-3.5" />
       <span>Recursos do Core</span>
       <span className="font-mono text-[10px] tabular-nums">· {resources.length}</span>
-      {warnings && <TriangleAlert aria-label="Há recursos com avisos" className="size-3.5 text-onedark-yellow" />}
+      {failures > 0 ? <AlertCircle aria-label={`${failures} ${failures === 1 ? "falha" : "falhas"}`} className="size-3.5 text-destructive" /> : warnings ? <TriangleAlert aria-label="Há recursos com avisos" className="size-3.5 text-onedark-yellow" /> : null}
       <ChevronRight aria-hidden="true" className="size-3.5 transition-transform group-aria-expanded:rotate-90 motion-reduce:transition-none" />
     </CollapsibleTrigger>
     <CollapsibleContent className="ml-2 border-l border-border/60 py-2 pl-3">

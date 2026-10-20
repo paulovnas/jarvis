@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupToolActivity, summarizeToolActivity } from "./tool-activity";
+import { groupToolActivity, summarizeToolActivity, toolSeverity, toolsSeverity } from "./tool-activity";
 import type { ToolCallItem } from "./types";
 
 function tool(name: string, index: number, status: ToolCallItem["status"] = "completed"): ToolCallItem {
@@ -34,6 +34,25 @@ describe("grouped tool activity", () => {
     reminder.output = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar alterações.";
     const groups = groupToolActivity([reminder, tool("read", 2), tool("read", 3), tool("read", 4), tool("read", 5)]);
     expect(groups[0]).toMatchObject({ failures: 0, warnings: 1, active: false });
+  });
+
+  it("classifies one tool set identically at tool and group level", () => {
+    const reminder = tool("ctx_execute", 1, "error");
+    reminder.output = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento antes de executar";
+    const failure = tool("read", 2, "error");
+
+    expect(toolSeverity(reminder)).toBe("warning");
+    expect(toolSeverity(failure)).toBe("error");
+    expect(toolSeverity(tool("read", 3))).toBe("completed");
+    expect(toolSeverity(tool("bash", 4, "running"))).toBe("active");
+
+    expect(toolsSeverity([reminder])).toBe("warning");
+    expect(toolsSeverity([reminder, failure])).toBe("error");
+    expect(toolsSeverity([failure, tool("bash", 5, "running")])).toBe("active");
+    expect(toolsSeverity([])).toBe("completed");
+
+    const groups = groupToolActivity([failure, reminder, tool("read", 7), tool("read", 8), tool("read", 9)]);
+    expect(groups[0]).toMatchObject({ severity: "error", failures: 1, warnings: 1 });
   });
 
   it("leaves short histories ungrouped", () => {

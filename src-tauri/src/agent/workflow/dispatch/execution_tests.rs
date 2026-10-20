@@ -37,6 +37,7 @@ async fn launched_native_image_canvas_step_accepts_its_declared_completion_route
     assert_eq!(execution.flow, Flow::Custom);
     assert!(execution.image_generator());
     let mut handoff = Handoff {
+        objective: None,
         verdict: Verdict::Completed,
         summary: "Image candidate ready for review".into(),
         outcomes: vec!["The configured image stage delivered its candidate".into()],

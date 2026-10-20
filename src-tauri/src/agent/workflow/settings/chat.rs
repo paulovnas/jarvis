@@ -379,7 +379,7 @@ pub async fn get_chat_agent_models(
     conversation_id: String,
 ) -> Result<ModelSettings, AgentError> {
     let state = state.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     tauri::async_runtime::spawn_blocking(move || {
         let (journal, _) = crate::library::agent_location(&state, &home, &conversation_id)?;
         state.with_connection(&home, |db| {
@@ -402,7 +402,7 @@ pub async fn set_chat_agent_model(
 ) -> Result<ModelSettings, AgentError> {
     let state = state.inner().clone();
     let oauth = oauth.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let event_id = conversation_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let (journal, _) = crate::library::agent_location(&state, &home, &conversation_id)?;

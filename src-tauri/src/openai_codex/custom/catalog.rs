@@ -47,6 +47,11 @@ fn error(message: &'static str) -> ProviderError {
 
 impl Target {
     fn url(&self) -> Result<reqwest::Url, ProviderError> {
+        if self.protocol == Protocol::Ollama {
+            return Err(error(
+                "No Ollama, adicione o ID do modelo para consultar seus recursos.",
+            ));
+        }
         if self.protocol != Protocol::AnthropicMessages && self.auth_mode != AuthMode::Bearer {
             return Err(error("Endpoints OpenAI utilizam autenticação Bearer."));
         }
@@ -63,6 +68,7 @@ impl Target {
             Protocol::OpenaiCompletions => "/chat/completions",
             Protocol::OpenaiResponses => "/responses",
             Protocol::AnthropicMessages => "/messages",
+            Protocol::Ollama => unreachable!("native catalog lookup was handled above"),
         };
         let path = url
             .path()

@@ -31,6 +31,7 @@ export interface ToolActivityGroup {
   failures: number;
   warnings: number;
   active: boolean;
+  severity: ActivitySeverity;
 }
 
 const TASK_REMINDER = "Atualize a lista com update_tasks e mantenha uma tarefa em andamento";
@@ -38,6 +39,28 @@ const TASK_REMINDER = "Atualize a lista com update_tasks e mantenha uma tarefa e
 export function isTaskReminder(tool: ToolCallItem): boolean {
   return tool.status === "error" && [tool.output, tool.error]
     .some(message => message?.includes(TASK_REMINDER));
+}
+
+export type ActivitySeverity = "active" | "error" | "warning" | "completed";
+
+/**
+ * Single source of truth for severity. Every renderer (phase header, activity
+ * group, tool card, Core summary) must classify the same tool the same way;
+ * a renderer must never promote a warning to an error or demote an error.
+ */
+export function toolSeverity(tool: ToolCallItem): ActivitySeverity {
+  if (tool.status === "running" || tool.status === "pending") return "active";
+  if (tool.status !== "error") return "completed";
+  return isTaskReminder(tool) ? "warning" : "error";
+}
+
+/** Precedence: a running action hides counts, then real errors win over warnings. */
+export function toolsSeverity(tools: ToolCallItem[]): ActivitySeverity {
+  const severities = tools.map(toolSeverity);
+  if (severities.includes("active")) return "active";
+  if (severities.includes("error")) return "error";
+  if (severities.includes("warning")) return "warning";
+  return "completed";
 }
 
 function actionKind(name: string): ActionKind {
@@ -50,7 +73,7 @@ function actionKind(name: string): ActionKind {
   if (name.startsWith("hub_")) return "agents";
   if (name.startsWith("beads_") || name === "update_tasks" || name.startsWith("validation_") || name === "workflow_check") return "tasks";
   if (name.startsWith("design_")) return "design";
-  if (["vision", "generate_image", "image_process", "read_attachment"].includes(name)) return "media";
+  if (["vision", "generate_image", "image_process", "read_attachment"].includes(name) || name.startsWith("pixel_art_")) return "media";
   if (name.startsWith("video_")) return "video";
   if (name.startsWith("computer_")) return "computer";
   if (name.startsWith("jarvis_")) return "jarvis";
@@ -85,6 +108,7 @@ export function groupToolActivity(tools: ToolCallItem[]): ToolActivityGroup[] {
       failures: batch.filter(tool => tool.status === "error" && !isTaskReminder(tool)).length,
       warnings: batch.filter(isTaskReminder).length,
       active: batch.some(tool => tool.status === "running" || tool.status === "pending"),
+      severity: toolsSeverity(batch),
     });
   }
   return groups;

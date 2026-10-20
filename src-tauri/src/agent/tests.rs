@@ -2,8 +2,8 @@ use super::*;
 use std::fs;
 
 mod impeccable_live_e2e;
-#[cfg(target_os = "linux")]
-mod linux_tool_stack;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_tool_stack;
 mod mcp_continuation;
 
 #[cfg(unix)]

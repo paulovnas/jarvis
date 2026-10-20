@@ -703,7 +703,7 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(target_os = "linux")]
             {
-                crate::initialize_linux_async_runtime();
+                crate::initialize_native_async_runtime();
                 if std::env::var("JARVIS_AGENT_PIPELINE_PROBE").is_ok_and(|value| value == "1") {
                     app.manage(AppState::default());
                     app.manage(crate::agent::AgentState::default());

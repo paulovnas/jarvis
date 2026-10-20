@@ -1,14 +1,17 @@
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
 use crate::persistence::{self, PersistenceError, ProviderAccountRecord};
 
 pub(crate) mod antigravity;
+pub(crate) mod brave;
 mod catalog_cache;
 pub(crate) mod charm_hyper;
 pub(crate) mod custom;
 pub(crate) mod display_name;
 pub(crate) mod image_models;
 mod inference_auth;
+pub(crate) mod ollama;
 pub(crate) mod opencode_go;
 pub(crate) mod openrouter;
 mod reauthorization;
@@ -512,7 +515,21 @@ fn finish_disconnect(
 ) -> Result<(), ProviderAccountError> {
     // Prepare all database changes before touching the credential. A constraint
     // failure must never strand an account whose secret has already been removed.
+    let local: bool = transaction
+        .query_row(
+            "SELECT provider_kind = 'ollama' FROM provider_accounts WHERE alias = ?1",
+            [alias],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| ProviderAccountError::Database)?
+        .unwrap_or(false);
     persistence::delete_provider_account(&transaction, alias)?;
+    if local {
+        return transaction
+            .commit()
+            .map_err(|_| ProviderAccountError::Database);
+    }
     let backup = match secret_store.load(alias) {
         Ok(credential) => Some(credential),
         #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
@@ -1663,12 +1680,16 @@ impl OAuthManager {
             .iter()
             .cloned()
             .map(|record| {
-                let account = if record.provider_kind == "opencode-go" {
+                let account = if record.provider_kind == "brave-search" {
+                    brave::account(record)
+                } else if record.provider_kind == "opencode-go" {
                     opencode_go::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "charm-hyper" {
                     charm_hyper::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "openrouter" {
                     openrouter::account(app_state, home_dir, record)?
+                } else if record.provider_kind == "ollama" {
+                    ollama::account(app_state, home_dir, record)?
                 } else if record.provider_kind == "custom" {
                     custom::account(app_state, home_dir, record)?
                 } else {
@@ -2210,6 +2231,9 @@ impl OpenAiCodexState {
                 "Ative a conta nas configurações para usá-la.",
             ));
         }
+        if record.provider_kind == "brave-search" {
+            return Ok((brave::credential(state, home, self.manager.secret_store.as_ref(), record)?, vec![]));
+        }
         if matches!(record.provider_kind.as_str(), "opencode-go" | "charm-hyper") {
             let (credential, account) = if record.provider_kind == "charm-hyper" {
                 (
@@ -2238,6 +2262,20 @@ impl OpenAiCodexState {
                 })
                 .map_err(|_| ProviderError::database())?;
             return Ok((credential, visible_models(account.models, &disabled)));
+        }
+        if record.provider_kind == "ollama" {
+            let mut credential =
+                CodexCredential::new("", "", i64::MAX, &record.account_id, None, None);
+            let config = custom::load(state, home, alias)?;
+            ollama::validate_config(&config)?;
+            let disabled = state
+                .with_connection(home, |db| {
+                    persistence::list_provider_model_exclusions(db, alias)
+                })
+                .map_err(|_| ProviderError::database())?;
+            let models = visible_models(config.catalog(), &disabled);
+            credential.custom = Some(config);
+            return Ok((credential, models));
         }
         let mut credential = self.manager.secret_store.load(alias).map_err(|_| {
             ProviderError::new(
@@ -3385,8 +3423,7 @@ fn disconnect_provider_account_with_state(
 }
 
 fn home_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, ProviderError> {
-    use tauri::Manager;
-    app.path().home_dir().map_err(|_| {
+    crate::data_dir::app_home(&app).map_err(|_| {
         ProviderError::new(
             "home_directory_error",
             "Não foi possível acessar o diretório da aplicação.",

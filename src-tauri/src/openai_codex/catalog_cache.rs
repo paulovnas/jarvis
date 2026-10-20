@@ -66,6 +66,9 @@ pub(super) fn list(
         .map_err(|_| ProviderError::database())?
         .into_iter()
         .map(|record| {
+            if record.provider_kind == "brave-search" {
+                return Ok(brave::account(record));
+            }
             if record.provider_kind == "charm-hyper" {
                 return attach_model_exclusions(
                     state,
@@ -89,6 +92,9 @@ pub(super) fn list(
             }
             if record.provider_kind == "custom" {
                 return attach_model_exclusions(state, home, custom::account(state, home, record)?);
+            }
+            if record.provider_kind == "ollama" {
+                return attach_model_exclusions(state, home, ollama::account(state, home, record)?);
             }
             let saved = cached.remove(&record.alias).filter(|entry| {
                 entry.account_id == record.account_id

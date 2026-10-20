@@ -20,6 +20,7 @@ import { executionDuration, formatExecutionDuration, useRunningClock } from "@/h
 import { Hint } from "@/components/ui/hint";
 import { executionLabel, executorOf, FAST_USAGE_NOTICE } from "@/core/executors";
 import { GenerationRate } from "@/components/chat/GenerationRate";
+import { WorkflowOutcome } from "@/components/chat/WorkflowOutcome";
 
 function presentation(agent: WorkflowAgent) {
   return agent.role === "custom"
@@ -91,6 +92,7 @@ export function WorkflowAgents({ workflow, conversationId, accounts = [] }: { wo
           {thought && <Hint content={thought} whenTruncated><span className={`line-clamp-2 text-[10px] italic leading-4 text-muted-foreground ${agent.status === "running" ? "reasoning-shimmer" : ""}`}>{thought}</span></Hint>}
           <span className="flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground"><StatusBadge agent={agent} /><span aria-label="Tempo de execução" className="font-mono tabular-nums">{formatExecutionDuration(duration)}</span><GenerationRate generation={agent.generation} /></span>
           <ModelDetails agent={agent} accounts={accounts} />
+          <WorkflowOutcome result={agent} compact />
         </Button>;
       })}</div>}
     <Dialog open={!!selectedAgent} onOpenChange={open => { if (!open) setSelected(null); }}>
@@ -101,6 +103,7 @@ export function WorkflowAgents({ workflow, conversationId, accounts = [] }: { wo
           <ModelDetails agent={selectedAgent} accounts={accounts} />
           <span className="flex items-center gap-2 font-mono text-[10px] tabular-nums text-muted-foreground"><span aria-label="Tempo de execução">{formatExecutionDuration(executionDuration(selectedAgent.startedAt, selectedAgent.durationMs, timingActive(selectedAgent), now, selectedAgent.activeSince))}</span><GenerationRate generation={selectedAgent.generation} /></span>
           {selectedAgent.attempts > 1 && <span className="font-mono text-[10px] text-muted-foreground">Rodada {selectedAgent.attempts}</span>}
+          <WorkflowOutcome result={selectedAgent} />
         </DialogHeader>
         <AgentHistory key={`${conversationId}/${selectedAgent.id}`} conversationId={conversationId} agent={selectedAgent} />
       </DialogContent>}

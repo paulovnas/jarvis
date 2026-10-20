@@ -2,6 +2,61 @@ use super::*;
 use std::io::Write;
 
 #[test]
+fn generated_animation_preserves_frames_and_pixel_art_keeps_original_dimensions() {
+    use image::{AnimationDecoder, Delay, Frame, RgbaImage};
+    let home = tempfile::tempdir().unwrap();
+    let conversation = "a".repeat(32);
+    let mut gif = Vec::new();
+    {
+        let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+        encoder
+            .set_repeat(image::codecs::gif::Repeat::Infinite)
+            .unwrap();
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255]] {
+            encoder
+                .encode_frame(Frame::from_parts(
+                    RgbaImage::from_pixel(8, 8, image::Rgba(color)),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(100, 1),
+                ))
+                .unwrap();
+        }
+    }
+    let item = store_generated(home.path(), &conversation, "walk.gif", &gif).unwrap();
+    assert_eq!(item.mime, "image/gif");
+    let directory = location(home.path(), &conversation, &item.id).unwrap();
+    let preserved = fs::read(directory.join("content")).unwrap();
+    assert_eq!(preserved, gif);
+    assert_eq!(
+        image::codecs::gif::GifDecoder::new(Cursor::new(preserved))
+            .unwrap()
+            .into_frames()
+            .count(),
+        2
+    );
+    assert_eq!(
+        image::guess_format(&fs::read(directory.join("preview")).unwrap()).unwrap(),
+        image::ImageFormat::Png
+    );
+    let mut png = Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(4096, 4)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let item = store_generated(home.path(), &conversation, "atlas.png", png.get_ref()).unwrap();
+    let content = fs::read(
+        location(home.path(), &conversation, &item.id)
+            .unwrap()
+            .join("content"),
+    )
+    .unwrap();
+    assert_eq!(content, *png.get_ref());
+    assert_eq!(image::load_from_memory(&content).unwrap().width(), 4096);
+    assert!(store_generated(home.path(), &conversation, "fake.gif", b"GIF89a").is_err());
+    assert!(store_generated(home.path(), &conversation, "note.txt", b"text").is_err());
+}
+
+#[test]
 fn project_images_become_owned_generation_references_without_changing_the_source() {
     let home = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();

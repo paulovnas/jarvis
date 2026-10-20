@@ -27,13 +27,14 @@ const codexImageModel: ProviderModel = { id: "gpt-image-2", name: "GPT Image 2",
 export function compatibleModels(account: ProviderAccount, kind: ReferenceKind): ProviderModel[] {
   if (!account.enabled) return [];
   if (kind === "image_generation") {
+    if (account.providerKind === "ollama") return [];
     const models = account.providerKind === "custom" || account.providerKind === "openrouter"
       ? account.custom && account.custom.authMode === "bearer" && supportsModelLookup(account.custom.baseUrl) ? account.custom.models.filter(model => model.supportsImageGeneration).map(model => ({ id: model.id, name: model.name, reasoningLevels: [], defaultReasoningLevel: null })) : []
       : account.imageModels ?? (account.providerKind === "antigravity" ? [imageModel] : account.providerKind === "openai-codex" ? [codexImageModel] : []);
     return models.filter(model => !account.disabledModels?.includes(model.id));
   }
   if (!account.modelsAvailable) return [];
-  return enabledModels(account).filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" || account.providerKind === "openrouter" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" ? account.visionModels?.includes(model.id) === true : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
+  return enabledModels(account).filter(model => kind === "web_search" ? account.providerKind === "openai-codex" || (account.providerKind === "antigravity" && model.id.startsWith("gemini-")) : kind === "vision" ? account.providerKind === "custom" || account.providerKind === "openrouter" || account.providerKind === "ollama" ? account.custom?.models.some(item => item.id === model.id && item.supportsImages) : account.providerKind === "opencode-go" || account.providerKind === "charm-hyper" ? account.visionModels?.includes(model.id) === true : /^(gpt-|gemini-|claude|o3|o4)/.test(model.id) : true);
 }
 
 export function modelProblem(choice: ModelChoice, accounts: ProviderAccount[], kind: ReferenceKind = "custom_agent"): string | null {
@@ -51,6 +52,7 @@ function modelTargetProblem(choice: ModelChoice, accounts: ProviderAccount[], ki
   const account = accounts.find(account => account.alias === choice.account);
   if (!account) return `O provedor ${choice.account} não existe mais. Escolha outro provedor e modelo.`;
   if (!account.enabled) return `O provedor ${providerDisplayName(account)} está desativado. Ative-o ou escolha outro.`;
+  if (kind === "web_search" && account.providerKind === "brave-search") return null;
   if (choice.serviceTier === "priority" && fastModeUnavailable(account.providerKind, account.models.find(model => model.id === choice.model), choice.executor, kind !== "image_generation" && account.modelsStale)) return "Fast não está disponível neste provedor ou modelo. Selecione Normal ou outro modelo.";
   // A local/offline catalog cannot prove that a configured model was removed.
   if (kind !== "image_generation" && account.modelsStale && !account.disabledModels?.includes(choice.model)) return null;

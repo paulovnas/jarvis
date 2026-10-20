@@ -6,6 +6,7 @@ import type { ClaudeRuntime, MuseRuntime } from "@/core/executors";
 import type { ProviderAccount } from "@/core/provider-accounts";
 import type { AccountUsage } from "@/core/provider-usage";
 import { StatusBar } from "./StatusBar";
+import { ollamaAccountFixture } from "@/test/custom-provider-fixtures";
 
 const runtimes = vi.hoisted(() => ({ claude: null as ClaudeRuntime | null, muse: null as MuseRuntime | null }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -53,6 +54,14 @@ function resizeLimits(target: "available" | "content") {
     for (const [observer, { callback, elements }] of observers) if (element && elements.has(element)) callback([], observer);
   });
 }
+
+it.each([true, false])("does not query or display Ollama quotas with saved usage visibility %s", async showUsage => {
+  const ollama = { ...ollamaAccountFixture(), showUsage, usageAlert: { window: "weekly" as const, remainingPercent: 20 } };
+  render(<StatusBar accounts={[account, ollama]} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Limites de Conta principal" })).toHaveTextContent("36%"));
+  expect(screen.queryByRole("button", { name: "Limites de Ollama" })).not.toBeInTheDocument();
+  expect(invoke).not.toHaveBeenCalledWith("get_provider_usage", { alias: ollama.alias });
+});
 it("coloca o acesso remoto entre configurações e versão", async () => {
   render(<StatusBar onOpenSettings={() => {}} />);
   const remote = await screen.findByRole("button", { name: "Modo remoto" });

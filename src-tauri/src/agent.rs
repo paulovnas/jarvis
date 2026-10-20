@@ -24,6 +24,9 @@ pub(crate) mod history;
 mod http;
 pub(crate) mod image_generation;
 pub(crate) mod image_tasks;
+pub(crate) mod pixel_art;
+#[cfg(feature = "browser-probe")]
+pub(crate) mod pixel_art_probe;
 mod impeccable;
 pub(crate) use impeccable::observe_setup as observe_impeccable_setup;
 mod composer_context;
@@ -2030,7 +2033,7 @@ impl AgentState {
         state: &AppState,
         id: &str,
     ) -> Result<Arc<Session>, AgentError> {
-        let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+        let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
         let agent = self.clone();
         let app = app.clone();
         let state = state.clone();
@@ -2170,7 +2173,7 @@ pub(crate) async fn read_chat_snapshot(
 ) -> Result<ChatSnapshot, AgentError> {
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     tauri::async_runtime::spawn_blocking(move || agent.read_chat(&state, &home, &conversation_id))
         .await
         .map_err(|_| AgentError::internal())?
@@ -2186,7 +2189,7 @@ pub async fn get_chat(
 ) -> Result<ChatSnapshot, AgentError> {
     let state = persistence.inner().clone();
     let agent = agent.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let recovery_check = agent.clone();
     let recovery_state = state.clone();
     let recovery_home = home.clone();
@@ -2339,7 +2342,7 @@ async fn start_agent_turn_admitted(
     let state = persistence.inner().clone();
     let oauth = app.state::<OpenAiCodexState>().inner().clone();
     let agent = agent.inner().clone();
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     let run_app = app.clone();
     let run_state = state.clone();
     let run_home = home.clone();
@@ -2535,7 +2538,7 @@ pub async fn resume_agent_queue(
     let session = agent
         .runtime_session(&app, &persistence, &conversation_id)
         .await?;
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
     let signal = match session.resume_recovered_turn(RecoveryTrigger::UserAction)? {
@@ -2577,7 +2580,7 @@ pub async fn retry_agent_turn(
 ) -> Result<ChatSnapshot, AgentError> {
     let activity = crate::updater::begin_activity(&app)
         .map_err(|message| AgentError::new("app_updating", &message))?;
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
     let session = agent
@@ -2677,7 +2680,7 @@ pub async fn resume_interrupted_workflow(
 ) -> Result<ChatSnapshot, AgentError> {
     let activity = crate::updater::begin_activity(&app)
         .map_err(|message| AgentError::new("app_updating", &message))?;
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     app.state::<crate::core::CoreState>().require_ready(&home)?;
     library::agent_location(&persistence, &home, &conversation_id)?;
     let session = agent
@@ -2878,7 +2881,7 @@ pub fn list_execution_grants(
     agent: tauri::State<'_, AgentState>,
     project_id: String,
 ) -> Result<Vec<execution_grants::ExecutionGrantSummary>, AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     library::dashboard::check_project(&persistence, &home, &project_id)?;
     agent
         .grants
@@ -2894,7 +2897,7 @@ pub fn revoke_execution_grant(
     project_id: String,
     grant_id: String,
 ) -> Result<(), AgentError> {
-    let home = app.path().home_dir().map_err(|_| AgentError::storage())?;
+    let home = crate::data_dir::app_home(&app).map_err(|_| AgentError::storage())?;
     library::dashboard::check_project(&persistence, &home, &project_id)?;
     if agent
         .grants
@@ -4028,6 +4031,10 @@ fn run_turn_once<'a>(
                 &options.model,
             );
             let mut definitions = tools::definitions(options.mode);
+            pixel_art::restrict_catalog(
+                &mut definitions,
+                execution.as_ref().is_some_and(|exec| exec.allowed("pixel_art_docs")),
+            );
             if !global_companion {
                 definitions.push(publication::inspection::definition());
                 definitions.extend(authoring_tools_for_turn(
@@ -4486,6 +4493,15 @@ fn run_turn_once<'a>(
                         data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"content":format!("Commands are still running: {}. Use bash_wait to obtain their results or bash_cancel when no longer needed. Do not start duplicate commands or report completion before checking these sessions.", running.join(", "))}));
                     }).await?;
                     continue;
+                }
+                if let Some(app) = execution.as_ref().filter(|exec| exec.allowed("pixel_art_status")).and_then(workflow::Execution::native_app) {
+                    let running = pixel_art::running(app, &owner.id).await;
+                    if !running.is_empty() {
+                        session.update_async(|data| {
+                            data.turns.last_mut().unwrap().wire.push(json!({"role":"user","_jarvis_runtime":true,"content":format!("Pixel-art operations are still running: {}. Use pixel_art_status to observe their results or pixel_art_cancel when cancellation is intended. Do not restart generation or report delivery before they finish.", running.join(", "))}));
+                        }).await?;
+                        continue;
+                    }
                 }
                 if continue_mcp_tool_recovery(
                     session,
@@ -5310,6 +5326,11 @@ fn run_turn_once<'a>(
                                 if tool.name == "image_process" && execution.as_ref().is_some_and(|exec| exec.allowed("image_process")) {
                                     image_tasks::execute(state, oauth, home, &owner.id, session, &mut command_sessions, sandbox_plan.as_ref(), &tool.args, signal.clone())
                                         .await.map(|output| tools::ExecutionResult { output, revision: None, read: None })
+                                } else if tool.name.starts_with("pixel_art_") {
+                                    pixel_art::execute(
+                                        execution.as_ref().and_then(workflow::Execution::native_app),
+                                        home, &session.root, &owner.id, execution.as_ref().map_or("main", workflow::Execution::pixel_art_executor_id), &tool, signal.clone(),
+                                    ).await.map(|output| tools::ExecutionResult { output, revision: None, read: None })
                                 } else if tool.name.starts_with("video_") {
                                     video_jobs
                                         .execute(
@@ -5396,6 +5417,7 @@ fn run_turn_once<'a>(
                 };
                 core_runtime::record_async(session, mcp_clients.take_activity()).await?;
                 drop(handler);
+                telemetry::record_tool_diagnostic(&tool, result.as_ref().err());
                 let tool_failure = result.as_ref().err().map(telemetry::failure_class);
                 let tool_outcome = telemetry::outcome(result.as_ref().err(), false);
                 let guard_error = result.as_ref().err().cloned();
@@ -5724,6 +5746,12 @@ fn finish(session: &Session, result: Result<(), AgentError>) {
     }
     if let Ok(data) = session.data.lock() {
         if let Some(current) = data.turns.last() {
+            if let Some(error) = current.turn.error.as_ref().filter(|error| error.code != "cancelled") {
+                crate::diagnostics::logs::record_runtime(
+                    crate::diagnostics::Level::Error, "agent_turn", Some(&error.code),
+                    &error.message, None, Some(&current.turn.id),
+                );
+            }
             let context = telemetry::trace(&session.id, &current.turn.id);
             telemetry::record(
                 &context,

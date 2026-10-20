@@ -23,7 +23,7 @@ function UsageAlertMonitor({ account }: { account: ProviderAccount }) {
 }
 
 function ProviderLimits({ accounts, now, passive, presentation = "compact", inactive = false }: { accounts: ProviderAccount[]; now: number; passive: boolean; presentation?: "compact" | "details"; inactive?: boolean }) {
-  return <>{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={presentation === "details" ? <RowsSkeleton label={`Carregando limites de ${providerDisplayName(account)}`} count={1} /> : <Skeleton aria-label={`Carregando limites de ${providerDisplayName(account)}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now} presentation={presentation} inactive={inactive} /></Suspense>)}{!passive && <Suspense fallback={null}><ClaudeUsage now={now} presentation={presentation} inactive={inactive} /><MuseUsage now={now} presentation={presentation} inactive={inactive} /></Suspense>}</>;
+  return <>{accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.providerKind !== "ollama" && account.showUsage !== false).map(account => <Suspense key={`${account.alias}/${account.createdAt}`} fallback={presentation === "details" ? <RowsSkeleton label={`Carregando limites de ${providerDisplayName(account)}`} count={1} /> : <Skeleton aria-label={`Carregando limites de ${providerDisplayName(account)}`} className="mx-2 h-3 w-44 shrink-0" />}><ProviderUsage account={account} now={now} presentation={presentation} inactive={inactive} /></Suspense>)}{!passive && <Suspense fallback={null}><ClaudeUsage now={now} presentation={presentation} inactive={inactive} /><MuseUsage now={now} presentation={presentation} inactive={inactive} /></Suspense>}</>;
 }
 
 export function StatusBar({ accounts = [], onOpenSettings, passive = false }: { accounts?: ProviderAccount[]; onOpenSettings?: () => void; passive?: boolean }) {
@@ -53,7 +53,7 @@ export function StatusBar({ accounts = [], onOpenSettings, passive = false }: { 
     return () => { clearTimeout(timer); window.removeEventListener("focus", tick); };
   }, []);
   return <footer aria-label="Barra de status" className="native-statusbar shrink-0 bg-sidebar">
-    {accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.showUsage === false && account.usageAlert).map(account => <UsageAlertMonitor key={`alert/${account.alias}/${account.createdAt}`} account={account} />)}
+    {accounts.filter(account => account.enabled && account.providerKind !== "custom" && account.providerKind !== "ollama" && account.showUsage === false && account.usageAlert).map(account => <UsageAlertMonitor key={`alert/${account.alias}/${account.createdAt}`} account={account} />)}
     <Separator />
     <div className="flex h-7 min-w-0 items-center gap-2 px-3">
       {onOpenSettings && <Hint content="Configurações"><Button variant="ghost" size="icon-sm" className="size-6 shrink-0 cursor-pointer rounded-md text-muted-foreground" aria-label="Configurações" onClick={onOpenSettings}><Settings className="size-3.5" /></Button></Hint>}
